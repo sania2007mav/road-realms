@@ -27,8 +27,8 @@ import {
   type GameState,
   type Ration,
 } from './sim';
-import { TILE, ZOOM_MAX, clampCamera, focusTile, screenToTile, screenToWorld, worldToScreen, type Camera } from './render/camera';
-import { bakeMinimap, bakeTerrain, renderMinimap, renderWorld, type Ghost } from './render/draw';
+import { ZOOM_MAX, clampCamera, focusTile, screenToTile, screenToWorld, worldToScreen, type Camera } from './render/camera';
+import { bakeTerrain, minimapToTile, renderMinimap, renderWorld, type Ghost } from './render/draw';
 
 const SAVE_KEY = 'dorozhnye-kraya-v1';
 const TUTORIAL_KEY = 'dorozhnye-kraya-tutorial';
@@ -81,12 +81,13 @@ const endScreen = document.querySelector<HTMLElement>('#end')!;
 const menu = document.querySelector<HTMLElement>('#menu')!;
 const popbox = document.querySelector<HTMLElement>('#popbox')!;
 const peoplebox = document.querySelector<HTMLElement>('#peoplebox')!;
+const hintEl = document.querySelector<HTMLElement>('#hint')!;
+const tipEl = document.querySelector<HTMLElement>('#tip')!;
 
 let state: GameState = createGame(20261003, { ai: 3 });
 let playing = false;
 let camera: Camera = { x: 0, y: 0, zoom: 1.15 };
 let baked = bakeTerrain(state);
-let miniBaked = bakeMinimap(state);
 let speed = 1;
 let placing: BuildingType | null = null;
 let selectedId: number | null = null;
@@ -114,7 +115,15 @@ let titleDir = 1;
 
 function clampView() {
   const { w, h } = viewSize();
-  clampCamera(camera, w, h, state.mapW * TILE, state.mapH * TILE);
+  clampCamera(camera, w, h, state.mapW, state.mapH);
+}
+
+function lookAtTile(x: number, y: number) {
+  focusTile(camera, x, y);
+}
+
+function lookAtPoint(x: number, y: number) {
+  focusTile(camera, x - 0.5, y - 0.5);
 }
 
 function viewSize() {
@@ -127,8 +136,8 @@ function resize() {
   const h = Math.max(1, worldCanvas.clientHeight);
   worldCanvas.width = Math.floor(w * dpr);
   worldCanvas.height = Math.floor(h * dpr);
-  miniCanvas.width = 180;
-  miniCanvas.height = 120;
+  miniCanvas.width = Math.max(1, Math.floor(miniCanvas.clientWidth * dpr));
+  miniCanvas.height = Math.max(1, Math.floor(miniCanvas.clientHeight * dpr));
 }
 
 function bootPreview() {
@@ -136,9 +145,7 @@ function bootPreview() {
   const ai = Number(document.querySelector<HTMLSelectElement>('#ai-count')?.value ?? '3');
   state = createGame(seed, { ai: Number.isFinite(ai) ? ai : 3 });
   baked = bakeTerrain(state);
-  miniBaked = bakeMinimap(state);
-  camera.x = (state.mapW / 2) * TILE;
-  camera.y = state.roadY * TILE;
+  lookAtTile(state.mapW / 2, state.roadY);
   camera.zoom = 0.55;
   playing = false;
   clampView();
@@ -149,12 +156,10 @@ function startGame() {
   const ai = Number(document.querySelector<HTMLSelectElement>('#ai-count')?.value ?? '3');
   state = createGame(seed >>> 0, { ai: ai === 2 ? 2 : 3 });
   baked = bakeTerrain(state);
-  miniBaked = bakeMinimap(state);
   const keep = playerKeep(state, 0);
   if (keep) {
     const center = buildingCenter(keep);
-    camera.x = center.x * TILE;
-    camera.y = center.y * TILE;
+    lookAtPoint(center.x, center.y);
   }
   camera.zoom = 1.15;
   clampView();
@@ -184,7 +189,6 @@ function loadGame() {
   try {
     state = deserialize(raw);
     baked = bakeTerrain(state);
-    miniBaked = bakeMinimap(state);
     playing = true;
     title.hidden = true;
     endScreen.hidden = true;
@@ -192,8 +196,7 @@ function loadGame() {
     const keep = playerKeep(state, 0);
     if (keep) {
       const center = buildingCenter(keep);
-      camera.x = center.x * TILE;
-      camera.y = center.y * TILE;
+      lookAtPoint(center.x, center.y);
     }
     clampView();
     buildChrome();
@@ -261,15 +264,15 @@ function buildTitle() {
 function buildChrome() {
   const player = () => state.players[0];
   topbar.innerHTML = `
-    <button type="button" id="open-menu" data-testid="open-menu">Меню</button>
-    <button type="button" class="readout" id="people-btn" data-testid="people-readout"></button>
-    <button type="button" class="readout" id="mood-btn" data-testid="popularity"></button>
-    <div class="readout" id="gold-readout"></div>
-    <div class="readout" id="clock"></div>
-    <div class="readout" id="fps">60 к/с</div>
-    <div id="resources"></div>
-    <div id="rations"></div>
-    <div id="taxwrap"></div>`;
+    <div id="status">
+      <button type="button" id="open-menu" data-testid="open-menu">Меню</button>
+      <button type="button" class="readout" id="people-btn" data-testid="people-readout"></button>
+      <button type="button" class="readout" id="mood-btn" data-testid="popularity"></button>
+      <div class="readout" id="gold-readout"></div>
+      <div class="readout" id="clock"></div>
+      <div class="readout" id="fps">60 к/с</div>
+    </div>
+    <div id="resources"></div>`;
   document.querySelector<HTMLButtonElement>('#open-menu')!.onclick = () => {
     menu.hidden = !menu.hidden;
     if (!menu.hidden) renderMenu();
@@ -283,19 +286,19 @@ function buildChrome() {
     peoplebox.hidden = true;
   };
 
-  const rations = document.querySelector<HTMLElement>('#rations')!;
-  rations.innerHTML = RATIONS.map(
-    (r) => `<button type="button" data-ration="${r.id}" data-testid="ration-${r.id}">${r.label}</button>`,
-  ).join('');
-  rations.querySelectorAll<HTMLButtonElement>('button').forEach((button) => {
-    button.onclick = () => {
-      const ration = button.dataset.ration as Ration;
-      queue.push({ kind: 'ration', playerId: 0, ration });
-    };
+  const econ = document.querySelector<HTMLElement>('#econ')!;
+  econ.innerHTML = `<label>Паёк
+      <select id="ration" data-testid="ration">${RATIONS.map((r) => `<option value="${r.id}">${r.label}</option>`).join('')}</select>
+    </label>
+    <label>Налог <span id="tax-label"></span>
+      <input id="tax" data-testid="tax-slider" type="range" min="0" max="5" step="1" value="1" />
+    </label>`;
+  const ration = document.querySelector<HTMLSelectElement>('#ration')!;
+  ration.value = player().ration;
+  ration.addEventListener('change', () => {
+    queue.push({ kind: 'ration', playerId: 0, ration: ration.value as Ration });
   });
 
-  const taxwrap = document.querySelector<HTMLElement>('#taxwrap')!;
-  taxwrap.innerHTML = `<span id="tax-label"></span><input id="tax" data-testid="tax-slider" type="range" min="0" max="5" step="1" value="1" />`;
   const tax = document.querySelector<HTMLInputElement>('#tax')!;
   tax.value = String(Math.max(0, TAXES.findIndex((t) => t.id === player().tax)));
   tax.addEventListener('input', () => {
@@ -438,7 +441,7 @@ function syncHud() {
   const cap = housingCap(state, 0);
   const peopleBtn = document.querySelector<HTMLButtonElement>('#people-btn');
   if (peopleBtn) {
-    peopleBtn.innerHTML = `Люди <strong>${used}</strong> занято · <strong>${idle}</strong> свободно · предел <strong>${cap}</strong>`;
+    peopleBtn.innerHTML = `Люди <strong>${used}</strong>/<strong>${cap}</strong> · свободно <strong>${idle}</strong>`;
     peopleBtn.classList.toggle('idle-empty', idle === 0);
   }
   const mood = document.querySelector<HTMLButtonElement>('#mood-btn');
@@ -457,17 +460,26 @@ function syncHud() {
 
   const resources = document.querySelector<HTMLElement>('#resources');
   if (resources) {
-    const show: (typeof RESOURCES)[number][] = ['apples', 'cheese', 'meat', 'bread', 'wood', 'stone', 'iron', 'pitch', 'beer'];
-    resources.innerHTML = show
-      .map((res) => {
-        const amount = player.stocks[res];
-        return `<span class="res ${amount > 0 ? '' : 'zero'}"><i style="background:${cargoColor(res)}"></i>${RESOURCE_NAME[res]} <b>${amount}</b></span>`;
-      })
+    const groups: { label: string; items: (typeof RESOURCES)[number][] }[] = [
+      { label: 'Еда', items: ['apples', 'cheese', 'meat', 'bread'] },
+      { label: 'Материалы', items: ['wood', 'stone', 'iron', 'pitch'] },
+      { label: 'Пиво', items: ['beer'] },
+    ];
+    resources.innerHTML = groups
+      .map(
+        (group) =>
+          `<div class="resgroup"><span class="glabel">${group.label}</span>${group.items
+            .map((res) => {
+              const amount = player.stocks[res];
+              return `<span class="res ${amount > 0 ? '' : 'zero'}"><i style="background:${cargoColor(res)}"></i>${RESOURCE_NAME[res]} <b>${amount}</b></span>`;
+            })
+            .join('')}</div>`,
+      )
       .join('');
   }
-  document.querySelectorAll<HTMLButtonElement>('#rations button').forEach((button) => {
-    button.classList.toggle('active', button.dataset.ration === player.ration);
-  });
+  const ration = document.querySelector<HTMLSelectElement>('#ration');
+  if (ration && document.activeElement !== ration) ration.value = player.ration;
+  updateHint();
   const waiting =
     idle === 0 &&
     state.buildings.some(
@@ -504,6 +516,51 @@ function syncHud() {
   refreshBuildState();
   syncPanel();
   if (state.outcome !== 'playing') showEnd();
+}
+
+function updateHint() {
+  if (!playing || state.tick >= 10 * TICKS_PER_GAME_MINUTE) {
+    hintEl.hidden = true;
+    return;
+  }
+  const mine = (type: string) => state.buildings.some((b) => b.playerId === 0 && b.hp > 0 && b.type === type);
+  const orchard = state.buildings.find((b) => b.playerId === 0 && b.hp > 0 && b.type === 'orchard');
+  let text = '';
+  if (!mine('granary')) text = 'Поставьте амбар рядом с главным зданием';
+  else if (!orchard) text = 'Поставьте яблоневый сад на зелёном оазисе';
+  else if (orchard.workerIds.length === 0) text = 'Назначьте работника кнопкой + в карточке сада';
+  else if (!mine('shack')) text = 'Поставьте шалаш, чтобы пришли новые люди';
+  else text = 'Следите за настроением: выше нуля люди приходят';
+  hintEl.hidden = false;
+  hintEl.textContent = text;
+}
+
+function updateTip(clientX: number, clientY: number) {
+  if (!playing || !hover) {
+    tipEl.hidden = true;
+    return;
+  }
+  let text = '';
+  if (placing) {
+    const check = canPlace(state, 0, placing, hover.x, hover.y);
+    text = check.ok ? `${BUILDINGS[placing].name}: можно строить` : `${BUILDINGS[placing].name}: ${check.reason}`;
+  } else {
+    for (const building of state.buildings) {
+      if (building.hp <= 0) continue;
+      const def = BUILDINGS[building.type];
+      if (hover.x >= building.x && hover.x < building.x + def.w && hover.y >= building.y && hover.y < building.y + def.h) {
+        text = def.name;
+      }
+    }
+  }
+  if (!text) {
+    tipEl.hidden = true;
+    return;
+  }
+  tipEl.hidden = false;
+  tipEl.textContent = text;
+  tipEl.style.left = `${clientX + 14}px`;
+  tipEl.style.top = `${clientY + 16}px`;
 }
 
 function jobLabel(person: GameState['people'][number]): string {
@@ -731,10 +788,10 @@ function pick(screenX: number, screenY: number) {
   }
   const world = screenToWorld(camera, w, h, screenX, screenY);
   let personHit: number | null = null;
-  let personD = 18;
+  let personD = 0.7;
   for (const person of state.people) {
     if (person.hp <= 0 || person.playerId !== 0) continue;
-    const d = Math.hypot(person.x * TILE - world.x, person.y * TILE - world.y);
+    const d = Math.hypot(person.x - world.x, person.y - world.y);
     if (d < personD) {
       personD = d;
       personHit = person.id;
@@ -809,9 +866,12 @@ function frame(now: number) {
   const { w, h } = viewSize();
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   renderWorld(ctx, state, camera, w, h, dpr, baked, ghost(), selectedId, now, selectedPersonId);
-  const map = document.querySelector<HTMLElement>('#mapwrap');
-  if (map) renderMinimap(miniCtx, state, camera, w, h, miniBaked, miniCanvas.width, miniCanvas.height);
+  renderMinimap(miniCtx, state, camera, w, h, baked, miniCanvas.width, miniCanvas.height);
   if (playing) syncHud();
+  else {
+    hintEl.hidden = true;
+    tipEl.hidden = true;
+  }
   requestAnimationFrame(frame);
 }
 
@@ -821,15 +881,14 @@ function expose() {
       return suggestedTile(state, 0, type as BuildingType);
     },
     focusTile(x: number, y: number) {
-      focusTile(camera, x, y);
+      lookAtTile(x, y);
       clampView();
     },
     focusHome() {
       const keep = playerKeep(state, 0);
       if (!keep) return;
       const center = buildingCenter(keep);
-      camera.x = center.x * TILE;
-      camera.y = center.y * TILE;
+      lookAtPoint(center.x, center.y);
       clampView();
     },
     zoom(z: number) {
@@ -838,7 +897,7 @@ function expose() {
     },
     tileCenter(x: number, y: number) {
       const { w, h } = viewSize();
-      return worldToScreen(camera, w, h, (x + 0.5) * TILE, (y + 0.5) * TILE);
+      return worldToScreen(camera, w, h, x + 0.5, y + 0.5);
     },
     select(id: number) {
       selectedId = id;
@@ -886,6 +945,7 @@ worldCanvas.addEventListener('pointermove', (event) => {
   const localY = event.clientY - rect.top;
   const { w, h } = viewSize();
   hover = screenToTile(camera, w, h, localX, localY);
+  updateTip(event.clientX, event.clientY);
   if (!pointers.has(event.pointerId)) return;
   pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
   if (pointers.size >= 2) {
@@ -940,18 +1000,17 @@ worldCanvas.addEventListener('contextmenu', (event) => {
 miniCanvas.addEventListener('pointerdown', (event) => {
   if (!playing) return;
   const rect = miniCanvas.getBoundingClientRect();
-  const x = ((event.clientX - rect.left) / rect.width) * state.mapW;
-  const y = ((event.clientY - rect.top) / rect.height) * state.mapH;
-  camera.x = x * TILE;
-  camera.y = y * TILE;
+  const px = ((event.clientX - rect.left) / rect.width) * miniCanvas.width;
+  const py = ((event.clientY - rect.top) / rect.height) * miniCanvas.height;
+  const tile = minimapToTile(state.mapW, state.mapH, miniCanvas.width, miniCanvas.height, px, py);
+  lookAtPoint(tile.x, tile.y);
   clampView();
 });
 document.querySelector<HTMLButtonElement>('#home')!.onclick = () => {
   const keep = playerKeep(state, 0);
   if (!keep) return;
   const center = buildingCenter(keep);
-  camera.x = center.x * TILE;
-  camera.y = center.y * TILE;
+  lookAtPoint(center.x, center.y);
   camera.zoom = 1.15;
   clampView();
 };

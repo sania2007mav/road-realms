@@ -4,7 +4,7 @@ import type { Building, BuildingType, GameState, Mob, Person, Resource } from '.
 import { Terrain } from '../sim/types';
 import { buildingWarning } from '../sim/update';
 import { terrainAt } from '../sim/world';
-import { TILE, type Camera } from './camera';
+import { TILE_H, TILE_W, isoToTile, mapIsoBounds, screenToIso, tileToIso, type Camera } from './camera';
 
 export interface Ghost {
   type: BuildingType;
@@ -13,16 +13,16 @@ export interface Ghost {
   ok: boolean;
 }
 
-const GROUND: Record<number, [string, string]> = {
-  [Terrain.Land]: ['#d2c093', '#c4b184'],
-  [Terrain.Desert]: ['#ead7a2', '#e3cc90'],
-  [Terrain.Oasis]: ['#3f9d4c', '#4eae5b'],
-  [Terrain.Forest]: ['#cbb98a', '#d8c598'],
-  [Terrain.Limestone]: ['#d9d3c6', '#cdc6b6'],
-  [Terrain.Iron]: ['#8d756b', '#746055'],
-  [Terrain.Swamp]: ['#2b302c', '#1b1e1c'],
-  [Terrain.Road]: ['#b58858', '#9a7044'],
-};
+type PropKind = 'forest' | 'lime' | 'iron' | 'swamp';
+
+export interface TerrainBake {
+  canvas: HTMLCanvasElement;
+  originX: number;
+  originY: number;
+  /** Bake is stored at this fraction of iso pixels so the bitmap stays under mobile canvas limits. */
+  scale: number;
+  props: { x: number; y: number; kind: PropKind }[];
+}
 
 const CARGO: Partial<Record<Resource, string>> = {
   wood: '#8a5a32',
@@ -39,6 +39,8 @@ const CARGO: Partial<Record<Resource, string>> = {
   beer: '#e0a11b',
 };
 
+type Pt = { x: number; y: number };
+
 const lastPos = new WeakMap<object, { x: number; y: number }>();
 
 function moving(ent: { x: number; y: number }): boolean {
@@ -48,100 +50,182 @@ function moving(ent: { x: number; y: number }): boolean {
   return Math.abs(prev.x - ent.x) > 0.0015 || Math.abs(prev.y - ent.y) > 0.0015;
 }
 
-export function bakeTerrain(state: GameState): HTMLCanvasElement {
-  const canvas = document.createElement('canvas');
-  canvas.width = state.mapW * TILE;
-  canvas.height = state.mapH * TILE;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return canvas;
-  for (let y = 0; y < state.mapH; y++) {
-    for (let x = 0; x < state.mapW; x++) {
-      const terrain = terrainAt(state, x, y);
-      const pair = GROUND[terrain] ?? GROUND[Terrain.Land];
-      const tint = hash2(state.seed, x, y) % 2 === 0 ? pair[0] : pair[1];
-      ctx.fillStyle = tint;
-      ctx.fillRect(x * TILE, y * TILE, TILE + 0.5, TILE + 0.5);
-      drawDecoration(ctx, state.seed, x, y, terrain);
-    }
-  }
-  return canvas;
+function mix(a: number, b: number, t: number) {
+  return Math.round(a + (b - a) * t);
 }
 
-function drawDecoration(ctx: CanvasRenderingContext2D, seed: number, x: number, y: number, terrain: number) {
-  const px = x * TILE;
-  const py = y * TILE;
-  const n = hash2(seed, x + 9, y + 3);
-  if (terrain === Terrain.Oasis) {
-    ctx.fillStyle = n % 3 === 0 ? '#f2d15a' : '#8fd18a';
-    ctx.beginPath();
-    ctx.arc(px + 6 + (n % 8), py + 8 + ((n >> 3) % 10), 1.4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(px + 20, py + 18, 1.2, 0, Math.PI * 2);
-    ctx.fill();
+function rgb(r: number, g: number, b: number) {
+  return `rgb(${r},${g},${b})`;
+}
+
+function groundColor(state: GameState, x: number, y: number): string {
+  const terrain = terrainAt(state, x, y);
+  const scale = hash2(state.seed, Math.floor(x / 5), Math.floor(y / 5)) % 14;
+  let r = 214;
+  let g = 196;
+  let b = 150;
+  if (terrain === Terrain.Desert) {
+    r = 226;
+    g = 206;
+    b = 150;
+  } else if (terrain === Terrain.Land) {
+    r = 206;
+    g = 186;
+    b = 132;
+  } else if (terrain === Terrain.Oasis) {
+    r = 74;
+    g = 148;
+    b = 72;
   } else if (terrain === Terrain.Forest) {
-    const h = 10 + (n % 6);
-    ctx.fillStyle = 'rgba(40, 30, 16, 0.25)';
-    ctx.beginPath();
-    ctx.ellipse(px + 16, py + 24, 7, 2.4, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#245c30';
-    ctx.beginPath();
-    ctx.moveTo(px + 16, py + 4);
-    ctx.lineTo(px + 26, py + 8 + h);
-    ctx.lineTo(px + 6, py + 8 + h);
-    ctx.fill();
-    ctx.fillStyle = '#2f7a3c';
-    ctx.beginPath();
-    ctx.moveTo(px + 16, py + 8);
-    ctx.lineTo(px + 24, py + 18);
-    ctx.lineTo(px + 8, py + 18);
-    ctx.fill();
-  } else if (terrain === Terrain.Limestone || terrain === Terrain.Iron) {
-    ctx.fillStyle = terrain === Terrain.Iron ? '#5c4038' : '#eee8dc';
-    ctx.beginPath();
-    ctx.ellipse(px + 12, py + 16, 6, 4, 0.2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(px + 20, py + 18, 4, 3, -0.4, 0, Math.PI * 2);
-    ctx.fill();
-    if (terrain === Terrain.Iron) {
-      ctx.fillStyle = '#a24a2a';
-      ctx.fillRect(px + 11, py + 14, 2, 2);
-    }
+    r = 168;
+    g = 142;
+    b = 86;
+  } else if (terrain === Terrain.Limestone) {
+    r = 196;
+    g = 190;
+    b = 176;
+  } else if (terrain === Terrain.Iron) {
+    r = 140;
+    g = 96;
+    b = 78;
   } else if (terrain === Terrain.Swamp) {
-    ctx.fillStyle = 'rgba(180, 200, 160, 0.18)';
-    ctx.beginPath();
-    ctx.ellipse(px + 10 + (n % 6), py + 14, 4, 2, 0, 0, Math.PI * 2);
-    ctx.fill();
+    r = 42;
+    g = 48;
+    b = 40;
   } else if (terrain === Terrain.Road) {
-    ctx.fillStyle = 'rgba(255, 236, 196, 0.28)';
-    ctx.fillRect(px, py + 2, TILE, 2);
-    ctx.fillRect(px, py + TILE - 4, TILE, 2);
-    if (x % 2 === 0) {
-      ctx.fillStyle = 'rgba(90, 58, 32, 0.45)';
-      ctx.fillRect(px + 14, py + 14, 4, 3);
-    }
-  } else if (n % 11 === 0) {
-    ctx.fillStyle = 'rgba(90, 70, 40, 0.18)';
-    ctx.fillRect(px + 8, py + 18, 6, 2);
+    const edge = y === state.roadY - 1 || y === state.roadY + 1;
+    r = edge ? 150 : 186;
+    g = edge ? 116 : 142;
+    b = edge ? 72 : 86;
   }
+  let oasis = 0;
+  let sand = 0;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (!dx && !dy) continue;
+      const near = terrainAt(state, x + dx, y + dy);
+      if (near === Terrain.Oasis) oasis += 1;
+      if (near === Terrain.Desert || near === Terrain.Land) sand += 1;
+    }
+  }
+  if (terrain === Terrain.Oasis && sand) {
+    const t = Math.min(0.45, sand / 14);
+    r = mix(r, 210, t);
+    g = mix(g, 190, t);
+    b = mix(b, 130, t);
+  } else if ((terrain === Terrain.Land || terrain === Terrain.Desert) && oasis) {
+    const t = Math.min(0.55, oasis / 8);
+    r = mix(r, 86, t);
+    g = mix(g, 150, t);
+    b = mix(b, 78, t);
+  }
+  const wobble = scale - 7;
+  return rgb(r + wobble, g + wobble, b + Math.round(wobble * 0.6));
 }
 
-export function bakeMinimap(state: GameState): HTMLCanvasElement {
+const BAKE_SCALE = 0.25;
+
+export function bakeTerrain(state: GameState): TerrainBake {
+  const originX = state.mapH * (TILE_W / 2) + 8;
+  const originY = TILE_H * 3;
+  const isoW = (state.mapW + state.mapH) * (TILE_W / 2) + 16;
+  const isoH = (state.mapW + state.mapH) * (TILE_H / 2) + originY + TILE_H;
   const canvas = document.createElement('canvas');
-  canvas.width = state.mapW;
-  canvas.height = state.mapH;
+  canvas.width = Math.max(1, Math.ceil(isoW * BAKE_SCALE));
+  canvas.height = Math.max(1, Math.ceil(isoH * BAKE_SCALE));
+  const props: TerrainBake['props'] = [];
   const ctx = canvas.getContext('2d');
-  if (!ctx) return canvas;
+  if (!ctx) return { canvas, originX, originY, scale: BAKE_SCALE, props };
+  ctx.setTransform(BAKE_SCALE, 0, 0, BAKE_SCALE, originX * BAKE_SCALE, originY * BAKE_SCALE);
   for (let y = 0; y < state.mapH; y++) {
     for (let x = 0; x < state.mapW; x++) {
+      fillDiamond(ctx, x, y, groundColor(state, x, y), 2 / BAKE_SCALE);
       const terrain = terrainAt(state, x, y);
-      ctx.fillStyle = (GROUND[terrain] ?? GROUND[Terrain.Land])[0];
-      ctx.fillRect(x, y, 1, 1);
+      if (terrain === Terrain.Forest) props.push({ x, y, kind: 'forest' });
+      else if (terrain === Terrain.Limestone) props.push({ x, y, kind: 'lime' });
+      else if (terrain === Terrain.Iron) props.push({ x, y, kind: 'iron' });
+      else if (terrain === Terrain.Swamp) props.push({ x, y, kind: 'swamp' });
     }
   }
-  return canvas;
+  return { canvas, originX, originY, scale: BAKE_SCALE, props };
+}
+
+function diamond(x: number, y: number, w: number, h: number): Pt[] {
+  return [tileToIso(x, y), tileToIso(x + w, y), tileToIso(x + w, y + h), tileToIso(x, y + h)];
+}
+
+function fillDiamond(ctx: CanvasRenderingContext2D, x: number, y: number, color: string, seam = 1.4) {
+  poly(ctx, diamond(x, y, 1, 1), color);
+  const width = ctx.lineWidth;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = seam;
+  ctx.stroke();
+  ctx.lineWidth = width;
+}
+
+function tileSpan(camera: Camera, viewW: number, viewH: number, mapW: number, mapH: number, margin: number) {
+  const halfW = viewW / (2 * camera.zoom) + margin;
+  const halfH = viewH / (2 * camera.zoom) + margin;
+  const pts = [
+    isoToTile(camera.x - halfW, camera.y - halfH),
+    isoToTile(camera.x + halfW, camera.y - halfH),
+    isoToTile(camera.x - halfW, camera.y + halfH),
+    isoToTile(camera.x + halfW, camera.y + halfH),
+  ];
+  return {
+    minX: Math.max(0, Math.floor(Math.min(...pts.map((p) => p.x))) - 1),
+    maxX: Math.min(mapW, Math.ceil(Math.max(...pts.map((p) => p.x))) + 1),
+    minY: Math.max(0, Math.floor(Math.min(...pts.map((p) => p.y))) - 1),
+    maxY: Math.min(mapH, Math.ceil(Math.max(...pts.map((p) => p.y))) + 1),
+  };
+}
+
+function poly(ctx: CanvasRenderingContext2D, pts: Pt[], fill: string) {
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill();
+}
+
+function lift(p: Pt, h: number): Pt {
+  return { x: p.x, y: p.y - h };
+}
+
+function lerp(a: Pt, b: Pt, t: number): Pt {
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+}
+
+function seen(camera: Camera, viewW: number, viewH: number, x: number, y: number, margin = 80) {
+  const iso = tileToIso(x, y);
+  const left = camera.x - viewW / (2 * camera.zoom) - margin;
+  const right = camera.x + viewW / (2 * camera.zoom) + margin;
+  const top = camera.y - viewH / (2 * camera.zoom) - margin;
+  const bottom = camera.y + viewH / (2 * camera.zoom) + margin;
+  return iso.x >= left && iso.x <= right && iso.y >= top && iso.y <= bottom;
+}
+
+/** Front-centre of a footprint. Units south of this draw in front; units north draw behind. */
+function anchorDepth(x: number, y: number, w = 0, h = 0) {
+  return x + w / 2 + (y + h);
+}
+
+function unitDepth(state: GameState, x: number, y: number) {
+  let depth = x + y + 0.02;
+  for (const building of state.buildings) {
+    if (building.hp <= 0) continue;
+    const def = BUILDINGS[building.type];
+    const inside =
+      x >= building.x - 0.15 &&
+      x <= building.x + def.w + 0.15 &&
+      y >= building.y - 0.15 &&
+      y <= building.y + def.h + 0.35;
+    if (!inside) continue;
+    const front = building.y + def.h * 0.48;
+    if (y >= front) depth = Math.max(depth, anchorDepth(building.x, building.y, def.w, def.h) + 0.35);
+  }
+  return depth;
 }
 
 export function renderWorld(
@@ -151,14 +235,14 @@ export function renderWorld(
   viewW: number,
   viewH: number,
   dpr: number,
-  baked: HTMLCanvasElement,
+  baked: TerrainBake,
   ghost: Ghost | null,
   selectedId: number | null,
   time: number,
   selectedPersonId: number | null = null,
 ) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.fillStyle = '#c8b48a';
+  ctx.fillStyle = '#241c16';
   ctx.fillRect(0, 0, viewW, viewH);
   ctx.setTransform(
     dpr * camera.zoom,
@@ -168,604 +252,775 @@ export function renderWorld(
     dpr * (viewW / 2 - camera.x * camera.zoom),
     dpr * (viewH / 2 - camera.y * camera.zoom),
   );
-  ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(baked, 0, 0);
+  const span = tileSpan(camera, viewW, viewH, state.mapW, state.mapH, 48);
+  const close = camera.zoom >= 0.5;
+  ctx.imageSmoothingEnabled = !close;
+  if (!close) {
+    ctx.drawImage(
+      baked.canvas,
+      -baked.originX,
+      -baked.originY,
+      baked.canvas.width / baked.scale,
+      baked.canvas.height / baked.scale,
+    );
+  } else {
+    for (let y = span.minY; y < span.maxY; y++) {
+      for (let x = span.minX; x < span.maxX; x++) fillDiamond(ctx, x, y, groundColor(state, x, y));
+    }
+  }
 
-  const margin = 80;
-  const left = camera.x - viewW / (2 * camera.zoom) - margin;
-  const right = camera.x + viewW / (2 * camera.zoom) + margin;
-  const top = camera.y - viewH / (2 * camera.zoom) - margin;
-  const bottom = camera.y + viewH / (2 * camera.zoom) + margin;
-  const seen = (x: number, y: number) => x * TILE >= left && x * TILE <= right && y * TILE >= top && y * TILE <= bottom;
-
-  type Sprite = { y: number; draw: () => void };
+  type Sprite = { depth: number; draw: () => void };
   const sprites: Sprite[] = [];
+
+  for (const prop of baked.props) {
+    if (prop.x < span.minX || prop.x >= span.maxX || prop.y < span.minY || prop.y >= span.maxY) continue;
+    const depth = anchorDepth(prop.x, prop.y, 1, 1) - 0.02;
+    if (prop.kind === 'forest') sprites.push({ depth, draw: () => drawTree(ctx, prop.x, prop.y, false) });
+    else if (prop.kind === 'lime') sprites.push({ depth, draw: () => drawRock(ctx, prop.x, prop.y, '#d9d3c6', '#8d877c') });
+    else if (prop.kind === 'iron') sprites.push({ depth, draw: () => drawRock(ctx, prop.x, prop.y, '#8d5344', '#5c342c') });
+    else sprites.push({ depth, draw: () => drawMarsh(ctx, prop.x, prop.y) });
+  }
 
   for (const building of state.buildings) {
     if (building.hp <= 0 && building.type !== 'keep') continue;
     const def = BUILDINGS[building.type];
-    const foot = (building.y + def.h) * TILE;
-    if (!seen(building.x + def.w / 2, building.y + def.h / 2)) continue;
+    if (!seen(camera, viewW, viewH, building.x + def.w / 2, building.y + def.h / 2, 120)) continue;
+    const selected = selectedId === building.id;
+    const wall = wallHeight(building);
+    if (building.type === 'orchard') {
+      sprites.push({
+        depth: building.x + building.y - 0.5,
+        draw: () => {
+          ctx.save();
+          if (!building.complete) ctx.globalAlpha = 0.82;
+          poly(ctx, diamond(building.x, building.y, def.w, def.h), '#3f8d48');
+          ctx.restore();
+        },
+      });
+      const apples = Math.floor(time / 400) % 2 === 0;
+      for (let row = 0; row < def.h; row++) {
+        for (let col = 0; col < def.w; col++) {
+          if ((row + col) % 2 === 1 && def.w > 2) continue;
+          const tx = building.x + col + 0.15;
+          const ty = building.y + row + 0.1;
+          sprites.push({ depth: anchorDepth(tx, ty, 0.7, 0.7), draw: () => drawTree(ctx, tx, ty, apples) });
+        }
+      }
+    } else {
+      const flat = building.type === 'wheat' || building.type === 'hop' || building.type === 'quarry' || building.type === 'stockpile' || building.type === 'pitch';
+      sprites.push({
+        depth: flat ? building.x + building.y - 0.4 : anchorDepth(building.x, building.y, def.w, def.h),
+        draw: () => drawBuilding(ctx, building, time),
+      });
+    }
     sprites.push({
-      y: foot,
-      draw: () => drawBuilding(ctx, state, building, selectedId === building.id, time),
+      depth: anchorDepth(building.x, building.y, def.w, def.h) + 0.55,
+      draw: () => markBuilding(ctx, state, building, wall, selected),
     });
   }
   if (ghost) {
     const def = BUILDINGS[ghost.type];
     sprites.push({
-      y: (ghost.y + def.h) * TILE + 1,
+      depth: anchorDepth(ghost.x, ghost.y, def.w, def.h) + 0.01,
       draw: () => drawGhost(ctx, ghost),
     });
   }
   for (const mob of state.mobs) {
-    if (!mob.alive || !seen(mob.x, mob.y)) continue;
-    const walk = moving(mob);
-    sprites.push({ y: mob.y * TILE, draw: () => drawMob(ctx, mob, walk, time) });
+    if (!mob.alive || !seen(camera, viewW, viewH, mob.x, mob.y)) continue;
+    sprites.push({ depth: unitDepth(state, mob.x, mob.y), draw: () => drawMob(ctx, mob, moving(mob), time) });
   }
   for (const ox of state.oxen) {
-    if (!seen(ox.x, ox.y)) continue;
-    const walk = moving(ox);
-    sprites.push({
-      y: ox.y * TILE,
-      draw: () => drawOx(ctx, ox.x, ox.y, walk, time, ox.cargo),
-    });
+    if (!seen(camera, viewW, viewH, ox.x, ox.y)) continue;
+    sprites.push({ depth: unitDepth(state, ox.x, ox.y), draw: () => drawOx(ctx, ox.x, ox.y, moving(ox), time, ox.cargo) });
   }
   for (const person of state.people) {
-    if (person.hp <= 0 || !seen(person.x, person.y)) continue;
-    const walk = moving(person);
-    let ySort = person.y * TILE + 1;
-    for (const building of state.buildings) {
-      if (building.hp <= 0) continue;
-      const def = BUILDINGS[building.type];
-      if (
-        person.x >= building.x - 0.35 &&
-        person.x <= building.x + def.w + 0.35 &&
-        person.y >= building.y - 0.35 &&
-        person.y <= building.y + def.h + 0.35
-      ) {
-        ySort = Math.max(ySort, (building.y + def.h) * TILE + 4);
-      }
-    }
+    if (person.hp <= 0 || !seen(camera, viewW, viewH, person.x, person.y)) continue;
     sprites.push({
-      y: ySort,
-      draw: () => drawPerson(ctx, state, person, walk, time, person.id === selectedPersonId),
+      depth: unitDepth(state, person.x, person.y),
+      draw: () => drawPerson(ctx, state, person, moving(person), time, person.id === selectedPersonId),
     });
   }
   for (const soldier of state.soldiers) {
-    if (soldier.hp <= 0 || !seen(soldier.x, soldier.y)) continue;
-    const walk = moving(soldier);
+    if (soldier.hp <= 0 || !seen(camera, viewW, viewH, soldier.x, soldier.y)) continue;
+    const color = state.players[soldier.playerId]?.color ?? '#eee';
     sprites.push({
-      y: soldier.y * TILE,
-      draw: () => drawSoldier(ctx, state.players[soldier.playerId]?.color ?? '#eee', soldier.x, soldier.y, walk, time, soldier.weapon),
+      depth: unitDepth(state, soldier.x, soldier.y),
+      draw: () => drawFigure(ctx, soldier.x, soldier.y, color, moving(soldier), time, soldier.weapon === 'sword' ? 'sword' : 'club', null, false),
     });
   }
-  sprites.sort((a, b) => a.y - b.y);
+  sprites.sort((a, b) => a.depth - b.depth);
   for (const sprite of sprites) sprite.draw();
 }
 
-function drawBuilding(ctx: CanvasRenderingContext2D, state: GameState, building: Building, selected: boolean, time: number) {
-  const def = BUILDINGS[building.type];
-  const x = building.x * TILE;
-  const y = building.y * TILE;
-  const w = def.w * TILE;
-  const h = def.h * TILE;
-  const color = state.players[building.playerId]?.color ?? '#888';
-  ctx.save();
-  if (!building.complete || building.upgrading) ctx.globalAlpha = 0.78;
-  ctx.fillStyle = 'rgba(0,0,0,0.16)';
+function drawVolume(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  wall: number,
+  front: string,
+  side: string,
+  roof: string,
+  door: boolean,
+) {
+  const n = tileToIso(x, y);
+  const e = tileToIso(x + w, y);
+  const s = tileToIso(x + w, y + h);
+  const west = tileToIso(x, y + h);
+  ctx.fillStyle = 'rgba(20,14,10,0.28)';
   ctx.beginPath();
-  ctx.ellipse(x + w / 2, y + h - 4, w * 0.42, 5, 0, 0, Math.PI * 2);
+  ctx.ellipse(s.x, s.y + 6, (w + h) * 10, (w + h) * 4, 0, 0, Math.PI * 2);
   ctx.fill();
+  poly(ctx, [e, s, lift(s, wall), lift(e, wall)], side);
+  poly(ctx, [west, s, lift(s, wall), lift(west, wall)], front);
+  poly(ctx, [lift(n, wall), lift(e, wall), lift(s, wall), lift(west, wall)], roof);
+  if (door) {
+    const a = lerp(west, s, 0.4);
+    const b = lerp(west, s, 0.6);
+    poly(ctx, [a, b, lift(b, wall * 0.52), lift(a, wall * 0.52)], '#3a2418');
+  }
+  return { n, e, s, west, wall };
+}
 
-  switch (building.type) {
-    case 'keep':
-      drawKeep(ctx, x, y, w, h, color, building.level);
-      break;
-    case 'shack':
-      ctx.fillStyle = '#c4a06a';
-      ctx.beginPath();
-      ctx.moveTo(x + w / 2, y + 6);
-      ctx.lineTo(x + w - 4, y + h - 6);
-      ctx.lineTo(x + 4, y + h - 6);
-      ctx.fill();
-      ctx.fillStyle = '#6b3e28';
-      ctx.fillRect(x + w / 2 - 3, y + h - 16, 6, 10);
-      break;
-    case 'cabin':
-      box(ctx, x + 4, y + 10, w - 8, h - 16, '#8d6a45', '#6e5134');
-      ctx.fillStyle = '#d7dde2';
-      ctx.fillRect(x + 8, y + 16, w - 16, 8);
-      break;
-    case 'house':
-      ctx.fillStyle = '#a33b3b';
-      ctx.beginPath();
-      ctx.moveTo(x + 2, y + 16);
-      ctx.lineTo(x + w / 2, y + 2);
-      ctx.lineTo(x + w - 2, y + 16);
-      ctx.fill();
-      box(ctx, x + 6, y + 16, w - 12, h - 22, '#f0e2c4', '#c9b18a');
-      ctx.fillStyle = '#6ec1d6';
-      ctx.fillRect(x + 12, y + 22, 8, 8);
-      break;
-    case 'khrush':
-      box(ctx, x + 3, y + 6, w - 6, h - 10, '#d7d2c6', '#b7b2a6');
-      ctx.fillStyle = '#8fd0ea';
-      for (let row = 0; row < 3; row++) {
-        for (let col = 0; col < 4; col++) ctx.fillRect(x + 8 + col * 14, y + 10 + row * 10, 8, 6);
-      }
-      break;
-    case 'highrise':
-      box(ctx, x + 8, y + 2, w - 16, h - 8, '#c9d0d4', '#9aa6ad');
-      ctx.fillStyle = '#f2e2a8';
-      for (let row = 0; row < 6; row++) {
-        ctx.fillRect(x + 14, y + 8 + row * 10, 7, 6);
-        ctx.fillRect(x + w - 22, y + 8 + row * 10, 7, 6);
-      }
-      break;
-    case 'granary':
-      box(ctx, x + 4, y + 8, w - 8, h - 12, '#c4553a', '#8d3a2c');
-      ctx.fillStyle = '#f2d7a2';
-      ctx.beginPath();
-      ctx.arc(x + w / 2, y + h / 2 + 2, 8, 0, Math.PI * 2);
-      ctx.fill();
-      break;
-    case 'stockpile':
-      ctx.fillStyle = 'rgba(120, 84, 48, 0.25)';
-      ctx.fillRect(x + 3, y + 3, w - 6, h - 6);
-      ctx.strokeStyle = '#8a5a32';
-      ctx.strokeRect(x + 3, y + 3, w - 6, h - 6);
-      ctx.fillStyle = '#8a5a32';
-      ctx.fillRect(x + 8, y + 10, 14, 10);
-      ctx.fillStyle = '#d9d3c6';
-      ctx.fillRect(x + 26, y + 16, 12, 10);
-      ctx.fillStyle = '#9a4e32';
-      ctx.fillRect(x + 16, y + 28, 16, 8);
-      break;
-    case 'woodcutter':
-      box(ctx, x + 6, y + 12, w - 12, h - 18, '#a97848', '#6e4b2e');
-      ctx.strokeStyle = '#4a3424';
-      ctx.beginPath();
-      ctx.moveTo(x + w - 8, y + 8);
-      ctx.lineTo(x + w - 2, y + h - 8);
-      ctx.stroke();
-      break;
-    case 'orchard':
-      ctx.fillStyle = '#357a3e';
-      ctx.fillRect(x + 2, y + 2, w - 4, h - 4);
-      for (let row = 0; row < 2; row++) {
-        for (let col = 0; col < 3; col++) {
-          const tx = x + 16 + col * 28;
-          const ty = y + 18 + row * 28;
-          ctx.fillStyle = '#246b32';
-          ctx.beginPath();
-          ctx.arc(tx, ty, 8, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = '#d6453c';
-          ctx.beginPath();
-          ctx.arc(tx - 3, ty - 1, 1.6, 0, Math.PI * 2);
-          ctx.arc(tx + 3, ty + 2, 1.6, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-      break;
-    case 'dairy':
-      box(ctx, x + 6, y + 14, w - 12, h - 20, '#f4f1ea', '#d7d0c4');
-      ctx.fillStyle = '#f7f7f7';
-      ctx.beginPath();
-      ctx.ellipse(x + w * 0.65, y + h * 0.62, 12, 7, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#222';
-      ctx.fillRect(x + w * 0.62, y + h * 0.55, 3, 3);
-      ctx.fillRect(x + w * 0.74, y + h * 0.62, 3, 3);
-      break;
-    case 'hunter':
-      box(ctx, x + 6, y + 14, w - 12, h - 18, '#6e5134', '#4e3924');
-      ctx.strokeStyle = '#f2e6d0';
-      ctx.beginPath();
-      ctx.moveTo(x + 12, y + 12);
-      ctx.lineTo(x + 8, y + 4);
-      ctx.moveTo(x + 12, y + 12);
-      ctx.lineTo(x + 18, y + 4);
-      ctx.stroke();
-      break;
-    case 'wheat':
-      ctx.fillStyle = '#d8b44a';
-      ctx.fillRect(x + 3, y + 3, w - 6, h - 6);
-      ctx.strokeStyle = '#a8872e';
-      for (let i = 0; i < 5; i++) {
-        ctx.beginPath();
-        ctx.moveTo(x + 8, y + 8 + i * 12);
-        ctx.lineTo(x + w - 8, y + 8 + i * 12);
-        ctx.stroke();
-      }
-      break;
-    case 'mill': {
-      box(ctx, x + 8, y + 16, w - 16, h - 20, '#f4efe4', '#d9d0c2');
-      const angle = time / 500;
-      ctx.strokeStyle = '#8d6a45';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(x + w / 2, y + 16);
-      ctx.lineTo(x + w / 2 + Math.cos(angle) * 16, y + 16 + Math.sin(angle) * 16);
-      ctx.moveTo(x + w / 2, y + 16);
-      ctx.lineTo(x + w / 2 + Math.cos(angle + Math.PI) * 16, y + 16 + Math.sin(angle + Math.PI) * 16);
-      ctx.stroke();
-      ctx.lineWidth = 1;
-      break;
+function windows(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, wall: number, rows: number, cols: number) {
+  const west = tileToIso(x, y + h);
+  const south = tileToIso(x + w, y + h);
+  const east = tileToIso(x + w, y);
+  ctx.fillStyle = '#9fd4ea';
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      const t = (col + 1) / (cols + 1);
+      const base = lerp(west, south, t);
+      const yy = base.y - wall * ((row + 1) / (rows + 1.4));
+      ctx.fillRect(base.x - 2, yy, 4, 3);
+      const side = lerp(south, east, t);
+      ctx.fillRect(side.x - 2, side.y - wall * ((row + 1) / (rows + 1.4)), 3, 3);
     }
-    case 'bakery':
-      box(ctx, x + 4, y + 12, w - 8, h - 16, '#f0d2b0', '#c4553a');
-      ctx.fillStyle = '#f2e6d0';
-      ctx.fillRect(x + 10, y + 18, 10, 6);
-      break;
-    case 'hop':
-      ctx.fillStyle = '#3f7a32';
-      ctx.fillRect(x + 3, y + 3, w - 6, h - 6);
-      ctx.strokeStyle = '#d8c598';
-      for (let i = 0; i < 4; i++) {
-        ctx.beginPath();
-        ctx.moveTo(x + 10 + i * 14, y + h - 8);
-        ctx.lineTo(x + 10 + i * 14, y + 8);
-        ctx.stroke();
-      }
-      break;
-    case 'brewery':
-      box(ctx, x + 4, y + 10, w - 8, h - 14, '#6e5134', '#4a3424');
-      ctx.fillStyle = '#e0a11b';
-      ctx.beginPath();
-      ctx.ellipse(x + w / 2, y + h / 2, 8, 10, 0, 0, Math.PI * 2);
-      ctx.fill();
-      break;
-    case 'tavern':
-      box(ctx, x + 4, y + 12, w - 8, h - 16, '#a33b3b', '#6e2420');
-      ctx.fillStyle = '#f2d15a';
-      ctx.fillRect(x + 10, y + 4, 18, 10);
-      ctx.fillStyle = '#222';
-      ctx.font = '8px sans-serif';
-      ctx.fillText('пиво', x + 12, y + 12);
-      break;
-    case 'quarry':
-      ctx.fillStyle = '#b7b1a4';
-      ctx.fillRect(x + 2, y + 2, w - 4, h - 4);
-      ctx.fillStyle = '#8a8478';
-      ctx.beginPath();
-      ctx.moveTo(x + 8, y + h - 6);
-      ctx.lineTo(x + w / 2, y + 8);
-      ctx.lineTo(x + w - 8, y + h - 6);
-      ctx.fill();
-      break;
-    case 'mine':
-      box(ctx, x + 4, y + 8, w - 8, h - 12, '#5c514c', '#3a3330');
-      ctx.fillStyle = '#1a1614';
-      ctx.beginPath();
-      ctx.arc(x + w / 2, y + h / 2 + 2, 7, 0, Math.PI * 2);
-      ctx.fill();
-      break;
-    case 'pitch':
-      box(ctx, x + 6, y + 10, w - 12, h - 14, '#3a3a38', '#222');
-      ctx.fillStyle = '#111';
-      ctx.beginPath();
-      ctx.ellipse(x + w / 2, y + h / 2, 8, 5, 0, 0, Math.PI * 2);
-      ctx.fill();
-      break;
-    case 'market':
-      ctx.fillStyle = '#e0a11b';
-      ctx.fillRect(x + 4, y + 8, w - 8, 8);
-      box(ctx, x + 6, y + 16, w - 12, h - 22, '#f4efe4', '#d8c598');
-      break;
-    case 'barracks':
-      box(ctx, x + 4, y + 10, w - 8, h - 14, '#6d7380', '#4e5560');
-      ctx.strokeStyle = color;
-      ctx.beginPath();
-      ctx.moveTo(x + 12, y + h - 6);
-      ctx.lineTo(x + 12, y + 6);
-      ctx.moveTo(x + w - 12, y + h - 6);
-      ctx.lineTo(x + w - 12, y + 8);
-      ctx.stroke();
-      break;
-    default:
-      box(ctx, x + 4, y + 4, w - 8, h - 8, '#ccc', '#888');
   }
+}
 
+function markBuilding(ctx: CanvasRenderingContext2D, state: GameState, building: Building, wall: number, selected: boolean) {
+  const def = BUILDINGS[building.type];
+  const n = tileToIso(building.x, building.y);
+  const s = tileToIso(building.x + def.w, building.y + def.h);
+  const west = tileToIso(building.x, building.y + def.h);
+  const color = state.players[building.playerId]?.color ?? '#888';
+  const flag = lift(n, wall + 10);
   ctx.fillStyle = color;
-  ctx.fillRect(x + 3, y + 3, 7, 10);
-  ctx.fillStyle = '#f4efe4';
-  ctx.fillRect(x + 8, y + 3, 4, 6);
-
-  if (building.plague > 0) {
-    ctx.fillStyle = '#9be07a';
-    ctx.font = 'bold 11px sans-serif';
-    ctx.fillText('чума', x + 8, y + 14);
-  }
-  if (!building.complete || building.upgrading) {
-    const need = building.upgrading ? 220 : def.buildTicks || 1;
-    const ratio = Math.max(0, Math.min(1, building.buildProgress / need));
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(x + 4, y + h - 8, w - 8, 4);
-    ctx.fillStyle = '#e6b15a';
-    ctx.fillRect(x + 4, y + h - 8, (w - 8) * ratio, 4);
-    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
-    ctx.strokeRect(x + 3, y + 3, w - 6, h - 6);
-  }
+  ctx.fillRect(flag.x, flag.y, 3, 12);
+  ctx.fillRect(flag.x, flag.y, 10, 6);
   if (selected) {
     ctx.strokeStyle = '#fff4d2';
     ctx.lineWidth = 2;
-    ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+    const pts = diamond(building.x, building.y, def.w, def.h);
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y - wall);
+    for (const p of pts.slice(1)) ctx.lineTo(p.x, p.y - wall);
+    ctx.closePath();
+    ctx.stroke();
     ctx.lineWidth = 1;
   }
-  if (building.hp < building.maxHp) {
-    ctx.fillStyle = '#3a2018';
-    ctx.fillRect(x + 4, y - 4, w - 8, 3);
-    ctx.fillStyle = '#d4543c';
-    ctx.fillRect(x + 4, y - 4, (w - 8) * Math.max(0, building.hp / building.maxHp), 3);
+  if (!building.complete || building.upgrading) {
+    const need = building.upgrading ? 220 : def.buildTicks || 1;
+    bar(ctx, west, s, building.buildProgress / need, '#e6b15a');
+  } else if (def.cycle > 0 && building.workerIds.length > 0) {
+    bar(ctx, west, s, building.work / def.cycle, '#8dce67');
   }
-  if (building.complete && def.workers > 0) {
+  if (def.workers > 0) {
+    const badge = lift(tileToIso(building.x + def.w, building.y), wall + 6);
     ctx.fillStyle = '#1c1612';
     ctx.beginPath();
-    ctx.arc(x + w - 9, y + 10, 8, 0, Math.PI * 2);
+    ctx.arc(badge.x, badge.y, 8, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = building.workerIds.length > 0 ? '#f6ead7' : '#e6b15a';
     ctx.font = 'bold 11px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(String(building.workerIds.length), x + w - 9, y + 14);
+    ctx.fillText(String(building.workerIds.length), badge.x, badge.y + 4);
     ctx.textAlign = 'left';
-    if (def.cycle > 0 && building.workerIds.length > 0) {
-      const ratio = Math.max(0, Math.min(1, building.work / def.cycle));
-      ctx.fillStyle = 'rgba(0,0,0,0.55)';
-      ctx.fillRect(x + 4, y - 9, w - 8, 4);
-      ctx.fillStyle = '#8dce67';
-      ctx.fillRect(x + 4, y - 9, (w - 8) * ratio, 4);
-    }
   }
-  const warning = buildingWarning(state, building);
-  if (warning) {
+  if (buildingWarning(state, building)) {
+    const warn = lift(s, wall + 18);
     ctx.fillStyle = '#e6b15a';
     ctx.beginPath();
-    ctx.arc(x + w / 2, y - 16, 8, 0, Math.PI * 2);
+    ctx.arc(warn.x, warn.y, 8, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = '#1c1612';
     ctx.font = 'bold 13px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('!', x + w / 2, y - 11);
+    ctx.fillText('!', warn.x, warn.y + 4);
     ctx.textAlign = 'left';
+  }
+}
+
+function bar(ctx: CanvasRenderingContext2D, a: Pt, b: Pt, ratio: number, color: string) {
+  const t = Math.max(0, Math.min(1, ratio));
+  ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y + 5);
+  ctx.lineTo(b.x, b.y + 5);
+  ctx.stroke();
+  const end = lerp(a, b, t);
+  ctx.strokeStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y + 5);
+  ctx.lineTo(end.x, end.y + 5);
+  ctx.stroke();
+  ctx.lineWidth = 1;
+}
+
+function wallHeight(building: Building): number {
+  switch (building.type) {
+    case 'keep':
+      return 28 + building.level * 6;
+    case 'shack':
+      return 16;
+    case 'cabin':
+    case 'dairy':
+      return 20;
+    case 'house':
+    case 'brewery':
+      return 24;
+    case 'khrush':
+      return 46;
+    case 'highrise':
+      return 72;
+    case 'granary':
+      return 26;
+    case 'stockpile':
+      return 8;
+    case 'woodcutter':
+    case 'hunter':
+    case 'pitch':
+      return 18;
+    case 'orchard':
+      return 18;
+    case 'wheat':
+      return 6;
+    case 'mill':
+      return 28;
+    case 'bakery':
+    case 'tavern':
+    case 'barracks':
+      return 22;
+    case 'hop':
+      return 14;
+    case 'quarry':
+      return 10;
+    case 'mine':
+    case 'market':
+      return 16;
+    default:
+      return 18;
+  }
+}
+
+function drawBuilding(ctx: CanvasRenderingContext2D, building: Building, time: number) {
+  const def = BUILDINGS[building.type];
+  ctx.save();
+  if (!building.complete || building.upgrading) ctx.globalAlpha = 0.82;
+  const wall = wallHeight(building);
+  switch (building.type) {
+    case 'keep':
+      drawVolume(ctx, building.x, building.y, def.w, def.h, wall, '#d7d0c2', '#a39c90', '#8d8578', true);
+      crenellations(ctx, building.x, building.y, def.w, def.h, wall, Math.min(4, building.level + 1));
+      break;
+    case 'shack':
+      drawTent(ctx, building.x, building.y, def.w, def.h, '#c4a06a', '#8d6a45');
+      break;
+    case 'cabin':
+      drawVolume(ctx, building.x, building.y, def.w, def.h, wall, '#c4a574', '#8d6a45', '#6e5134', true);
+      break;
+    case 'house':
+      drawVolume(ctx, building.x, building.y, def.w, def.h, wall, '#f0e2c4', '#c9b18a', '#a33b3b', true);
+      windows(ctx, building.x, building.y, def.w, def.h, wall, 1, 2);
+      break;
+    case 'khrush':
+      drawVolume(ctx, building.x, building.y, def.w, def.h, wall, '#d7d2c6', '#b7b2a6', '#9aa097', false);
+      windows(ctx, building.x, building.y, def.w, def.h, wall, 4, 4);
+      break;
+    case 'highrise':
+      drawVolume(ctx, building.x, building.y, def.w, def.h, wall, '#d5dde2', '#aeb8c0', '#8d98a1', false);
+      windows(ctx, building.x, building.y, def.w, def.h, wall, 7, 3);
+      break;
+    case 'granary':
+      drawVolume(ctx, building.x, building.y, def.w, def.h, wall, '#c4553a', '#8d3a2c', '#f2d7a2', true);
+      break;
+    case 'stockpile':
+      drawStockpile(ctx, building.x, building.y, def.w, def.h);
+      break;
+    case 'woodcutter':
+      drawVolume(ctx, building.x, building.y, def.w, def.h, wall, '#c48a52', '#8a5a32', '#6e4b2e', true);
+      break;
+    case 'dairy':
+      drawVolume(ctx, building.x, building.y, def.w, def.h, wall, '#f4f1ea', '#d7d0c4', '#c4553a', true);
+      drawCow(ctx, building.x + def.w * 0.7, building.y + def.h * 0.72);
+      break;
+    case 'hunter':
+      drawVolume(ctx, building.x, building.y, def.w, def.h, wall, '#8a6244', '#5c4030', '#6e5134', true);
+      break;
+    case 'wheat':
+      drawField(ctx, building.x, building.y, def.w, def.h, '#d8b44a', '#a8872e');
+      break;
+    case 'mill':
+      drawVolume(ctx, building.x, building.y, def.w, def.h, wall, '#f4efe4', '#d9d0c2', '#8d6a45', true);
+      drawBlades(ctx, building.x + def.w / 2, building.y + 0.3, time);
+      break;
+    case 'bakery':
+      drawVolume(ctx, building.x, building.y, def.w, def.h, wall, '#f0d2b0', '#c49578', '#c4553a', true);
+      drawSmoke(ctx, building.x + def.w * 0.72, building.y + 0.25, wall, time);
+      break;
+    case 'hop':
+      drawHop(ctx, building.x, building.y, def.w, def.h);
+      break;
+    case 'brewery':
+      drawVolume(ctx, building.x, building.y, def.w, def.h, wall, '#6e5134', '#4a3424', '#3a2a22', true);
+      drawVat(ctx, building.x + def.w * 0.65, building.y + def.h * 0.4);
+      break;
+    case 'tavern':
+      drawVolume(ctx, building.x, building.y, def.w, def.h, wall, '#a33b3b', '#6e2420', '#6e2420', true);
+      drawSign(ctx, building.x + 0.4, building.y + def.h * 0.7, wall);
+      break;
+    case 'quarry':
+      drawQuarry(ctx, building.x, building.y, def.w, def.h);
+      break;
+    case 'mine':
+      drawVolume(ctx, building.x, building.y, def.w, def.h, wall, '#5c514c', '#3a3330', '#2a2422', false);
+      drawMouth(ctx, building.x, building.y, def.w, def.h, wall);
+      break;
+    case 'pitch':
+      drawPitch(ctx, building.x, building.y, def.w, def.h);
+      break;
+    case 'market':
+      drawVolume(ctx, building.x, building.y, def.w, def.h, wall, '#f4efe4', '#d8c598', '#e0a11b', false);
+      break;
+    case 'barracks':
+      drawVolume(ctx, building.x, building.y, def.w, def.h, wall, '#8d93a0', '#5c6370', '#4e5560', true);
+      break;
+    default:
+      drawVolume(ctx, building.x, building.y, def.w, def.h, wall, '#ccc', '#999', '#777', true);
+  }
+  if (building.plague > 0) {
+    const p = tileToIso(building.x + def.w / 2, building.y + def.h / 2);
+    ctx.fillStyle = '#9be07a';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.fillText('чума', p.x - 12, p.y - wall);
   }
   ctx.restore();
 }
 
-function drawKeep(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, color: string, level: number) {
-  box(ctx, x + 6, y + 10, w - 12, h - 14, '#d9d3c6', '#8d8578');
-  const towers = Math.min(4, level);
-  for (let i = 0; i < towers; i++) {
-    ctx.fillStyle = '#c9c3b4';
-    ctx.fillRect(x + 8 + i * 4, y + 6, 3, 6);
+function crenellations(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, wall: number, count: number) {
+  ctx.fillStyle = '#c9c3b4';
+  for (let i = 0; i < count; i++) {
+    const p = lift(tileToIso(x + (w * (i + 1)) / (count + 1), y + h * 0.22), wall);
+    ctx.fillRect(p.x, p.y - 6, 4, 6);
   }
-  ctx.fillStyle = color;
-  ctx.fillRect(x + w / 2 - 2, y + 2, 4, 16);
-  ctx.fillRect(x + w / 2 - 2, y + 2, 12, 7);
 }
 
-function box(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, fill: string, roof: string) {
-  ctx.fillStyle = roof;
-  ctx.fillRect(x, y, w, 5);
-  ctx.fillStyle = fill;
-  ctx.fillRect(x, y + 5, w, h - 5);
+function drawTent(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, cloth: string, shade: string) {
+  const n = tileToIso(x, y);
+  const e = tileToIso(x + w, y);
+  const s = tileToIso(x + w, y + h);
+  const west = tileToIso(x, y + h);
+  const peak = lift({ x: (n.x + s.x) / 2, y: (n.y + s.y) / 2 }, 20);
+  poly(ctx, [west, s, peak], cloth);
+  poly(ctx, [s, e, peak], shade);
+  poly(ctx, [e, n, peak], shade);
+  poly(ctx, [n, west, peak], cloth);
+}
+
+function drawStockpile(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
+  poly(ctx, diamond(x, y, w, h), 'rgba(90,60,30,0.25)');
+  drawRock(ctx, x + 0.4, y + 0.5, '#8a5a32', '#5c3a22');
+  drawRock(ctx, x + 1.5, y + 0.8, '#d9d3c6', '#8d877c');
+  drawRock(ctx, x + 0.8, y + 1.4, '#9a4e32', '#5c342c');
+}
+
+function drawField(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, a: string, b: string) {
+  poly(ctx, diamond(x, y, w, h), a);
+  ctx.strokeStyle = b;
+  ctx.lineWidth = 1.5;
+  for (let i = 1; i < h * 2; i++) {
+    const p = lerp(tileToIso(x, y + i * 0.5), tileToIso(x + w, y + i * 0.5), 1);
+    const q = tileToIso(x, y + i * 0.5);
+    ctx.beginPath();
+    ctx.moveTo(q.x, q.y);
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+  }
+}
+
+function drawHop(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
+  poly(ctx, diamond(x, y, w, h), '#3f7a32');
+  ctx.strokeStyle = '#d8c598';
+  ctx.lineWidth = 2;
+  for (let col = 0; col < w; col++) {
+    const base = tileToIso(x + col + 0.5, y + h - 0.2);
+    const top = lift(tileToIso(x + col + 0.5, y + 0.3), 16);
+    ctx.beginPath();
+    ctx.moveTo(base.x, base.y);
+    ctx.lineTo(top.x, top.y);
+    ctx.stroke();
+  }
+}
+
+function drawBlades(ctx: CanvasRenderingContext2D, x: number, y: number, time: number) {
+  const p = lift(tileToIso(x, y), 36);
+  const angle = time / 280;
+  ctx.strokeStyle = '#f4efe4';
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 4; i++) {
+    const a = angle + (i * Math.PI) / 2;
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+    ctx.lineTo(p.x + Math.cos(a) * 16, p.y + Math.sin(a) * 8);
+    ctx.stroke();
+  }
+}
+
+function drawSmoke(ctx: CanvasRenderingContext2D, x: number, y: number, wall: number, time: number) {
+  const p = lift(tileToIso(x, y), wall + 4);
+  ctx.fillStyle = '#d7d2c6';
+  ctx.fillRect(p.x - 2, p.y, 4, 8);
+  for (let i = 0; i < 3; i++) {
+    const shift = ((time / 300 + i * 0.3) % 1) * 16;
+    ctx.globalAlpha = 0.45;
+    ctx.beginPath();
+    ctx.arc(p.x + Math.sin(time / 200 + i) * 3, p.y - shift, 3 + i, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawVat(ctx: CanvasRenderingContext2D, x: number, y: number) {
+  const p = tileToIso(x, y);
+  ctx.fillStyle = '#e0a11b';
+  ctx.beginPath();
+  ctx.ellipse(p.x, p.y - 8, 7, 10, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawSign(ctx: CanvasRenderingContext2D, x: number, y: number, wall: number) {
+  const p = lift(tileToIso(x, y), wall * 0.7);
+  ctx.fillStyle = '#f2d15a';
+  ctx.fillRect(p.x, p.y, 16, 8);
+  ctx.fillStyle = '#3a2418';
+  ctx.font = '8px sans-serif';
+  ctx.fillText('пиво', p.x + 1, p.y + 7);
+}
+
+function drawQuarry(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
+  poly(ctx, diamond(x, y, w, h), '#b7b1a4');
+  poly(ctx, diamond(x + 0.35, y + 0.35, w - 0.7, h - 0.7), '#8a8478');
+  drawRock(ctx, x + 0.2, y + 0.2, '#d9d3c6', '#8d877c');
+  drawRock(ctx, x + w - 1.1, y + 0.3, '#c9c3b4', '#7d776c');
+}
+
+function drawMouth(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, wall: number) {
+  const west = tileToIso(x, y + h);
+  const south = tileToIso(x + w, y + h);
+  const c = lerp(west, south, 0.5);
+  ctx.fillStyle = '#14110f';
+  ctx.beginPath();
+  ctx.ellipse(c.x, c.y - wall * 0.35, 7, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawPitch(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
+  poly(ctx, diamond(x, y, w, h), '#2a2e2a');
+  const c = tileToIso(x + w / 2, y + h / 2);
+  ctx.fillStyle = '#111';
+  ctx.beginPath();
+  ctx.ellipse(c.x, c.y, 14, 7, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#6e5134';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(c.x, c.y);
+  ctx.lineTo(c.x + 4, c.y - 22);
+  ctx.stroke();
+  ctx.lineWidth = 1;
+}
+
+function drawCow(ctx: CanvasRenderingContext2D, x: number, y: number) {
+  const p = tileToIso(x, y);
+  ctx.fillStyle = '#f7f7f7';
+  ctx.beginPath();
+  ctx.ellipse(p.x, p.y - 4, 8, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#222';
+  ctx.fillRect(p.x + 3, p.y - 7, 2, 2);
+  ctx.fillRect(p.x - 2, p.y - 6, 2, 2);
+}
+
+function drawTree(ctx: CanvasRenderingContext2D, x: number, y: number, apples: boolean) {
+  const p = tileToIso(x + 0.5, y + 0.5);
+  ctx.fillStyle = 'rgba(20,14,10,0.25)';
+  ctx.beginPath();
+  ctx.ellipse(p.x + 2, p.y + 2, 7, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#6e4b2e';
+  ctx.fillRect(p.x - 1.5, p.y - 10, 3, 10);
+  ctx.fillStyle = '#2f7a3a';
+  ctx.beginPath();
+  ctx.arc(p.x, p.y - 16, 8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#246332';
+  ctx.beginPath();
+  ctx.arc(p.x + 4, p.y - 14, 5, 0, Math.PI * 2);
+  ctx.fill();
+  if (!apples) return;
+  ctx.fillStyle = '#d6453c';
+  ctx.beginPath();
+  ctx.arc(p.x - 3, p.y - 16, 1.5, 0, Math.PI * 2);
+  ctx.arc(p.x + 3, p.y - 13, 1.5, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawRock(ctx: CanvasRenderingContext2D, x: number, y: number, light: string, dark: string) {
+  const p = tileToIso(x + 0.5, y + 0.5);
+  ctx.fillStyle = 'rgba(20,14,10,0.25)';
+  ctx.beginPath();
+  ctx.ellipse(p.x + 2, p.y + 3, 8, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = dark;
+  ctx.beginPath();
+  ctx.moveTo(p.x - 8, p.y);
+  ctx.lineTo(p.x, p.y - 12);
+  ctx.lineTo(p.x + 9, p.y);
+  ctx.fill();
+  ctx.fillStyle = light;
+  ctx.beginPath();
+  ctx.moveTo(p.x - 6, p.y);
+  ctx.lineTo(p.x - 1, p.y - 8);
+  ctx.lineTo(p.x + 2, p.y);
+  ctx.fill();
+}
+
+function drawMarsh(ctx: CanvasRenderingContext2D, x: number, y: number) {
+  const p = tileToIso(x + 0.5, y + 0.5);
+  ctx.fillStyle = '#1b1e1c';
+  ctx.beginPath();
+  ctx.ellipse(p.x, p.y, 10, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#6a8f3a';
+  ctx.beginPath();
+  ctx.moveTo(p.x - 3, p.y);
+  ctx.lineTo(p.x - 4, p.y - 8);
+  ctx.moveTo(p.x + 2, p.y);
+  ctx.lineTo(p.x + 3, p.y - 9);
+  ctx.stroke();
 }
 
 function drawGhost(ctx: CanvasRenderingContext2D, ghost: Ghost) {
   const def = BUILDINGS[ghost.type];
-  const x = ghost.x * TILE;
-  const y = ghost.y * TILE;
-  const w = def.w * TILE;
-  const h = def.h * TILE;
   ctx.save();
   ctx.globalAlpha = 0.45;
-  ctx.fillStyle = ghost.ok ? '#7dba5a' : '#d4543c';
-  ctx.fillRect(x, y, w, h);
+  poly(ctx, diamond(ghost.x, ghost.y, def.w, def.h), ghost.ok ? '#7dba5a' : '#d4543c');
   ctx.globalAlpha = 0.9;
   ctx.strokeStyle = ghost.ok ? '#edffe4' : '#ffd0c8';
-  ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+  ctx.lineWidth = 2;
+  const pts = diamond(ghost.x, ghost.y, def.w, def.h);
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (const p of pts.slice(1)) ctx.lineTo(p.x, p.y);
+  ctx.closePath();
+  ctx.stroke();
+  if (def.nearRadius > 0) {
+    const cx = ghost.x + def.w / 2;
+    const cy = ghost.y + def.h / 2;
+    ctx.globalAlpha = 0.8;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    const steps = 28;
+    for (let i = 0; i <= steps; i++) {
+      const a = (i / steps) * Math.PI * 2;
+      const p = tileToIso(cx + Math.cos(a) * def.nearRadius, cy + Math.sin(a) * def.nearRadius);
+      if (i === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    }
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
-function drawPerson(
-  ctx: CanvasRenderingContext2D,
-  state: GameState,
-  person: Person,
-  walk: boolean,
-  time: number,
-  selected: boolean,
-) {
+function drawPerson(ctx: CanvasRenderingContext2D, state: GameState, person: Person, walk: boolean, time: number, selected: boolean) {
   const color = state.players[person.playerId]?.color ?? '#ccc';
-  const working = person.task.type === 'work' && person.task.mode === 'labor';
-  const swing = walk || working ? Math.sin(time / 90 + person.anim) : 0;
-  const bob = walk ? Math.sin(time / 90 + person.anim) * 1.2 : working ? Math.sin(time / 140) * 0.6 : 0;
-  const x = person.x * TILE;
-  const y = person.y * TILE + bob;
-  shadow(ctx, x, person.y * TILE);
-  if (selected) {
-    ctx.strokeStyle = '#fff4d2';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x - 9, y - 20, 18, 32);
+  let tool: 'axe' | 'pick' | 'apple' | 'spear' | 'club' | 'sword' | null = null;
+  const task = person.task;
+  if (task.type === 'work' && task.mode === 'labor' && !person.cargo) {
+    const job = state.buildings.find((b) => b.id === task.buildingId);
+    if (job?.type === 'woodcutter') tool = 'axe';
+    else if (job?.type === 'quarry' || job?.type === 'mine' || job?.type === 'pitch') tool = 'pick';
+    else if (job?.type === 'hunter') tool = 'spear';
+    else if (job?.type === 'orchard' || job?.type === 'wheat' || job?.type === 'hop') tool = 'apple';
   }
-  ctx.strokeStyle = '#3a2a22';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(x, y + 1);
-  ctx.lineTo(x - 3 + swing * 3, y + 8);
-  ctx.moveTo(x, y + 1);
-  ctx.lineTo(x + 3 - swing * 3, y + 8);
-  ctx.stroke();
-  ctx.fillStyle = color;
-  ctx.fillRect(x - 4, y - 7, 8, 9);
-  ctx.fillStyle = '#f0c7a0';
-  ctx.beginPath();
-  ctx.arc(x, y - 10, 3.3, 0, Math.PI * 2);
-  ctx.fill();
+  drawFigure(ctx, person.x, person.y, color, walk || person.task.type === 'work', time, tool, person.cargo, selected);
   if (person.task.type === 'idle') {
+    const p = tileToIso(person.x, person.y);
     ctx.fillStyle = '#ffd45a';
     ctx.beginPath();
-    ctx.arc(x + 6, y - 16, 2.3, 0, Math.PI * 2);
+    ctx.arc(p.x + 6, p.y - 20, 2.2, 0, Math.PI * 2);
     ctx.fill();
   }
-  if (person.task.type === 'work' && person.task.mode === 'labor') {
-    const workplace = person.task.buildingId;
-    const job = state.buildings.find((b) => b.id === workplace);
-    drawTool(ctx, x, y, swing, job?.type ?? 'orchard');
-  }
-  if (person.cargo) {
-    const wide = person.cargoQty > 1 ? 10 : 5;
-    const tall = person.cargoQty > 1 ? 8 : 4;
-    ctx.fillStyle = '#6e5134';
-    ctx.fillRect(x + 4, y - 6, wide + 2, tall + 2);
-    ctx.fillStyle = CARGO[person.cargo] ?? '#ccc';
-    ctx.fillRect(x + 5, y - 5, wide, tall);
-  }
-  ctx.lineWidth = 1;
 }
 
-function drawTool(ctx: CanvasRenderingContext2D, x: number, y: number, swing: number, type: BuildingType) {
-  ctx.save();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = '#6e5134';
-  if (type === 'woodcutter' || type === 'quarry' || type === 'mine' || type === 'pitch') {
-    ctx.beginPath();
-    ctx.moveTo(x + 4, y - 2);
-    ctx.lineTo(x + 11, y - 12 + swing * 4);
-    ctx.stroke();
-    ctx.strokeStyle = type === 'woodcutter' ? '#c9c3b4' : '#9a9a9a';
-    ctx.beginPath();
-    ctx.moveTo(x + 8, y - 10 + swing * 4);
-    ctx.lineTo(x + 14, y - 14 + swing * 4);
-    ctx.stroke();
-  } else if (type === 'hunter') {
-    ctx.strokeStyle = '#d7dde2';
-    ctx.beginPath();
-    ctx.moveTo(x + 3, y - 4);
-    ctx.lineTo(x + 12, y - 14 + swing * 3);
-    ctx.stroke();
-  } else if (type === 'orchard' || type === 'wheat' || type === 'hop') {
-    ctx.fillStyle = type === 'orchard' ? '#d6453c' : '#e6c84a';
-    ctx.beginPath();
-    ctx.arc(x + 9, y - 8 + swing * 3, 2.4, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.restore();
-}
-
-function drawSoldier(
+function drawFigure(
   ctx: CanvasRenderingContext2D,
-  color: string,
   tx: number,
   ty: number,
+  color: string,
   walk: boolean,
   time: number,
-  weapon: 'club' | 'sword',
+  tool: 'axe' | 'pick' | 'apple' | 'spear' | 'club' | 'sword' | null,
+  cargo: Resource | null,
+  ring: boolean,
 ) {
-  const swing = walk ? Math.sin(time / 80) : 0;
-  const x = tx * TILE;
-  const y = ty * TILE;
-  shadow(ctx, x, y);
+  const base = tileToIso(tx, ty);
+  const swing = walk ? Math.sin(time / 90 + tx * 3) : 0;
+  const bob = walk ? Math.sin(time / 90 + ty) * 1.1 : 0;
+  const x = base.x;
+  const y = base.y + bob;
+  ctx.fillStyle = 'rgba(20,14,10,0.28)';
+  ctx.beginPath();
+  ctx.ellipse(base.x + 1, base.y + 2, 5, 2.2, 0, 0, Math.PI * 2);
+  ctx.fill();
+  if (ring) {
+    ctx.strokeStyle = '#fff4d2';
+    ctx.strokeRect(x - 7, y - 20, 14, 22);
+  }
   ctx.strokeStyle = '#3a2a22';
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(x, y);
-  ctx.lineTo(x - 3 + swing * 3, y + 8);
-  ctx.moveTo(x, y);
-  ctx.lineTo(x + 3 - swing * 3, y + 8);
+  ctx.moveTo(x, y - 6);
+  ctx.lineTo(x - 3 + swing * 2, y + 1);
+  ctx.moveTo(x, y - 6);
+  ctx.lineTo(x + 3 - swing * 2, y + 1);
   ctx.stroke();
   ctx.fillStyle = color;
-  ctx.fillRect(x - 4, y - 8, 8, 9);
-  ctx.fillStyle = '#d9d3c6';
-  ctx.fillRect(x - 4, y - 12, 8, 4);
-  ctx.strokeStyle = weapon === 'sword' ? '#d7dde2' : '#6e5134';
+  ctx.fillRect(x - 3.5, y - 14, 7, 8);
+  ctx.fillStyle = '#f0c7a0';
   ctx.beginPath();
-  ctx.moveTo(x + 4, y - 2);
-  ctx.lineTo(x + 10, y - 12);
-  ctx.stroke();
+  ctx.arc(x, y - 16, 3, 0, Math.PI * 2);
+  ctx.fill();
+  if (tool) {
+    ctx.strokeStyle = tool === 'sword' || tool === 'spear' ? '#d7dde2' : '#6e5134';
+    ctx.beginPath();
+    ctx.moveTo(x + 3, y - 10);
+    ctx.lineTo(x + 9, y - 18 + swing * 3);
+    ctx.stroke();
+    if (tool === 'apple') {
+      ctx.fillStyle = '#d6453c';
+      ctx.beginPath();
+      ctx.arc(x + 9, y - 18 + swing * 3, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  if (cargo) {
+    ctx.fillStyle = '#6e5134';
+    ctx.fillRect(x + 4, y - 12, 8, 7);
+    ctx.fillStyle = CARGO[cargo] ?? '#ccc';
+    ctx.fillRect(x + 5, y - 11, 6, 5);
+  }
   ctx.lineWidth = 1;
 }
 
 function drawOx(ctx: CanvasRenderingContext2D, tx: number, ty: number, walk: boolean, time: number, cargo: Resource | null) {
-  const x = tx * TILE;
-  const y = ty * TILE + (walk ? Math.sin(time / 140) : 0);
-  shadow(ctx, x, ty * TILE);
+  const p = tileToIso(tx, ty);
+  const y = p.y + (walk ? Math.sin(time / 140) : 0);
+  ctx.fillStyle = 'rgba(20,14,10,0.28)';
+  ctx.beginPath();
+  ctx.ellipse(p.x, p.y + 2, 8, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
   ctx.fillStyle = '#8a5a32';
   ctx.beginPath();
-  ctx.ellipse(x, y, 9, 5, 0, 0, Math.PI * 2);
+  ctx.ellipse(p.x, y - 4, 9, 5, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = '#f0e2c4';
   ctx.beginPath();
-  ctx.arc(x + 8, y - 2, 3.5, 0, Math.PI * 2);
+  ctx.arc(p.x + 8, y - 6, 3.2, 0, Math.PI * 2);
   ctx.fill();
   ctx.strokeStyle = '#3a2a22';
   ctx.beginPath();
-  ctx.moveTo(x + 10, y - 4);
-  ctx.lineTo(x + 14, y - 8);
-  ctx.moveTo(x + 8, y - 4);
-  ctx.lineTo(x + 6, y - 9);
+  ctx.moveTo(p.x + 10, p.y - 8);
+  ctx.lineTo(p.x + 14, y - 12);
   ctx.stroke();
   if (cargo) {
     ctx.fillStyle = CARGO[cargo] ?? '#ccc';
-    ctx.fillRect(x - 5, y - 8, 8, 5);
+    ctx.fillRect(p.x - 6, y - 12, 8, 5);
   }
 }
 
 function drawMob(ctx: CanvasRenderingContext2D, mob: Mob, walk: boolean, time: number) {
-  const x = mob.x * TILE;
-  const y = mob.y * TILE + (walk ? Math.sin(time / 100 + mob.id) * 0.8 : 0);
-  shadow(ctx, x, mob.y * TILE);
+  const p = tileToIso(mob.x, mob.y);
+  const y = p.y + (walk ? Math.sin(time / 100 + mob.id) : 0);
+  ctx.fillStyle = 'rgba(20,14,10,0.28)';
+  ctx.beginPath();
+  ctx.ellipse(p.x, p.y + 2, 6, 2.4, 0, 0, Math.PI * 2);
+  ctx.fill();
   if (mob.kind === 'deer') {
     ctx.fillStyle = '#c48a52';
     ctx.beginPath();
-    ctx.ellipse(x, y, 7, 4, 0, 0, Math.PI * 2);
+    ctx.ellipse(p.x, y - 4, 7, 3.5, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.beginPath();
-    ctx.arc(x + 6, y - 3, 3, 0, Math.PI * 2);
+    ctx.arc(p.x + 6, y - 7, 2.5, 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = '#8a5a32';
     ctx.beginPath();
-    ctx.moveTo(x + 6, y - 6);
-    ctx.lineTo(x + 3, y - 11);
-    ctx.moveTo(x + 7, y - 6);
-    ctx.lineTo(x + 11, y - 11);
+    ctx.moveTo(p.x + 6, y - 9);
+    ctx.lineTo(p.x + 3, y - 14);
+    ctx.moveTo(p.x + 7, y - 9);
+    ctx.lineTo(p.x + 11, y - 14);
     ctx.stroke();
   } else if (mob.kind === 'wolf') {
     ctx.fillStyle = '#8d9094';
     ctx.beginPath();
-    ctx.ellipse(x, y, 8, 4, 0, 0, Math.PI * 2);
+    ctx.ellipse(p.x, y - 4, 8, 3.5, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.beginPath();
-    ctx.moveTo(x + 6, y - 2);
-    ctx.lineTo(x + 12, y - 1);
-    ctx.lineTo(x + 6, y + 2);
+    ctx.moveTo(p.x + 6, y - 6);
+    ctx.lineTo(p.x + 12, y - 8);
+    ctx.lineTo(p.x + 6, y - 3);
     ctx.fill();
-    ctx.fillStyle = '#d4543c';
-    ctx.fillRect(x + 4, y - 5, 2, 2);
+    ctx.fillStyle = '#5c6064';
+    ctx.beginPath();
+    ctx.arc(p.x - 6, y - 5, 2, 0, Math.PI * 2);
+    ctx.fill();
   } else if (mob.kind === 'bear') {
-    ctx.fillStyle = '#5c4030';
+    ctx.fillStyle = '#4a3428';
     ctx.beginPath();
-    ctx.ellipse(x, y, 11, 7, 0, 0, Math.PI * 2);
+    ctx.ellipse(p.x, y - 5, 9, 6, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.beginPath();
-    ctx.arc(x + 8, y - 2, 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(x + 5, y - 7, 2.2, 0, Math.PI * 2);
-    ctx.arc(x + 11, y - 7, 2.2, 0, Math.PI * 2);
+    ctx.arc(p.x + 7, y - 8, 3.5, 0, Math.PI * 2);
     ctx.fill();
   } else {
-    drawSoldier(ctx, '#6e2420', mob.x, mob.y, walk, time, 'club');
-    ctx.fillStyle = '#111';
-    ctx.fillRect(x - 4, mob.y * TILE - 14, 8, 3);
+    drawFigure(ctx, mob.x, mob.y, '#6e2420', walk, time, 'club', null, false);
+    ctx.fillStyle = '#e15b45';
+    const q = tileToIso(mob.x, mob.y);
+    ctx.fillRect(q.x - 3, q.y - 18, 6, 2);
+  }
+  if (mob.hp < mob.maxHp) {
+    ctx.fillStyle = '#3a2018';
+    ctx.fillRect(p.x - 6, y - 16, 12, 2);
+    ctx.fillStyle = '#d4543c';
+    ctx.fillRect(p.x - 6, y - 16, 12 * Math.max(0, mob.hp / mob.maxHp), 2);
   }
 }
 
-function shadow(ctx: CanvasRenderingContext2D, x: number, y: number) {
-  ctx.fillStyle = 'rgba(0,0,0,0.2)';
-  ctx.beginPath();
-  ctx.ellipse(x, y + 8, 5, 2, 0, 0, Math.PI * 2);
-  ctx.fill();
+export function minimapLayout(mapW: number, mapH: number, viewW: number, viewH: number) {
+  const bounds = mapIsoBounds(mapW, mapH);
+  const spanX = bounds.maxX - bounds.minX;
+  const spanY = bounds.maxY - bounds.minY;
+  const scale = Math.min(viewW / spanX, viewH / spanY) * 0.92;
+  return {
+    bounds,
+    scale,
+    ox: (viewW - spanX * scale) / 2 - bounds.minX * scale,
+    oy: (viewH - spanY * scale) / 2 - bounds.minY * scale,
+  };
 }
 
 export function renderMinimap(
@@ -774,28 +1029,51 @@ export function renderMinimap(
   camera: Camera,
   viewW: number,
   viewH: number,
-  baked: HTMLCanvasElement,
-  width: number,
-  height: number,
+  baked: TerrainBake,
+  miniW: number,
+  miniH: number,
 ) {
+  const layout = minimapLayout(state.mapW, state.mapH, miniW, miniH);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, width, height);
-  ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(baked, 0, 0, width, height);
-  const sx = width / state.mapW;
-  const sy = height / state.mapH;
-  for (const building of state.buildings) {
-    if (building.hp <= 0) continue;
-    const color = state.players[building.playerId]?.color ?? '#fff';
-    ctx.fillStyle = color;
-    const def = BUILDINGS[building.type];
-    ctx.fillRect(building.x * sx, building.y * sy, Math.max(2, def.w * sx), Math.max(2, def.h * sy));
+  ctx.fillStyle = '#1c1612';
+  ctx.fillRect(0, 0, miniW, miniH);
+  ctx.setTransform(layout.scale, 0, 0, layout.scale, layout.ox, layout.oy);
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(
+    baked.canvas,
+    -baked.originX,
+    -baked.originY,
+    baked.canvas.width / baked.scale,
+    baked.canvas.height / baked.scale,
+  );
+  for (const player of state.players) {
+    if (!player.alive) continue;
+    const p = tileToIso(player.spawnX, player.spawnY);
+    ctx.fillStyle = player.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 18, 0, Math.PI * 2);
+    ctx.fill();
   }
-  const left = (camera.x - viewW / (2 * camera.zoom)) / TILE;
-  const top = (camera.y - viewH / (2 * camera.zoom)) / TILE;
-  const rw = viewW / camera.zoom / TILE;
-  const rh = viewH / camera.zoom / TILE;
+  const corners = [
+    screenToIso(camera, viewW, viewH, 0, 0),
+    screenToIso(camera, viewW, viewH, viewW, 0),
+    screenToIso(camera, viewW, viewH, viewW, viewH),
+    screenToIso(camera, viewW, viewH, 0, viewH),
+  ];
   ctx.strokeStyle = '#fff4d2';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(left * sx, top * sy, rw * sx, rh * sy);
+  ctx.lineWidth = 2 / layout.scale;
+  ctx.beginPath();
+  ctx.moveTo(corners[0].x, corners[0].y);
+  for (const corner of corners.slice(1)) ctx.lineTo(corner.x, corner.y);
+  ctx.closePath();
+  ctx.stroke();
+}
+
+export function minimapToTile(mapW: number, mapH: number, miniW: number, miniH: number, px: number, py: number) {
+  const layout = minimapLayout(mapW, mapH, miniW, miniH);
+  const isoX = (px - layout.ox) / layout.scale;
+  const isoY = (py - layout.oy) / layout.scale;
+  const a = isoX / (TILE_W / 2);
+  const b = isoY / (TILE_H / 2);
+  return { x: (b + a) / 2, y: (b - a) / 2 };
 }

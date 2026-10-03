@@ -17,7 +17,7 @@ html, body, #app {
   margin: 0;
   height: 100%;
   overflow: hidden;
-  background: #c8b48a;
+  background: #241c16;
   color: var(--paper);
 }
 
@@ -60,13 +60,55 @@ button.active, button[aria-pressed="true"] {
   position: absolute;
   top: 8px;
   left: 8px;
-  right: 8px;
+  right: auto;
+  max-width: min(780px, calc(100% - 24px));
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
   z-index: 3;
   pointer-events: none;
+}
+
+#status, #resources { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; pointer-events: none; }
+#status > *, #resources > * { pointer-events: auto; }
+
+.resgroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 8px 4px 10px;
+}
+
+.resgroup .glabel { color: var(--muted); font-size: 12px; margin-right: 2px; }
+
+#hint {
+  position: absolute;
+  top: 118px;
+  left: 12px;
+  z-index: 3;
+  max-width: min(460px, calc(100% - 360px));
+  background: var(--panel);
+  border: 1px solid var(--gold);
+  color: var(--paper);
+  border-radius: 12px;
+  padding: 8px 12px;
+  pointer-events: none;
+}
+
+#tip {
+  position: absolute;
+  z-index: 7;
+  pointer-events: none;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--paper);
+  border-radius: 8px;
+  padding: 6px 8px;
+  max-width: 240px;
 }
 
 #topbar > * { pointer-events: auto; }
@@ -194,11 +236,25 @@ button.active, button[aria-pressed="true"] {
   right: 8px;
   bottom: 8px;
   display: grid;
-  grid-template-columns: auto 1fr auto auto;
+  grid-template-columns: auto 1fr auto auto auto;
   gap: 8px;
   align-items: end;
   z-index: 4;
 }
+
+#econ {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 160px;
+}
+
+#econ label { margin: 0; font-size: 12px; display: flex; align-items: center; gap: 6px; }
+#econ select, #econ input { min-height: 36px; width: auto; flex: 1; }
 
 #speeds { display: flex; gap: 4px; }
 
@@ -216,8 +272,8 @@ button.active, button[aria-pressed="true"] {
 #buttons small { color: var(--muted); }
 
 #mapwrap {
-  width: 180px;
-  height: 120px;
+  width: 240px;
+  height: 140px;
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -306,6 +362,8 @@ input[type="number"], select {
 @media (max-width: 800px) {
   #popbox, #peoplebox { width: min(340px, calc(100% - 24px)); top: 70px; }
   #dock { grid-template-columns: 1fr auto; }
+  #hint { max-width: calc(100% - 24px); top: 78px; }
+  #econ { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; }
   #speeds { grid-column: 1 / -1; }
   #mapwrap { width: 120px; height: 84px; }
   #panel {
