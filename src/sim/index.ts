@@ -28,6 +28,8 @@ export {
 export { consumeFood } from './economy';
 export type { MealResult } from './economy';
 export { createGame, planSpawns, terrainAt } from './world';
+export { createMob, createSoldier } from './entities';
+export { formationPoints } from './formation';
 export {
   applyCommand,
   buildingById,

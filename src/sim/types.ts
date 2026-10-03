@@ -133,9 +133,18 @@ export interface Soldier {
   maxHp: number;
   dmg: number;
   weapon: 'club' | 'sword';
-  order: 'defend' | 'raid';
+  order: 'defend' | 'raid' | 'move' | 'hold' | 'attack' | 'attackmove' | 'home';
   raidTargetId: number;
   anim: number;
+  destX: number;
+  destY: number;
+  anchorX: number;
+  anchorY: number;
+  targetKind: 'none' | 'soldier' | 'mob' | 'building';
+  targetId: number;
+  /** Flat [x, y, x, y, ...] tile centres. */
+  waypoints: number[];
+  waypointI: number;
 }
 
 export interface Ox {
@@ -201,6 +210,16 @@ export type Command =
   | { kind: 'market'; playerId: number; resource: Resource; mode: 'buy' | 'sell'; qty: number }
   | { kind: 'train'; playerId: number; weapon: 'club' | 'sword' }
   | { kind: 'order'; playerId: number; order: 'defend' | 'raid' }
+  | {
+      kind: 'army';
+      playerId: number;
+      ids: number[];
+      mode: 'move' | 'attackmove' | 'hold' | 'home' | 'attack';
+      x: number;
+      y: number;
+      target: 'none' | 'soldier' | 'mob' | 'building';
+      targetId: number;
+    }
   | { kind: 'demolish'; playerId: number; buildingId: number };
 
 export interface PopReason {

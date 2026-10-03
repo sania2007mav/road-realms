@@ -77,6 +77,14 @@ export function createSoldier(
     order: 'defend',
     raidTargetId: 0,
     anim: state.nextId,
+    destX: x,
+    destY: y,
+    anchorX: x,
+    anchorY: y,
+    targetKind: 'none',
+    targetId: 0,
+    waypoints: [],
+    waypointI: 0,
   };
   state.soldiers.push(soldier);
   return soldier;

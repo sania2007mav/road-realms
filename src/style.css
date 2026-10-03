@@ -54,7 +54,7 @@ button.active, button[aria-pressed="true"] {
   cursor: grab;
 }
 
-#world.placing { cursor: crosshair; }
+#world.placing, #world.attacking { cursor: crosshair; }
 
 #topbar {
   position: absolute;
@@ -195,6 +195,40 @@ button.active, button[aria-pressed="true"] {
   z-index: 5;
   pointer-events: none;
 }
+
+#army {
+  position: absolute;
+  left: 12px;
+  top: 168px;
+  z-index: 4;
+  width: min(300px, calc(100% - 24px));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  pointer-events: none;
+}
+
+#army > * { pointer-events: auto; }
+
+#army-box { background: var(--panel); }
+
+#army-body {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  width: 100%;
+}
+
+#army-count { margin: 0 0 8px; }
+
+#army-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+#army-hint { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+
+#army-box[aria-pressed='true'] { border-color: var(--gold); color: var(--gold); }
+#army-attack[aria-pressed='true'] { border-color: var(--bad); color: #fff4ef; }
 
 #panel {
   position: absolute;
@@ -392,6 +426,7 @@ input[type="number"], select {
 }
 
 @media (max-width: 800px) {
+  #army { top: 248px; }
   #popbox, #peoplebox { width: min(340px, calc(100% - 24px)); top: 70px; }
   #dock { grid-template-columns: 1fr auto; }
   #hint { max-width: 100%; }

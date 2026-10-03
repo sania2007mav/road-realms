@@ -158,6 +158,46 @@ test('карточка главного здания показывает цен
   await expect(page.getByTestId('build-quarry').locator('small')).not.toContainText('Нужен уровень');
 });
 
+test('рамка выделяет солдат, атака области показывает красный маркер', async ({ page }) => {
+  mkdirSync(shots, { recursive: true });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/road-realms/');
+  await page.evaluate(() => localStorage.removeItem('dorozhnye-kraya-tutorial'));
+  await page.getByTestId('new-game').click();
+  await page.getByTestId('tutorial-skip').click();
+  await page.evaluate(() => {
+    window.__game!.debugArmy();
+    window.__game!.focusArmy();
+    window.__game!.zoom(1.35);
+    window.__game!.setSpeed(0);
+  });
+  const points = await page.evaluate(() => window.__game!.armyPoints());
+  expect(points).toHaveLength(4);
+  const box = await page.locator('#world').boundingBox();
+  if (!box) throw new Error('нет холста');
+  const pad = 24;
+  const x0 = box.x + Math.min(...points.map((p) => p.x)) - pad;
+  const y0 = box.y + Math.min(...points.map((p) => p.y)) - pad;
+  const x1 = box.x + Math.max(...points.map((p) => p.x)) + pad;
+  const y1 = box.y + Math.max(...points.map((p) => p.y)) + pad;
+  await page.mouse.move(x0, y0);
+  await page.mouse.down();
+  await page.mouse.move(x1, y1, { steps: 12 });
+  await expect(page.getByTestId('army-count')).toContainText('Всего 4');
+  await expect(page.getByTestId('army-hold')).toBeVisible();
+  await page.screenshot({ path: `${shots}/army_select.png` });
+  await page.mouse.up();
+
+  await page.getByTestId('army-attack').click();
+  const bandit = await page.evaluate(() => window.__game!.banditScreen());
+  expect(bandit).not.toBeNull();
+  await page.mouse.click(box.x + bandit!.x, box.y + bandit!.y);
+  await page.getByTestId('speed-3').click();
+  await page.waitForTimeout(450);
+  await expect.poll(async () => page.evaluate(() => window.__game!.markerKind())).toBe('attack');
+  await page.screenshot({ path: `${shots}/army_attack.png` });
+});
+
 test('полоса, подсказка и список построек не перекрываются', async ({ page }) => {
   test.setTimeout(120_000);
   mkdirSync(shots, { recursive: true });
@@ -258,6 +298,11 @@ declare global {
       tileCenter: (x: number, y: number) => { x: number; y: number };
       select: (id: number) => void;
       setSpeed: (n: number) => void;
+      debugArmy: () => number[];
+      armyPoints: () => { id: number; x: number; y: number }[];
+      banditScreen: () => { x: number; y: number } | null;
+      markerKind: () => string;
+      focusArmy: () => void;
       snapshot: () => {
         tick: number;
         idle: number;

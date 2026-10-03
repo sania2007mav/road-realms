@@ -13,6 +13,19 @@ export interface Ghost {
   ok: boolean;
 }
 
+export interface OrderMarker {
+  kind: 'move' | 'attack';
+  x: number;
+  y: number;
+  born: number;
+}
+
+export interface BattleOverlay {
+  selected: ReadonlySet<number>;
+  box: { x: number; y: number; w: number; h: number } | null;
+  markers: readonly OrderMarker[];
+}
+
 type PropKind = 'forest' | 'lime' | 'iron' | 'swamp';
 
 export interface TerrainBake {
@@ -257,6 +270,7 @@ export function renderWorld(
   selectedId: number | null,
   time: number,
   selectedPersonId: number | null = null,
+  overlay: BattleOverlay | null = null,
 ) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = '#241c16';
@@ -360,13 +374,94 @@ export function renderWorld(
   for (const soldier of state.soldiers) {
     if (soldier.hp <= 0 || !seen(camera, viewW, viewH, soldier.x, soldier.y)) continue;
     const color = state.players[soldier.playerId]?.color ?? '#eee';
+    const picked = overlay?.selected.has(soldier.id) ?? false;
     sprites.push({
       depth: unitDepth(state, soldier.x, soldier.y),
-      draw: () => drawFigure(ctx, soldier.x, soldier.y, color, moving(soldier), time, soldier.weapon === 'sword' ? 'sword' : 'club', null, false),
+      draw: () => {
+        if (picked) drawFeetRing(ctx, soldier.x, soldier.y);
+        drawFigure(ctx, soldier.x, soldier.y, color, moving(soldier), time, soldier.weapon === 'sword' ? 'sword' : 'club', null, false);
+        if (picked) drawHpBar(ctx, soldier.x, soldier.y, soldier.maxHp > 0 ? soldier.hp / soldier.maxHp : 0);
+      },
     });
   }
   sprites.sort((a, b) => a.depth - b.depth);
   for (const sprite of sprites) sprite.draw();
+  if (overlay) {
+    for (const marker of overlay.markers) drawOrderMarker(ctx, marker, time);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (overlay?.box) drawSelectBox(ctx, overlay.box);
+}
+
+function drawFeetRing(ctx: CanvasRenderingContext2D, tx: number, ty: number) {
+  const p = tileToIso(tx, ty);
+  ctx.strokeStyle = '#fff4d2';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(p.x, p.y + 2, 12, 5.5, 0, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+function drawHpBar(ctx: CanvasRenderingContext2D, tx: number, ty: number, ratio: number) {
+  const p = tileToIso(tx, ty);
+  const width = 16;
+  const x = p.x - width / 2;
+  const y = p.y - 36;
+  ctx.fillStyle = 'rgba(12, 8, 6, 0.55)';
+  ctx.fillRect(x - 1, y - 1, width + 2, 5);
+  ctx.fillStyle = ratio <= 0.35 ? '#e15b45' : '#8dce67';
+  ctx.fillRect(x, y, width * Math.max(0, Math.min(1, ratio)), 3);
+}
+
+function drawOrderMarker(ctx: CanvasRenderingContext2D, marker: OrderMarker, time: number) {
+  const age = time - marker.born;
+  const alpha = Math.max(0, 1 - age / 1400);
+  if (alpha <= 0) return;
+  const p = tileToIso(marker.x, marker.y);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  if (marker.kind === 'move') {
+    ctx.strokeStyle = '#7dce6a';
+    ctx.fillStyle = '#7dce6a';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+    ctx.lineTo(p.x, p.y - 28);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y - 28);
+    ctx.lineTo(p.x + 14, p.y - 20);
+    ctx.lineTo(p.x, p.y - 12);
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    const grow = 1 + (age / 1400) * 0.45;
+    ctx.strokeStyle = '#e15b45';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.ellipse(p.x, p.y, 58 * grow, 28 * grow, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.ellipse(p.x, p.y, 24 * grow, 12 * grow, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawSelectBox(ctx: CanvasRenderingContext2D, box: { x: number; y: number; w: number; h: number }) {
+  const x = Math.min(box.x, box.x + box.w);
+  const y = Math.min(box.y, box.y + box.h);
+  const w = Math.abs(box.w);
+  const h = Math.abs(box.h);
+  ctx.save();
+  ctx.fillStyle = 'rgba(242, 231, 201, 0.16)';
+  ctx.strokeStyle = '#f2e7c9';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6, 4]);
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeRect(x, y, w, h);
+  ctx.restore();
 }
 
 function drawVolume(

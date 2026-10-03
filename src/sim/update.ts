@@ -42,6 +42,8 @@ import type {
   TaxId,
 } from './types';
 import { FOODS, RESOURCES, Terrain } from './types';
+import { formationPoints } from './formation';
+import { findPath } from './path';
 import { terrainAt } from './world';
 
 export function buildingCenter(building: Building): { x: number; y: number } {
@@ -433,8 +435,69 @@ export function applyCommand(state: GameState, command: Command): boolean {
       if (soldier.playerId !== command.playerId || soldier.hp <= 0) continue;
       soldier.order = command.order;
       soldier.raidTargetId = command.order === 'raid' && keep ? keep.id : 0;
+      soldier.waypoints = [];
+      soldier.waypointI = 0;
+      soldier.targetKind = 'none';
+      soldier.targetId = 0;
     }
     state.message = command.order === 'raid' ? 'Солдаты идут в набег' : 'Солдаты обороняют посад';
+    return true;
+  }
+
+  if (command.kind === 'army') {
+    const squad = command.ids
+      .map((id) => state.soldiers.find((s) => s.id === id && s.playerId === command.playerId && s.hp > 0))
+      .filter((s): s is Soldier => !!s)
+      .sort((a, b) => a.id - b.id);
+    if (!squad.length) {
+      state.message = 'Нет выбранных солдат';
+      return false;
+    }
+    if (command.mode === 'hold') {
+      for (const soldier of squad) {
+        soldier.order = 'hold';
+        soldier.anchorX = soldier.x;
+        soldier.anchorY = soldier.y;
+        soldier.waypoints = [];
+        soldier.waypointI = 0;
+        soldier.targetKind = 'none';
+        soldier.targetId = 0;
+      }
+      state.message = 'Войско стоит';
+      return true;
+    }
+    if (command.mode === 'attack') {
+      for (const soldier of squad) {
+        soldier.order = 'attack';
+        soldier.targetKind = command.target === 'none' ? 'mob' : command.target;
+        soldier.targetId = command.targetId;
+        soldier.destX = command.x;
+        soldier.destY = command.y;
+        soldier.waypoints = [];
+        soldier.waypointI = 0;
+      }
+      state.message = 'Войско атакует';
+      return true;
+    }
+    const keep = playerKeep(state, command.playerId);
+    const home = keep ? buildingCenter(keep) : { x: command.x, y: command.y };
+    const goal = command.mode === 'home' ? { x: home.x, y: home.y + 1.6 } : { x: command.x, y: command.y };
+    const spots = formationPoints(squad.length, goal.x, goal.y);
+    squad.forEach((soldier, index) => {
+      const spot = spots[index];
+      soldier.order = command.mode === 'home' ? 'home' : command.mode;
+      soldier.destX = spot.x;
+      soldier.destY = spot.y;
+      soldier.anchorX = spot.x;
+      soldier.anchorY = spot.y;
+      soldier.targetKind = 'none';
+      soldier.targetId = 0;
+      const path = findPath(state, soldier.x, soldier.y, spot.x, spot.y);
+      soldier.waypoints = [];
+      for (const step of path) soldier.waypoints.push(step.x, step.y);
+      soldier.waypointI = 0;
+    });
+    state.message = command.mode === 'attackmove' ? 'Атака области' : command.mode === 'home' ? 'Войско возвращается' : 'Войско идёт';
     return true;
   }
 
@@ -1265,7 +1328,180 @@ function nearestPersonOrSoldier(state: GameState, x: number, y: number, range: n
   return best;
 }
 
+interface Threat {
+  kind: 'mob' | 'soldier' | 'building';
+  id: number;
+  x: number;
+  y: number;
+  d: number;
+}
+
+function rectDistance(x: number, y: number, bx: number, by: number, bw: number, bh: number): number {
+  const cx = Math.max(bx, Math.min(bx + bw, x));
+  const cy = Math.max(by, Math.min(by + bh, y));
+  return Math.hypot(x - cx, y - cy);
+}
+
+function nearestThreat(state: GameState, x: number, y: number, range: number, playerId: number): Threat | null {
+  let best: Threat | null = null;
+  const consider = (threat: Threat) => {
+    if (threat.d > range) return;
+    if (!best || threat.d < best.d - 1e-9 || (Math.abs(threat.d - best.d) <= 1e-9 && threat.id < best.id)) best = threat;
+  };
+  for (const other of state.soldiers) {
+    if (other.hp <= 0 || other.playerId === playerId) continue;
+    if (!state.players[other.playerId]?.alive) continue;
+    consider({ kind: 'soldier', id: other.id, x: other.x, y: other.y, d: Math.hypot(other.x - x, other.y - y) });
+  }
+  for (const mob of state.mobs) {
+    if (!mob.alive || mob.kind === 'deer') continue;
+    consider({ kind: 'mob', id: mob.id, x: mob.x, y: mob.y, d: Math.hypot(mob.x - x, mob.y - y) });
+  }
+  for (const building of state.buildings) {
+    if (building.hp <= 0 || building.playerId === playerId) continue;
+    if (!state.players[building.playerId]?.alive) continue;
+    const def = BUILDINGS[building.type];
+    const center = buildingCenter(building);
+    consider({
+      kind: 'building',
+      id: building.id,
+      x: center.x,
+      y: center.y,
+      d: rectDistance(x, y, building.x, building.y, def.w, def.h),
+    });
+  }
+  return best;
+}
+
+function ensureSoldier(soldier: Soldier) {
+  if (!soldier.waypoints) soldier.waypoints = [];
+  if (soldier.waypointI == null) soldier.waypointI = 0;
+  if (soldier.destX == null) soldier.destX = soldier.x;
+  if (soldier.destY == null) soldier.destY = soldier.y;
+  if (soldier.anchorX == null) soldier.anchorX = soldier.x;
+  if (soldier.anchorY == null) soldier.anchorY = soldier.y;
+  if (!soldier.targetKind) soldier.targetKind = 'none';
+}
+
+function followPath(soldier: Soldier): boolean {
+  while (soldier.waypointI + 1 < soldier.waypoints.length) {
+    const x = soldier.waypoints[soldier.waypointI];
+    const y = soldier.waypoints[soldier.waypointI + 1];
+    if (Math.hypot(soldier.x - x, soldier.y - y) < 0.28) {
+      soldier.waypointI += 2;
+      continue;
+    }
+    moveToward(soldier, x, y, SOLDIER_SPEED);
+    return false;
+  }
+  return moveToward(soldier, soldier.destX, soldier.destY, SOLDIER_SPEED);
+}
+
+function fightThreat(state: GameState, soldier: Soldier, threat: Threat) {
+  if (threat.kind === 'mob') {
+    const mob = state.mobs.find((m) => m.id === threat.id && m.alive);
+    if (!mob) return;
+    strikeMob(state, soldier, mob);
+    return;
+  }
+  if (threat.kind === 'soldier') {
+    const other = state.soldiers.find((s) => s.id === threat.id && s.hp > 0);
+    if (!other) return;
+    strikeSoldier(state, soldier, other);
+    return;
+  }
+  const building = buildingById(state, threat.id);
+  if (!building || building.hp <= 0) return;
+  strikeBuilding(state, soldier, building);
+}
+
+function strikeBuilding(state: GameState, soldier: Soldier, building: Building) {
+  const center = buildingCenter(building);
+  const def = BUILDINGS[building.type];
+  const reach = Math.max(def.w, def.h) * 0.45 + 0.55;
+  if (Math.hypot(center.x - soldier.x, center.y - soldier.y) > reach) {
+    moveToward(soldier, center.x, center.y, SOLDIER_SPEED);
+    return;
+  }
+  if (state.tick % 12 !== 0) return;
+  building.hp -= soldier.dmg;
+  if (building.hp <= 0 && building.type === 'keep') destroyKeep(state, building);
+}
+
+function resolveTarget(state: GameState, soldier: Soldier): Threat | null {
+  if (soldier.targetKind === 'soldier') {
+    const other = state.soldiers.find((s) => s.id === soldier.targetId && s.hp > 0);
+    if (!other) return null;
+    return { kind: 'soldier', id: other.id, x: other.x, y: other.y, d: 0 };
+  }
+  if (soldier.targetKind === 'mob') {
+    const mob = state.mobs.find((m) => m.id === soldier.targetId && m.alive);
+    if (!mob) return null;
+    return { kind: 'mob', id: mob.id, x: mob.x, y: mob.y, d: 0 };
+  }
+  if (soldier.targetKind === 'building') {
+    const building = buildingById(state, soldier.targetId);
+    if (!building || building.hp <= 0) return null;
+    const center = buildingCenter(building);
+    return { kind: 'building', id: building.id, x: center.x, y: center.y, d: 0 };
+  }
+  return null;
+}
+
+function updateDirected(state: GameState, soldier: Soldier) {
+  ensureSoldier(soldier);
+  if (soldier.order === 'hold') {
+    const foe = nearestThreat(state, soldier.anchorX, soldier.anchorY, 2.6, soldier.playerId);
+    if (foe) {
+      fightThreat(state, soldier, foe);
+      return;
+    }
+    if (Math.hypot(soldier.x - soldier.anchorX, soldier.y - soldier.anchorY) > 0.25) {
+      moveToward(soldier, soldier.anchorX, soldier.anchorY, SOLDIER_SPEED);
+    }
+    return;
+  }
+  if (soldier.order === 'attack') {
+    const foe = resolveTarget(state, soldier);
+    if (!foe) {
+      soldier.order = 'hold';
+      soldier.anchorX = soldier.x;
+      soldier.anchorY = soldier.y;
+      return;
+    }
+    fightThreat(state, soldier, foe);
+    return;
+  }
+  if (soldier.order === 'attackmove') {
+    const near = nearestThreat(state, soldier.x, soldier.y, 2.4, soldier.playerId);
+    const area = nearestThreat(state, soldier.destX, soldier.destY, 4.5, soldier.playerId);
+    const foe = near ?? area;
+    if (foe) {
+      fightThreat(state, soldier, foe);
+      return;
+    }
+    if (followPath(soldier)) {
+      soldier.order = 'hold';
+      soldier.anchorX = soldier.destX;
+      soldier.anchorY = soldier.destY;
+    }
+    return;
+  }
+  if (followPath(soldier)) {
+    if (soldier.order === 'home') soldier.order = 'defend';
+    else {
+      soldier.order = 'hold';
+      soldier.anchorX = soldier.destX;
+      soldier.anchorY = soldier.destY;
+    }
+  }
+}
+
 function updateSoldier(state: GameState, soldier: Soldier) {
+  if (soldier.order === 'move' || soldier.order === 'hold' || soldier.order === 'attack' || soldier.order === 'attackmove' || soldier.order === 'home') {
+    updateDirected(state, soldier);
+    return;
+  }
   const closeMob = nearestMob(state, soldier.x, soldier.y, soldier.order === 'raid' ? 1.2 : 9, false);
   const closeEnemy = nearestEnemySoldier(state, soldier, soldier.order === 'raid' ? 1.2 : 8);
   if (soldier.order === 'raid') {

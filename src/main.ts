@@ -12,6 +12,8 @@ import {
   buildingCenter,
   canPlace,
   createGame,
+  createMob,
+  createSoldier,
   currentTarget,
   deserialize,
   housingCap,
@@ -33,10 +35,14 @@ import {
   type Ration,
 } from './sim';
 import { ZOOM_MAX, clampCamera, focusTile, screenToTile, screenToWorld, worldToScreen, type Camera } from './render/camera';
-import { bakeTerrain, minimapToTile, renderMinimap, renderWorld, type Ghost } from './render/draw';
+import { bakeTerrain, minimapToTile, renderMinimap, renderWorld, type Ghost, type OrderMarker } from './render/draw';
+import { soldiersInScreenRect } from './select';
 
 const SAVE_KEY = 'dorozhnye-kraya-v1';
 const TUTORIAL_KEY = 'dorozhnye-kraya-tutorial';
+const ARMY_HINT_KEY = 'dorozhnye-kraya-army-hint';
+const ARMY_HINT =
+  'Щелчок выбирает солдата, рамка — нескольких (Shift добавляет). Двойной щелчок — всех такого оружия на экране. Правая кнопка: идти или атаковать цель. Клавиша A или кнопка «Атаковать область», затем щелчок. Ctrl+1…9 запоминает отряд, 1…9 выбирает его, повтор цифры показывает отряд на карте.';
 
 const RATIONS: { id: Ration; label: string }[] = [
   { id: 'none', label: 'Нет' },
@@ -88,6 +94,12 @@ const popbox = document.querySelector<HTMLElement>('#popbox')!;
 const peoplebox = document.querySelector<HTMLElement>('#peoplebox')!;
 const hintEl = document.querySelector<HTMLElement>('#hint')!;
 const tipEl = document.querySelector<HTMLElement>('#tip')!;
+const armyEl = document.querySelector<HTMLElement>('#army')!;
+const armyBody = document.querySelector<HTMLElement>('#army-body')!;
+const armyCount = document.querySelector<HTMLElement>('#army-count')!;
+const armyHint = document.querySelector<HTMLElement>('#army-hint')!;
+const armyBox = document.querySelector<HTMLButtonElement>('#army-box')!;
+const armyAttack = document.querySelector<HTMLButtonElement>('#army-attack')!;
 
 let state: GameState = createGame(20261003, { ai: 3 });
 let playing = false;
@@ -117,6 +129,21 @@ let dragging = false;
 let dragDist = 0;
 let lastPtr = { x: 0, y: 0 };
 let titleDir = 1;
+
+const selectedSoldiers = new Set<number>();
+const controlGroups: number[][] = [[], [], [], [], [], [], [], [], [], []];
+const markers: OrderMarker[] = [];
+let attackArmed = false;
+let boxMode = false;
+let pointerMode: 'none' | 'pan' | 'box' = 'none';
+let boxStart = { x: 0, y: 0 };
+let boxNow = { x: 0, y: 0 };
+let boxBase: number[] = [];
+let boxAdditive = false;
+let longTimer = 0;
+let lastGesture = 0;
+let lastSoldierClick = { id: 0, at: 0 };
+let lastGroupTap = { n: 0, at: 0 };
 
 function clampView() {
   const { w, h } = viewSize();
@@ -185,6 +212,7 @@ function startGame() {
   selectedId = keep?.id ?? null;
   queue = [];
   acc = 0;
+  resetArmy();
   title.hidden = true;
   endScreen.hidden = true;
   menu.hidden = true;
@@ -215,6 +243,7 @@ function loadGame() {
       lookAtPoint(center.x, center.y);
     }
     clampView();
+    resetArmy();
     buildChrome();
     flash('Поселение загружено');
     expose();
@@ -541,6 +570,7 @@ function syncHud() {
       .join('')}<p>Солдат: ${state.soldiers.filter((s) => s.playerId === 0 && s.hp > 0).length}. Солдат больше не занимает жильё.</p></div>`;
   }
   logEl.innerHTML = state.log.map((line) => `<div>${line}</div>`).join('');
+  syncArmy();
   if (state.message && state.message !== lastMessage) {
     lastMessage = state.message;
     flash(state.message);
@@ -837,6 +867,210 @@ function cargoColor(res: string): string {
   return map[res] ?? '#ccc';
 }
 
+function resetArmy() {
+  selectedSoldiers.clear();
+  attackArmed = false;
+  boxMode = false;
+  pointerMode = 'none';
+  markers.length = 0;
+  for (const group of controlGroups) group.length = 0;
+  worldCanvas.classList.remove('attacking');
+  syncArmy();
+}
+
+function livingSelection() {
+  for (const id of [...selectedSoldiers]) {
+    const soldier = state.soldiers.find((s) => s.id === id && s.playerId === 0 && s.hp > 0);
+    if (!soldier) selectedSoldiers.delete(id);
+  }
+}
+
+function syncArmy() {
+  armyEl.hidden = !playing;
+  livingSelection();
+  const list = state.soldiers.filter((s) => selectedSoldiers.has(s.id));
+  armyBody.hidden = list.length === 0;
+  const clubs = list.filter((s) => s.weapon === 'club').length;
+  const swords = list.filter((s) => s.weapon === 'sword').length;
+  armyCount.textContent = `Всего ${list.length} · ополченцы ${clubs} · мечники ${swords}`;
+  armyAttack.setAttribute('aria-pressed', attackArmed ? 'true' : 'false');
+  armyBox.setAttribute('aria-pressed', boxMode ? 'true' : 'false');
+  worldCanvas.classList.toggle('attacking', attackArmed);
+  if (!list.length) armyHint.hidden = true;
+}
+
+function noteFirstSelection() {
+  if (!selectedSoldiers.size) return;
+  if (localStorage.getItem(ARMY_HINT_KEY)) {
+    armyHint.hidden = true;
+    return;
+  }
+  armyHint.hidden = false;
+  armyHint.textContent = ARMY_HINT;
+  localStorage.setItem(ARMY_HINT_KEY, '1');
+}
+
+function issueArmy(
+  mode: 'move' | 'attackmove' | 'hold' | 'home' | 'attack',
+  x: number,
+  y: number,
+  target: 'none' | 'soldier' | 'mob' | 'building' = 'none',
+  targetId = 0,
+) {
+  if (!selectedSoldiers.size) return;
+  queue.push({
+    kind: 'army',
+    playerId: 0,
+    ids: [...selectedSoldiers],
+    mode,
+    x,
+    y,
+    target,
+    targetId,
+  });
+  if (mode === 'move' || mode === 'home') markers.push({ kind: 'move', x, y, born: performance.now() });
+  if (mode === 'attack' || mode === 'attackmove') markers.push({ kind: 'attack', x, y, born: performance.now() });
+  if (markers.length > 12) markers.splice(0, markers.length - 12);
+  attackArmed = false;
+  syncArmy();
+}
+
+function ownSoldierAt(x: number, y: number) {
+  let best: (typeof state.soldiers)[number] | null = null;
+  let bestD = 0.75;
+  for (const soldier of state.soldiers) {
+    if (soldier.hp <= 0 || soldier.playerId !== 0) continue;
+    const d = Math.hypot(soldier.x - x, soldier.y - y);
+    if (d < bestD) {
+      best = soldier;
+      bestD = d;
+    }
+  }
+  return best;
+}
+
+function hostileAt(x: number, y: number, tileX: number, tileY: number) {
+  let bestD = 0.75;
+  let soldierHit: (typeof state.soldiers)[number] | null = null;
+  for (const soldier of state.soldiers) {
+    if (soldier.hp <= 0 || soldier.playerId === 0) continue;
+    if (!state.players[soldier.playerId]?.alive) continue;
+    const d = Math.hypot(soldier.x - x, soldier.y - y);
+    if (d < bestD) {
+      soldierHit = soldier;
+      bestD = d;
+    }
+  }
+  if (soldierHit) return { target: 'soldier' as const, targetId: soldierHit.id, x: soldierHit.x, y: soldierHit.y };
+  let mobHit: (typeof state.mobs)[number] | null = null;
+  bestD = 0.75;
+  for (const mob of state.mobs) {
+    if (!mob.alive || mob.kind === 'deer') continue;
+    const d = Math.hypot(mob.x - x, mob.y - y);
+    if (d < bestD) {
+      mobHit = mob;
+      bestD = d;
+    }
+  }
+  if (mobHit) return { target: 'mob' as const, targetId: mobHit.id, x: mobHit.x, y: mobHit.y };
+  for (const building of state.buildings) {
+    if (building.hp <= 0 || building.playerId === 0) continue;
+    if (!state.players[building.playerId]?.alive) continue;
+    const def = BUILDINGS[building.type];
+    if (tileX >= building.x && tileX < building.x + def.w && tileY >= building.y && tileY < building.y + def.h) {
+      const center = buildingCenter(building);
+      return { target: 'building' as const, targetId: building.id, x: center.x, y: center.y };
+    }
+  }
+  return null;
+}
+
+function selectWeaponOnScreen(weapon: 'club' | 'sword') {
+  const { w, h } = viewSize();
+  selectedSoldiers.clear();
+  for (const soldier of state.soldiers) {
+    if (soldier.playerId !== 0 || soldier.hp <= 0 || soldier.weapon !== weapon) continue;
+    const point = worldToScreen(camera, w, h, soldier.x, soldier.y);
+    if (point.x >= 0 && point.x <= w && point.y >= 0 && point.y <= h) selectedSoldiers.add(soldier.id);
+  }
+}
+
+function paintBox() {
+  const { w, h } = viewSize();
+  const ids = soldiersInScreenRect(
+    state.soldiers,
+    camera,
+    w,
+    h,
+    { left: boxStart.x, top: boxStart.y, right: boxNow.x, bottom: boxNow.y },
+    0,
+  );
+  selectedSoldiers.clear();
+  if (boxAdditive) for (const id of boxBase) selectedSoldiers.add(id);
+  for (const id of ids) selectedSoldiers.add(id);
+  if (selectedSoldiers.size) noteFirstSelection();
+  syncArmy();
+}
+
+function centreSquad(ids: number[]) {
+  const list = state.soldiers.filter((s) => ids.includes(s.id) && s.hp > 0);
+  if (!list.length) return;
+  const x = list.reduce((sum, s) => sum + s.x, 0) / list.length;
+  const y = list.reduce((sum, s) => sum + s.y, 0) / list.length;
+  lookAtPoint(x, y);
+  clampView();
+}
+
+function onMapClick(screenX: number, screenY: number, shift: boolean, touch: boolean) {
+  const { w, h } = viewSize();
+  const world = screenToWorld(camera, w, h, screenX, screenY);
+  const tile = screenToTile(camera, w, h, screenX, screenY);
+  if (placing) {
+    pick(screenX, screenY);
+    return;
+  }
+  if (attackArmed && selectedSoldiers.size) {
+    issueArmy('attackmove', world.x, world.y);
+    return;
+  }
+  const soldier = ownSoldierAt(world.x, world.y);
+  if (soldier) {
+    const now = performance.now();
+    if (!shift && lastSoldierClick.id === soldier.id && now - lastSoldierClick.at < 400) selectWeaponOnScreen(soldier.weapon);
+    else if (shift) {
+      if (selectedSoldiers.has(soldier.id)) selectedSoldiers.delete(soldier.id);
+      else selectedSoldiers.add(soldier.id);
+    } else {
+      selectedSoldiers.clear();
+      selectedSoldiers.add(soldier.id);
+    }
+    lastSoldierClick = { id: soldier.id, at: now };
+    if (selectedSoldiers.size) noteFirstSelection();
+    syncArmy();
+    return;
+  }
+  if (touch && selectedSoldiers.size) {
+    const hostile = hostileAt(world.x, world.y, tile.x, tile.y);
+    if (hostile) issueArmy('attack', hostile.x, hostile.y, hostile.target, hostile.targetId);
+    else issueArmy('move', world.x, world.y);
+    return;
+  }
+  selectedSoldiers.clear();
+  attackArmed = false;
+  syncArmy();
+  pick(screenX, screenY);
+}
+
+function orderAt(screenX: number, screenY: number) {
+  if (!selectedSoldiers.size) return;
+  const { w, h } = viewSize();
+  const world = screenToWorld(camera, w, h, screenX, screenY);
+  const tile = screenToTile(camera, w, h, screenX, screenY);
+  const hostile = hostileAt(world.x, world.y, tile.x, tile.y);
+  if (hostile) issueArmy('attack', hostile.x, hostile.y, hostile.target, hostile.targetId);
+  else issueArmy('move', world.x, world.y);
+}
+
 function ghost(): Ghost | null {
   if (!placing || !hover || !playing) return null;
   const check = canPlace(state, 0, placing, hover.x, hover.y);
@@ -932,12 +1166,25 @@ function frame(now: number) {
   if (playing) clampView();
   const { w, h } = viewSize();
   const dpr = Math.min(2, window.devicePixelRatio || 1);
-  renderWorld(ctx, state, camera, w, h, dpr, baked, ghost(), selectedId, now, selectedPersonId);
+  const liveMarkers = markers.filter((marker) => now - marker.born < 1400);
+  if (liveMarkers.length !== markers.length) {
+    markers.length = 0;
+    markers.push(...liveMarkers);
+  }
+  renderWorld(ctx, state, camera, w, h, dpr, baked, ghost(), selectedId, now, selectedPersonId, {
+    selected: selectedSoldiers,
+    box:
+      pointerMode === 'box' && dragDist >= 8
+        ? { x: boxStart.x, y: boxStart.y, w: boxNow.x - boxStart.x, h: boxNow.y - boxStart.y }
+        : null,
+    markers: liveMarkers,
+  });
   renderMinimap(miniCtx, state, camera, w, h, baked, miniCanvas.width, miniCanvas.height);
   if (playing) syncHud();
   else {
     hintEl.hidden = true;
     tipEl.hidden = true;
+    armyEl.hidden = true;
   }
   requestAnimationFrame(frame);
 }
@@ -973,6 +1220,53 @@ function expose() {
     setSpeed(n: number) {
       setSpeed(n);
     },
+    debugArmy() {
+      state.mobs = state.mobs.filter((mob) => mob.kind === 'deer');
+      const keep = playerKeep(state, 0);
+      if (!keep) return [];
+      const ids: number[] = [];
+      for (let i = 0; i < 4; i++) {
+        const soldier = createSoldier(
+          state,
+          0,
+          keep.x + 0.6 + (i % 2) * 1.1,
+          keep.y + 3.4 + Math.floor(i / 2) * 0.9,
+          i < 2 ? 'club' : 'sword',
+        );
+        ids.push(soldier.id);
+      }
+      createMob(state, 'bandit', keep.x + 11, keep.y + 7);
+      return ids;
+    },
+    armyPoints() {
+      const { w, h } = viewSize();
+      return state.soldiers
+        .filter((s) => s.playerId === 0 && s.hp > 0)
+        .map((s) => ({ id: s.id, ...worldToScreen(camera, w, h, s.x, s.y) }));
+    },
+    banditScreen() {
+      const mob = state.mobs.find((m) => m.alive && m.kind === 'bandit');
+      if (!mob) return null;
+      const { w, h } = viewSize();
+      return worldToScreen(camera, w, h, mob.x, mob.y);
+    },
+    markerKind() {
+      const live = markers.filter((marker) => performance.now() - marker.born < 1400);
+      return live.length ? live[live.length - 1].kind : '';
+    },
+    focusArmy() {
+      const mine = state.soldiers.filter((s) => s.playerId === 0 && s.hp > 0);
+      const bandit = state.mobs.find((m) => m.alive && m.kind === 'bandit');
+      if (!mine.length) return;
+      let x = mine.reduce((sum, s) => sum + s.x, 0) / mine.length;
+      let y = mine.reduce((sum, s) => sum + s.y, 0) / mine.length;
+      if (bandit) {
+        x = (x + bandit.x) / 2;
+        y = (y + bandit.y) / 2;
+      }
+      lookAtPoint(x, y);
+      clampView();
+    },
     snapshot() {
       return {
         tick: state.tick,
@@ -1000,10 +1294,36 @@ function expose() {
 worldCanvas.addEventListener('pointerdown', (event) => {
   worldCanvas.setPointerCapture(event.pointerId);
   pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-  if (pointers.size === 1) {
-    dragging = true;
-    dragDist = 0;
-    lastPtr = { x: event.clientX, y: event.clientY };
+  if (pointers.size >= 2) {
+    window.clearTimeout(longTimer);
+    pointerMode = 'none';
+    return;
+  }
+  dragging = true;
+  dragDist = 0;
+  lastPtr = { x: event.clientX, y: event.clientY };
+  const rect = worldCanvas.getBoundingClientRect();
+  boxStart = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  boxNow = { ...boxStart };
+  const touch = event.pointerType === 'touch';
+  const selectDrag = playing && (event.button === 0 || touch) && (!touch || boxMode);
+  if (selectDrag) {
+    pointerMode = 'box';
+    boxAdditive = event.shiftKey;
+    boxBase = boxAdditive ? [...selectedSoldiers] : [];
+  } else {
+    pointerMode = 'pan';
+    if (touch && playing && !boxMode) {
+      window.clearTimeout(longTimer);
+      longTimer = window.setTimeout(() => {
+        if (dragDist < 14 && pointers.size === 1) {
+          pointerMode = 'box';
+          boxAdditive = false;
+          boxBase = [];
+          boxStart = { ...boxNow };
+        }
+      }, 480);
+    }
   }
 });
 worldCanvas.addEventListener('pointermove', (event) => {
@@ -1024,6 +1344,8 @@ worldCanvas.addEventListener('pointermove', (event) => {
     }
     pinch = dist;
     dragging = false;
+    pointerMode = 'none';
+    window.clearTimeout(longTimer);
     return;
   }
   pinch = 0;
@@ -1031,24 +1353,37 @@ worldCanvas.addEventListener('pointermove', (event) => {
   const dx = event.clientX - lastPtr.x;
   const dy = event.clientY - lastPtr.y;
   dragDist += Math.hypot(dx, dy);
-  camera.x -= dx / camera.zoom;
-  camera.y -= dy / camera.zoom;
-  clampView();
+  boxNow = { x: localX, y: localY };
+  if (pointerMode === 'box') {
+    if (dragDist >= 8) paintBox();
+  } else {
+    camera.x -= dx / camera.zoom;
+    camera.y -= dy / camera.zoom;
+    clampView();
+  }
   lastPtr = { x: event.clientX, y: event.clientY };
 });
 worldCanvas.addEventListener('pointerup', (event) => {
   const start = pointers.get(event.pointerId);
   pointers.delete(event.pointerId);
+  window.clearTimeout(longTimer);
   if (pointers.size < 2) pinch = 0;
-  if (pointers.size === 0 && dragging && dragDist < 8 && playing) {
-    const rect = worldCanvas.getBoundingClientRect();
-    pick((start?.x ?? event.clientX) - rect.left, (start?.y ?? event.clientY) - rect.top);
-  }
-  dragging = pointers.size > 0;
+  if (pointers.size === 0) {
+    lastGesture = dragDist;
+    const boxed = pointerMode === 'box' && dragDist >= 8;
+    pointerMode = 'none';
+    dragging = false;
+    if (!boxed && dragDist < 8 && playing && event.button === 0) {
+      const rect = worldCanvas.getBoundingClientRect();
+      onMapClick((start?.x ?? event.clientX) - rect.left, (start?.y ?? event.clientY) - rect.top, event.shiftKey, event.pointerType === 'touch');
+    }
+  } else dragging = true;
 });
 worldCanvas.addEventListener('pointercancel', (event) => {
   pointers.delete(event.pointerId);
+  window.clearTimeout(longTimer);
   dragging = false;
+  pointerMode = 'none';
 });
 worldCanvas.addEventListener(
   'wheel',
@@ -1061,8 +1396,12 @@ worldCanvas.addEventListener(
 );
 worldCanvas.addEventListener('contextmenu', (event) => {
   event.preventDefault();
+  const wasPlacing = placing != null;
   placing = null;
   worldCanvas.classList.remove('placing');
+  if (!playing || wasPlacing || lastGesture >= 8 || !selectedSoldiers.size) return;
+  const rect = worldCanvas.getBoundingClientRect();
+  orderAt(event.clientX - rect.left, event.clientY - rect.top);
 });
 miniCanvas.addEventListener('pointerdown', (event) => {
   if (!playing) return;
@@ -1084,7 +1423,35 @@ document.querySelector<HTMLButtonElement>('#home')!.onclick = () => {
 
 window.addEventListener('keydown', (event) => {
   if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
-  keys.add(event.key.toLowerCase());
+  const key = event.key.toLowerCase();
+  if (playing && !event.repeat && (event.ctrlKey || event.metaKey) && /^[1-9]$/.test(event.key)) {
+    event.preventDefault();
+    controlGroups[Number(event.key)] = [...selectedSoldiers];
+    flash(`Отряд ${event.key}`);
+    return;
+  }
+  if (playing && !event.repeat && !event.ctrlKey && !event.metaKey && !event.altKey && /^[1-9]$/.test(event.key)) {
+    const n = Number(event.key);
+    const living = controlGroups[n].filter((id) => state.soldiers.some((s) => s.id === id && s.hp > 0 && s.playerId === 0));
+    if (living.length) {
+      event.preventDefault();
+      const now = performance.now();
+      selectedSoldiers.clear();
+      for (const id of living) selectedSoldiers.add(id);
+      if (lastGroupTap.n === n && now - lastGroupTap.at < 400) centreSquad(living);
+      lastGroupTap = { n, at: now };
+      noteFirstSelection();
+      syncArmy();
+      return;
+    }
+  }
+  if (key === 'a' && !event.repeat && !event.ctrlKey && !event.metaKey && !event.altKey && playing && selectedSoldiers.size) {
+    event.preventDefault();
+    attackArmed = !attackArmed;
+    syncArmy();
+    return;
+  }
+  keys.add(key);
   if (event.code === 'Space') {
     event.preventDefault();
     setSpeed(speed === 0 ? 1 : 0);
@@ -1096,6 +1463,9 @@ window.addEventListener('keydown', (event) => {
     worldCanvas.classList.remove('placing');
     selectedId = null;
     selectedPersonId = null;
+    attackArmed = false;
+    selectedSoldiers.clear();
+    syncArmy();
   } else if (event.key.toLowerCase() === 'h' && playing) {
     tutorialStep = 0;
     showTutorial();
@@ -1120,6 +1490,11 @@ declare global {
       tileCenter: (x: number, y: number) => { x: number; y: number };
       select: (id: number) => void;
       setSpeed: (n: number) => void;
+      debugArmy: () => number[];
+      armyPoints: () => { id: number; x: number; y: number }[];
+      banditScreen: () => { x: number; y: number } | null;
+      markerKind: () => string;
+      focusArmy: () => void;
       snapshot: () => {
         tick: number;
         idle: number;
@@ -1133,6 +1508,26 @@ declare global {
     };
   }
 }
+
+armyBox.onclick = () => {
+  boxMode = !boxMode;
+  syncArmy();
+};
+document.querySelector<HTMLButtonElement>('#army-hold')!.onclick = () => issueArmy('hold', 0, 0);
+document.querySelector<HTMLButtonElement>('#army-home')!.onclick = () => {
+  const keep = playerKeep(state, 0);
+  const center = keep ? buildingCenter(keep) : { x: 0, y: 0 };
+  issueArmy('home', center.x, center.y + 1.6);
+};
+document.querySelector<HTMLButtonElement>('#army-clear')!.onclick = () => {
+  selectedSoldiers.clear();
+  attackArmed = false;
+  syncArmy();
+};
+armyAttack.onclick = () => {
+  attackArmed = !attackArmed;
+  syncArmy();
+};
 
 resize();
 buildTitle();

@@ -15,6 +15,19 @@
       <div id="banner" hidden></div>
       <div id="toast" hidden></div>
       <aside id="panel" hidden></aside>
+      <aside id="army" hidden>
+        <button type="button" id="army-box" data-testid="army-box" aria-pressed="false">Выделить войска</button>
+        <div id="army-body" hidden>
+          <p id="army-count" data-testid="army-count"></p>
+          <div id="army-actions">
+            <button type="button" id="army-hold" data-testid="army-hold">Стоять</button>
+            <button type="button" id="army-home" data-testid="army-home">Назад домой</button>
+            <button type="button" id="army-clear" data-testid="army-clear">Распустить выделение</button>
+            <button type="button" id="army-attack" data-testid="army-attack" aria-pressed="false">Атаковать область</button>
+          </div>
+          <p id="army-hint" data-testid="army-hint" hidden></p>
+        </div>
+      </aside>
       <footer id="dock">
         <div id="log"></div>
         <div id="hint" data-testid="hint" hidden></div>
