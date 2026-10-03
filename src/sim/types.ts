@@ -1,0 +1,209 @@
+export const RESOURCES = [
+  'wood',
+  'stone',
+  'iron',
+  'pitch',
+  'apples',
+  'cheese',
+  'meat',
+  'bread',
+  'wheat',
+  'flour',
+  'hops',
+  'beer',
+] as const;
+
+export type Resource = (typeof RESOURCES)[number];
+
+export const FOODS = ['apples', 'cheese', 'meat', 'bread'] as const;
+export type Food = (typeof FOODS)[number];
+
+export type Ration = 'none' | 'half' | 'normal' | 'double' | 'feast';
+export type TaxId = 'none' | 'low' | 'normal' | 'high' | 'harsh' | 'cruel';
+
+export type BuildingType =
+  | 'keep'
+  | 'shack'
+  | 'cabin'
+  | 'house'
+  | 'khrush'
+  | 'highrise'
+  | 'granary'
+  | 'stockpile'
+  | 'woodcutter'
+  | 'orchard'
+  | 'dairy'
+  | 'hunter'
+  | 'wheat'
+  | 'mill'
+  | 'bakery'
+  | 'hop'
+  | 'brewery'
+  | 'tavern'
+  | 'quarry'
+  | 'mine'
+  | 'pitch'
+  | 'market'
+  | 'barracks';
+
+export type Terrain = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+
+export const Terrain = {
+  Land: 0,
+  Desert: 1,
+  Oasis: 2,
+  Forest: 3,
+  Limestone: 4,
+  Iron: 5,
+  Swamp: 6,
+  Road: 7,
+} as const;
+
+export type WorkMode = 'goto' | 'labor' | 'fetch' | 'return' | 'deliver';
+
+export type Task =
+  | { type: 'idle' }
+  | { type: 'build'; buildingId: number }
+  | { type: 'work'; buildingId: number; mode: WorkMode; targetId: number };
+
+export interface Player {
+  id: number;
+  name: string;
+  isAi: boolean;
+  alive: boolean;
+  side: 'north' | 'south';
+  spawnX: number;
+  spawnY: number;
+  color: string;
+  gold: number;
+  stocks: Record<Resource, number>;
+  popularity: number;
+  ration: Ration;
+  tax: TaxId;
+  hunger: boolean;
+  beerMood: number;
+  migrate: number;
+}
+
+export interface Building {
+  id: number;
+  playerId: number;
+  type: BuildingType;
+  x: number;
+  y: number;
+  complete: boolean;
+  buildProgress: number;
+  workerIds: number[];
+  level: number;
+  hp: number;
+  maxHp: number;
+  buffer: number;
+  bufferRes: Resource | null;
+  input: number;
+  inputRes: Resource | null;
+  work: number;
+  plague: number;
+  upgrading: boolean;
+}
+
+export interface Person {
+  id: number;
+  playerId: number;
+  x: number;
+  y: number;
+  hp: number;
+  maxHp: number;
+  task: Task;
+  cargo: Resource | null;
+  cargoQty: number;
+  destX: number;
+  destY: number;
+  destBuildingId: number;
+  flee: boolean;
+  anim: number;
+  idlePhase: number;
+}
+
+export interface Soldier {
+  id: number;
+  playerId: number;
+  x: number;
+  y: number;
+  hp: number;
+  maxHp: number;
+  dmg: number;
+  weapon: 'club' | 'sword';
+  order: 'defend' | 'raid';
+  raidTargetId: number;
+  anim: number;
+}
+
+export interface Ox {
+  id: number;
+  playerId: number;
+  buildingId: number;
+  x: number;
+  y: number;
+  cargo: Resource | null;
+  cargoQty: number;
+  mode: 'load' | 'deliver';
+  destX: number;
+  destY: number;
+  destBuildingId: number;
+}
+
+export type MobKind = 'wolf' | 'bear' | 'bandit' | 'deer';
+
+export interface Mob {
+  id: number;
+  kind: MobKind;
+  x: number;
+  y: number;
+  homeX: number;
+  homeY: number;
+  hp: number;
+  maxHp: number;
+  dmg: number;
+  alive: boolean;
+  respawn: number;
+  wander: number;
+  destX: number;
+  destY: number;
+}
+
+export interface GameState {
+  saveVersion: 1;
+  seed: number;
+  tick: number;
+  rng: number;
+  mapW: number;
+  mapH: number;
+  roadY: number;
+  terrain: Uint8Array;
+  nextId: number;
+  players: Player[];
+  buildings: Building[];
+  people: Person[];
+  soldiers: Soldier[];
+  oxen: Ox[];
+  mobs: Mob[];
+  outcome: 'playing' | 'victory' | 'defeat';
+  message: string;
+  log: string[];
+}
+
+export type Command =
+  | { kind: 'place'; playerId: number; building: BuildingType; x: number; y: number }
+  | { kind: 'assign'; playerId: number; buildingId: number; delta: 1 | -1 }
+  | { kind: 'ration'; playerId: number; ration: Ration }
+  | { kind: 'tax'; playerId: number; tax: TaxId }
+  | { kind: 'upgrade'; playerId: number; buildingId: number }
+  | { kind: 'market'; playerId: number; resource: Resource; mode: 'buy' | 'sell'; qty: number }
+  | { kind: 'train'; playerId: number; weapon: 'club' | 'sword' }
+  | { kind: 'order'; playerId: number; order: 'defend' | 'raid' }
+  | { kind: 'demolish'; playerId: number; buildingId: number };
+
+export interface PopReason {
+  label: string;
+  value: number;
+}

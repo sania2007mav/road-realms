@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Дорожные края</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="world"></canvas>
+      <header id="topbar"></header>
+      <div id="banner" hidden></div>
+      <div id="toast" hidden></div>
+      <aside id="panel" hidden></aside>
+      <div id="log"></div>
+      <footer id="dock">
+        <div id="speeds"></div>
+        <div id="buildbar"></div>
+        <button id="home" type="button" data-testid="focus-home">К себе</button>
+        <div id="mapwrap"><canvas id="minimap"></canvas></div>
+      </footer>
+      <section id="title"></section>
+      <section id="tutorial" hidden></section>
+      <section id="end" hidden></section>
+      <section id="menu" hidden></section>
+      <section id="popbox" hidden></section>
+      <section id="peoplebox" hidden></section>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
