@@ -134,6 +134,30 @@ async function place(page: import('@playwright/test').Page, tab: string, type: s
   await page.waitForFunction((kind) => window.__game?.snapshot().buildings.some((b) => b.type === kind) ?? false, type);
 }
 
+test('карточка главного здания показывает цену улучшения', async ({ page }) => {
+  mkdirSync(shots, { recursive: true });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/road-realms/');
+  await page.evaluate(() => localStorage.removeItem('dorozhnye-kraya-tutorial'));
+  await page.getByTestId('new-game').click();
+  await page.getByTestId('tutorial-skip').click();
+  const cost = page.getByTestId('upgrade-cost');
+  await expect(cost).toBeVisible();
+  await expect(cost).toContainText('Дерево');
+  await expect(cost).toContainText('36/25');
+  await expect(cost).toContainText('Камень 10/15');
+  await expect(cost.locator('.cost-short')).toHaveText('Камень 10/15');
+  await expect(page.getByTestId('upgrade-keep')).toBeDisabled();
+  await expect(page.getByTestId('upgrade-reason')).toHaveText('Не хватает ресурсов');
+  await expect(page.locator('#panel')).toContainText('Нужен свободный человек');
+  await expect(page.locator('#panel')).toContainText('Время стройки');
+  await expect(page.locator('#panel')).toContainText('Бытовка');
+  await page.locator('#panel').screenshot({ path: `${shots}/keep_upgrade.png` });
+  await page.getByTestId('tab-industry').click();
+  await expect(page.getByTestId('build-mine').locator('small')).toHaveText('Нужен уровень главного здания 2');
+  await expect(page.getByTestId('build-quarry').locator('small')).not.toContainText('Нужен уровень');
+});
+
 test('полоса, подсказка и список построек не перекрываются', async ({ page }) => {
   test.setTimeout(120_000);
   mkdirSync(shots, { recursive: true });

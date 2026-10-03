@@ -16,6 +16,9 @@ import {
   deserialize,
   housingCap,
   idleCount,
+  KEEP_HOUSING,
+  KEEP_UPGRADE_COST,
+  KEEP_UPGRADE_TICKS,
   playerKeep,
   serialize,
   step,
@@ -366,11 +369,8 @@ function paintBuildButtons() {
   host.innerHTML = types
     .map((type) => {
       const def = BUILDINGS[type];
-      const cost = Object.entries(def.cost)
-        .map(([res, amount]) => `${amount} ${RESOURCE_NAME[res as keyof typeof RESOURCE_NAME]}`)
-        .join(', ');
       return `<button type="button" data-build="${type}" data-testid="build-${type}">
-        <b>${def.name}</b><small>${cost || 'без цены'}</small>
+        <b>${def.name}</b><small>${buttonNote(type)}</small>
       </button>`;
     })
     .join('');
@@ -388,6 +388,16 @@ function paintBuildButtons() {
     };
   });
   syncBuildScroll();
+}
+
+function buttonNote(type: BuildingType): string {
+  const def = BUILDINGS[type];
+  const level = playerKeep(state, 0)?.level ?? 0;
+  if (def.keepLevel > level) return `Нужен уровень главного здания ${def.keepLevel}`;
+  const cost = Object.entries(def.cost)
+    .map(([res, amount]) => `${amount} ${RESOURCE_NAME[res as keyof typeof RESOURCE_NAME]}`)
+    .join(', ');
+  return cost || 'без цены';
 }
 
 function blockReason(type: BuildingType): string | null {
@@ -409,6 +419,9 @@ function refreshBuildState() {
     const locked = blockReason(type);
     button.classList.toggle('locked', !!locked);
     button.classList.toggle('active', placing === type);
+    const note = button.querySelector('small');
+    const text = buttonNote(type);
+    if (note && note.textContent !== text) note.textContent = text;
   });
 }
 
@@ -593,6 +606,34 @@ function jobLabel(person: GameState['people'][number]): string {
   return workerStatus(state, person);
 }
 
+function keepUpgradeHtml(building: { level: number; upgrading: boolean }): string {
+  if (building.upgrading) return '<p>Улучшение уже идёт.</p>';
+  const player = state.players[0];
+  const cost = KEEP_UPGRADE_COST[building.level] ?? {};
+  const parts: string[] = [];
+  let short = false;
+  for (const res of RESOURCES) {
+    const need = cost[res] ?? 0;
+    if (!need) continue;
+    const have = player.stocks[res] ?? 0;
+    if (have < need) short = true;
+    parts.push(`<span class="${have < need ? 'cost-short' : ''}">${RESOURCE_NAME[res]} ${have}/${need}</span>`);
+  }
+  const next = building.level + 1;
+  const housing = KEEP_HOUSING[next] ?? 0;
+  const names = BUILD_MENU.filter((type) => BUILDINGS[type].keepLevel === next).map((type) => BUILDINGS[type].name);
+  const mins = Math.floor(KEEP_UPGRADE_TICKS / TICKS_PER_GAME_MINUTE);
+  const secs = KEEP_UPGRADE_TICKS % TICKS_PER_GAME_MINUTE;
+  const time = secs === 0 ? `${mins} мин` : `${mins} мин ${secs} с`;
+  const noWorker = idleCount(state, 0) <= 0;
+  const reason = short ? 'Не хватает ресурсов' : noWorker ? 'Нужен свободный человек' : '';
+  return `<p data-testid="upgrade-cost">${parts.join(', ')}</p>
+    <p>Время стройки: ${time}. Нужен свободный человек.</p>
+    <p>Уровень ${next}: жильё главного здания ${housing}. Откроется: ${names.join(', ')}.</p>
+    <button type="button" data-testid="upgrade-keep" ${reason ? 'disabled' : ''}>Улучшить до уровня ${next}</button>
+    ${reason ? `<p class="worker-status warn" data-testid="upgrade-reason">${reason}</p>` : ''}`;
+}
+
 function syncPanel() {
   if (!playing) {
     panel.hidden = true;
@@ -641,6 +682,9 @@ function syncPanel() {
     building.input,
     building.hp,
     state.players[0].gold,
+    state.players[0].stocks.wood,
+    state.players[0].stocks.stone,
+    state.players[0].stocks.iron,
     idleCount(state, 0),
     selectedPersonId ?? '',
     statuses,
@@ -655,10 +699,7 @@ function syncPanel() {
         <button type="button" data-testid="worker-plus" ${idleCount(state, 0) <= 0 || building.workerIds.length >= def.workers || !building.complete ? 'disabled' : ''}>+</button>
       </div>`
     : '';
-  const upgrade =
-    mine && building.type === 'keep' && building.level < 5
-      ? `<button type="button" data-testid="upgrade-keep">Улучшить до уровня ${building.level + 1}</button>`
-      : '';
+  const upgrade = mine && building.type === 'keep' && building.level < 5 ? keepUpgradeHtml(building) : '';
   const train =
     mine && building.type === 'barracks' && building.complete
       ? `<div class="row">

@@ -214,6 +214,7 @@ button.active, button[aria-pressed="true"] {
 #panel p { margin: 6px 0; color: var(--muted); }
 #panel .worker-status { padding: 6px 8px; border-radius: 8px; background: rgba(246, 234, 215, 0.08); color: var(--paper); }
 #panel .worker-status.picked, #panel .worker-status.warn { color: var(--gold); }
+#panel .cost-short { color: var(--bad); font-weight: 700; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .market-row { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; align-items: center; margin: 4px 0; }
 
@@ -294,7 +295,7 @@ button.active, button[aria-pressed="true"] {
   min-width: 128px;
   white-space: nowrap;
 }
-#buttons small { color: var(--muted); }
+#buttons small { color: var(--muted); white-space: normal; }
 
 #mapwrap {
   width: 240px;
