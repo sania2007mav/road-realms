@@ -419,6 +419,37 @@ test('сетевая игра: два браузера в одном лобби'
   }
 });
 
+test('подробные текстуры: посёлок, жильё, крепость, еда и стройка', async ({ page }) => {
+  mkdirSync(shots, { recursive: true });
+  await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+  await page.goto('/road-realms/');
+  await page.getByTestId('new-game').click();
+  await page.getByTestId('open-menu').click();
+  const gfx = page.getByTestId('gfx-toggle');
+  await expect(gfx).toHaveText('Графика: высокая');
+  await gfx.click();
+  await expect(gfx).toHaveText('Графика: простая');
+  await gfx.click();
+  await expect(gfx).toHaveText('Графика: высокая');
+  await page.locator('#close-menu').click();
+
+  const shoot = async (kind: string, file: string) => {
+    await page.evaluate((scene) => window.__game!.debugScene(scene), kind);
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
+    await page.screenshot({ path: `${shots}/${file}` });
+  };
+  await shoot('settlement', 'art_settlement.png');
+  await shoot('housing', 'art_housing.png');
+  await shoot('keep', 'art_keep.png');
+  await shoot('food', 'art_food.png');
+  await shoot('site', 'art_site.png');
+});
+
 declare global {
   interface Window {
     __game?: {
@@ -446,6 +477,7 @@ declare global {
       };
       mp: () => { hash: string; turn: number; tick: number; local: number; names: string[] };
       cleanupNet: () => Promise<void>;
+      debugScene: (kind: string) => void;
     };
   }
 }

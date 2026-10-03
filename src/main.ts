@@ -34,7 +34,10 @@ import {
   type Command,
   type GameState,
   type Ration,
+  type Resource,
 } from './sim';
+import { createBuilding } from './sim/entities';
+import { cycleGfx, gfxLabel, loadGfx } from './render/gfx';
 import { net } from './net/session';
 import { NetView } from './net/screens';
 import { ZOOM_MAX, clampCamera, focusTile, screenToTile, screenToWorld, worldToScreen, type Camera } from './render/camera';
@@ -108,6 +111,7 @@ const armyAttack = document.querySelector<HTMLButtonElement>('#army-attack')!;
 let state: GameState = createGame(20261003, { ai: 3 });
 let playing = false;
 let camera: Camera = { x: 0, y: 0, zoom: 1.15 };
+loadGfx();
 let baked = bakeTerrain(state);
 let speed = 1;
 let localPlayer = 0;
@@ -549,6 +553,9 @@ function renderMenu() {
       <button type="button" id="guide-restart" data-testid="guide-restart">Обучение</button>
       <button type="button" id="resign-btn">Новая игра</button>
     </div>
+    <div class="actions">
+      <button type="button" id="gfx-btn" data-testid="gfx-toggle">${gfxLabel()}</button>
+    </div>
     <p>Мышь: тянуть карту, колесо — масштаб. На телефоне: жест и щипок. Клавиши: WASD, пробел — пауза, 1–3 — скорость, Esc — отмена стройки, H — подсказки.</p>
     <div class="actions"><button type="button" id="close-menu">Закрыть</button></div>
   </div>`;
@@ -588,6 +595,12 @@ function renderMenu() {
   };
   document.querySelector<HTMLButtonElement>('#close-menu')!.onclick = () => {
     menu.hidden = true;
+  };
+  document.querySelector<HTMLButtonElement>('#gfx-btn')!.onclick = () => {
+    cycleGfx();
+    baked = bakeTerrain(state);
+    const button = document.querySelector<HTMLButtonElement>('#gfx-btn');
+    if (button) button.textContent = gfxLabel();
   };
 }
 
@@ -1608,6 +1621,104 @@ function expose() {
       const live = markers.filter((marker) => performance.now() - marker.born < 1400);
       return live.length ? live[live.length - 1].kind : '';
     },
+    debugScene(kind: string) {
+      setSpeed(0);
+      selectedId = null;
+      selectedPersonId = null;
+      placing = null;
+      const keep = playerKeep(state, localPlayer);
+      if (!keep) return;
+      state.buildings = state.buildings.filter((building) => building.id === keep.id);
+      const put = (type: BuildingType, x: number, y: number, level = 1, progress?: number) => {
+        const building = createBuilding(state, localPlayer, type, x, y, progress === undefined);
+        building.level = level;
+        if (progress !== undefined) building.buildProgress = progress;
+        return building;
+      };
+      const line = (types: BuildingType[], x: number, y: number, levels?: number[]) => {
+        const placed = [];
+        for (let i = 0; i < types.length; i++) {
+          const type = types[i];
+          placed.push(put(type, x, y, levels?.[i] ?? 1));
+          const step = Math.max(BUILDINGS[type].w, BUILDINGS[type].h) + 1;
+          x += step;
+          y -= step;
+        }
+        return placed;
+      };
+      const focusAverage = (list: { x: number; y: number; type: BuildingType }[], biasY: number) => {
+        let sx = 0;
+        let sy = 0;
+        for (const building of list) {
+          const def = BUILDINGS[building.type];
+          sx += building.x + def.w / 2;
+          sy += building.y + def.h / 2;
+        }
+        lookAtPoint(sx / list.length, sy / list.length + biasY);
+      };
+      if (kind === 'housing') {
+        const placed = line(['shack', 'cabin', 'house', 'khrush', 'highrise'], keep.x + 20, keep.y + 6);
+        focusAverage(placed, -1.2);
+        camera.zoom = 1.02;
+      } else if (kind === 'keep') {
+        keep.level = 1;
+        const row = [keep];
+        let x = keep.x;
+        let y = keep.y;
+        for (let level = 2; level <= 5; level++) {
+          x += 4;
+          y -= 4;
+          row.push(put('keep', x, y, level));
+        }
+        focusAverage(row, -2.4);
+        camera.zoom = 0.82;
+      } else if (kind === 'food') {
+        const top = line(['orchard', 'dairy', 'wheat', 'mill'], keep.x + 28, keep.y - 4);
+        const bottom = line(['bakery', 'hop', 'brewery', 'tavern'], keep.x + 28, keep.y + 5);
+        focusAverage([...top, ...bottom], -1.2);
+        camera.zoom = 1.05;
+      } else if (kind === 'site') {
+        const house = put('house', keep.x + 22, keep.y, 1, Math.floor(BUILDINGS.house.buildTicks * 0.45));
+        const shack = put('shack', keep.x + 26, keep.y - 4, 1, Math.floor(BUILDINGS.shack.buildTicks * 0.7));
+        focusAverage([house, shack], -0.6);
+        camera.zoom = 1.55;
+      } else {
+        keep.level = 3;
+        put('granary', keep.x + 4, keep.y);
+        put('stockpile', keep.x + 8, keep.y + 1);
+        put('shack', keep.x - 3, keep.y + 1);
+        put('cabin', keep.x - 3, keep.y + 4);
+        put('house', keep.x + 4, keep.y + 4);
+        put('woodcutter', keep.x + 7, keep.y + 4);
+        put('orchard', keep.x - 6, keep.y - 4);
+        put('wheat', keep.x + 4, keep.y - 4);
+        put('mill', keep.x + 8, keep.y - 3);
+        put('bakery', keep.x + 11, keep.y - 2);
+        put('dairy', keep.x - 4, keep.y + 7);
+        put('tavern', keep.x + 1, keep.y + 7);
+        put('khrush', keep.x + 8, keep.y + 8);
+        const sites = state.buildings.filter((building) =>
+          ['woodcutter', 'orchard', 'wheat', 'mill', 'bakery'].includes(building.type),
+        );
+        const cargos: (Resource | null)[] = ['apples', 'wood', null, 'bread', null];
+        state.people
+          .filter((person) => person.playerId === localPlayer)
+          .forEach((person, index) => {
+            const site = sites[index % sites.length];
+            if (!site) return;
+            const def = BUILDINGS[site.type];
+            person.x = site.x + def.w * 0.4;
+            person.y = site.y + def.h + 0.15;
+            person.task = { type: 'work', buildingId: site.id, mode: 'labor', targetId: 0 };
+            person.cargo = cargos[index] ?? null;
+            person.destX = person.x;
+            person.destY = person.y;
+          });
+        lookAtPoint(keep.x + 3, keep.y + 2);
+        camera.zoom = 1.15;
+      }
+      clampView();
+    },
     focusArmy() {
       const mine = state.soldiers.filter((s) => s.playerId === localPlayer && s.hp > 0);
       const bandit = state.mobs.find((m) => m.alive && m.kind === 'bandit');
@@ -1877,6 +1988,7 @@ declare global {
       };
       mp: () => { hash: string; turn: number; tick: number; local: number; names: string[] };
       cleanupNet: () => Promise<void>;
+      debugScene: (kind: string) => void;
     };
   }
 }
