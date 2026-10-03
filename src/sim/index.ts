@@ -41,6 +41,8 @@ export {
   suggestedTile,
   usedCount,
   canPlace,
+  workerStatus,
+  buildingWarning,
 } from './update';
 export type {
   Building,

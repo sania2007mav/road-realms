@@ -33,6 +33,21 @@ test('игрок строит амбар, сад и шалаш и живёт н�
       return page.evaluate((id) => window.__game!.snapshot().buildings.find((b) => b.id === id)?.workers ?? 0, orchardId);
     })
     .toBe(1);
+  await expect
+    .poll(async () => page.locator('[data-testid="worker-status"]').first().innerText(), { timeout: 20000 })
+    .toMatch(/работает|несёт яблоки/);
+  await page.evaluate(() => {
+    const orchard = window.__game!.snapshot().buildings.find((b) => b.type === 'orchard');
+    if (orchard) {
+      window.__game!.select(orchard.id);
+      window.__game!.focusTile(orchard.x + 1, orchard.y + 1);
+    }
+    window.__game!.zoom(1.7);
+    window.__game!.setSpeed(1);
+  });
+  await page.waitForTimeout(700);
+  await page.screenshot({ path: `${shots}/orchard_worker.png` });
+  await page.getByTestId('speed-3').click();
 
   await page.waitForFunction(() => (window.__game?.snapshot().tick ?? 0) >= 10 * 60);
 

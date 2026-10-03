@@ -19,6 +19,7 @@ import {
   SWORD_COST,
   TAX_EVERY,
   PRICES,
+  RESOURCE_NAME,
   foodTypesIn,
   housingOf,
   popularityTarget,
@@ -92,7 +93,12 @@ function takeRng(state: GameState): number {
 
 function pushLog(state: GameState, text: string) {
   state.log.push(text);
-  if (state.log.length > 6) state.log.shift();
+  if (state.log.length > 8) state.log.shift();
+}
+
+function note(state: GameState, text: string) {
+  if (state.log.includes(text)) return;
+  pushLog(state, text);
 }
 
 function moveToward(ent: { x: number; y: number }, x: number, y: number, speed: number): boolean {
@@ -320,6 +326,7 @@ export function applyCommand(state: GameState, command: Command): boolean {
     const idle = state.people.find((p) => p.playerId === command.playerId && p.hp > 0 && p.task.type === 'idle');
     if (!idle) {
       state.message = 'Нет свободных людей';
+      note(state, 'нет свободных людей');
       return false;
     }
     idle.task = { type: 'work', buildingId: building.id, mode: 'goto', targetId: 0 };
@@ -414,6 +421,7 @@ export function applyCommand(state: GameState, command: Command): boolean {
     const idle = state.people.find((p) => p.playerId === command.playerId && p.hp > 0 && p.task.type === 'idle');
     if (!idle) {
       state.message = 'Нет свободных людей';
+      note(state, 'нет свободных людей');
       return false;
     }
     pay(player.stocks, cost);
@@ -735,6 +743,157 @@ function findInputSource(state: GameState, playerId: number, building: Building,
   return null;
 }
 
+function ruRes(res: Resource): string {
+  const name = RESOURCE_NAME[res];
+  return name.charAt(0).toLowerCase() + name.slice(1);
+}
+
+function nearestTerrainTile(
+  state: GameState,
+  x: number,
+  y: number,
+  terrain: number,
+  radius: number,
+): { x: number; y: number } | null {
+  let best: { x: number; y: number } | null = null;
+  let bestD = radius;
+  const x0 = Math.max(0, Math.floor(x - radius));
+  const y0 = Math.max(0, Math.floor(y - radius));
+  const x1 = Math.min(state.mapW - 1, Math.ceil(x + radius));
+  const y1 = Math.min(state.mapH - 1, Math.ceil(y + radius));
+  for (let ty = y0; ty <= y1; ty++) {
+    for (let tx = x0; tx <= x1; tx++) {
+      if (terrainAt(state, tx, ty) !== terrain) continue;
+      const d = Math.hypot(tx + 0.5 - x, ty + 0.5 - y);
+      if (d < bestD) {
+        best = { x: tx, y: ty };
+        bestD = d;
+      }
+    }
+  }
+  return best;
+}
+
+function insideBuilding(person: Person, building: Building): boolean {
+  const def = BUILDINGS[building.type];
+  return (
+    person.x >= building.x - 0.2 &&
+    person.x <= building.x + def.w + 0.2 &&
+    person.y >= building.y - 0.2 &&
+    person.y <= building.y + def.h + 0.2
+  );
+}
+
+/** Where the worker should stand so the job is visible: among the trees, at the rock, or beside the deer. */
+export function laborSpot(state: GameState, building: Building): { x: number; y: number } {
+  const def = BUILDINGS[building.type];
+  const porch = { x: building.x + def.w / 2, y: building.y + def.h - 0.45 };
+  if (building.type === 'orchard' || building.type === 'wheat' || building.type === 'hop' || building.type === 'dairy') {
+    const cols = Math.max(1, def.w - 1);
+    const rows = Math.max(1, def.h - 1);
+    const col = Math.floor(state.tick / 36) % cols;
+    const row = Math.floor(state.tick / 72) % rows;
+    return {
+      x: building.x + 0.65 + (col * (def.w - 1.1)) / cols,
+      y: building.y + 0.7 + (row * (def.h - 1.2)) / rows,
+    };
+  }
+  if (building.type === 'woodcutter') {
+    const tree = nearestTerrainTile(state, porch.x, porch.y, Terrain.Forest, (def.nearRadius || 2) + 1.4);
+    if (tree) return { x: tree.x + 0.5, y: tree.y + 0.5 };
+    return porch;
+  }
+  if (building.type === 'hunter') {
+    const deer = nearestDeer(state, porch.x, porch.y, 12);
+    if (deer) return { x: deer.x, y: deer.y };
+    return porch;
+  }
+  if (building.type === 'quarry' || building.type === 'mine' || building.type === 'pitch') {
+    const terrain = building.type === 'quarry' ? Terrain.Limestone : building.type === 'mine' ? Terrain.Iron : Terrain.Swamp;
+    const node = nearestTerrainTile(state, porch.x, porch.y, terrain, 2.8);
+    if (node) return { x: node.x + 0.5, y: node.y + 0.5 };
+    return porch;
+  }
+  return porch;
+}
+
+export function stallReason(state: GameState, building: Building): string | null {
+  const def = BUILDINGS[building.type];
+  const porch = { x: building.x + def.w / 2, y: building.y + def.h / 2 };
+  if (building.type === 'woodcutter' && !nearestTerrainTile(state, porch.x, porch.y, Terrain.Forest, (def.nearRadius || 2) + 1.4)) {
+    return 'ждёт: нет леса рядом';
+  }
+  if (building.type === 'hunter' && !nearestDeer(state, porch.x, porch.y, 12)) return 'ждёт: нет оленей рядом';
+  if (building.type === 'quarry' && !nearestTerrainTile(state, porch.x, porch.y, Terrain.Limestone, 2.8)) return 'ждёт: нет камня рядом';
+  if (building.type === 'mine' && !nearestTerrainTile(state, porch.x, porch.y, Terrain.Iron, 2.8)) return 'ждёт: нет железа рядом';
+  if (building.type === 'pitch' && !nearestTerrainTile(state, porch.x, porch.y, Terrain.Swamp, 2.8)) return 'ждёт: нет болота рядом';
+  if (def.output && (def.hauler === 'person' || def.hauler === 'ox')) {
+    const drop = chooseDropoff(state, building.playerId, def.output, porch.x, porch.y);
+    if (!drop) return (FOODS as readonly string[]).includes(def.output) ? 'ждёт: нет амбара' : 'ждёт: нет склада';
+  }
+  return null;
+}
+
+export function workerStatus(state: GameState, person: Person): string {
+  if (person.hp <= 0) return 'не может работать';
+  if (person.task.type === 'idle') return 'без дела';
+  if (person.task.type === 'build') {
+    const site = buildingById(state, person.task.buildingId);
+    return site ? `строит: ${BUILDINGS[site.type].name}` : 'строит';
+  }
+  const building = buildingById(state, person.task.buildingId);
+  if (!building) return 'идёт на работу';
+  const task = person.task;
+  if (task.mode === 'goto') return 'идёт на работу';
+  if (task.mode === 'fetch') return 'идёт за сырьём';
+  if (task.mode === 'return') return `несёт ${person.cargo ? ruRes(person.cargo) : 'груз'} на работу`;
+  if (task.mode === 'deliver') {
+    if (!person.cargo) return 'идёт на работу';
+    const food = (FOODS as readonly string[]).includes(person.cargo);
+    const dest = person.destBuildingId ? buildingById(state, person.destBuildingId) : undefined;
+    if (!dest && person.destBuildingId === 0) {
+      const drop = chooseDropoff(state, person.playerId, person.cargo, person.x, person.y);
+      if (!drop) return food ? 'ждёт: нет амбара' : 'ждёт: нет склада';
+    }
+    const where = !dest
+      ? food
+        ? 'амбар'
+        : 'склад'
+      : dest.type === 'granary'
+        ? 'амбар'
+        : dest.type === 'stockpile'
+          ? 'склад'
+          : BUILDINGS[dest.type].name;
+    return `несёт ${ruRes(person.cargo)} в ${where}`;
+  }
+  const stall = stallReason(state, building);
+  if (stall) return stall;
+  if (building.type === 'hunter') {
+    const deer = nearestDeer(state, person.x, person.y, 12);
+    if (deer && Math.hypot(person.x - deer.x, person.y - deer.y) > 0.7) return 'идёт за оленем';
+  }
+  if (building.type === 'woodcutter') {
+    const tree = nearestTerrainTile(state, person.x, person.y, Terrain.Forest, 1.2);
+    if (!tree) return 'идёт к лесу';
+  }
+  return 'работает';
+}
+
+export function buildingWarning(state: GameState, building: Building): string | null {
+  if (!building.complete || building.hp <= 0) return null;
+  for (const id of building.workerIds) {
+    const person = state.people.find((p) => p.id === id && p.hp > 0);
+    if (!person || person.task.type !== 'work') continue;
+    const status = workerStatus(state, person);
+    if (status.startsWith('ждёт')) return status;
+  }
+  const def = BUILDINGS[building.type];
+  if (def.workers > 0 && building.workerIds.length < def.workers && idleCount(state, building.playerId) === 0) {
+    return 'нет свободных людей';
+  }
+  return null;
+}
+
 function updateWorker(state: GameState, person: Person) {
   if (person.task.type !== 'work') return;
   const building = buildingById(state, person.task.buildingId);
@@ -745,10 +904,11 @@ function updateWorker(state: GameState, person: Person) {
   const def = BUILDINGS[building.type];
   const center = buildingCenter(building);
   const task = person.task;
+  const spot = laborSpot(state, building);
 
   if (task.mode === 'goto') {
-    if (moveToward(person, center.x, center.y, PERSON_SPEED)) task.mode = 'labor';
-    return;
+    if (!moveToward(person, spot.x, spot.y, PERSON_SPEED)) return;
+    task.mode = 'labor';
   }
   if (task.mode === 'fetch') {
     const src = buildingById(state, task.targetId);
@@ -795,11 +955,13 @@ function updateWorker(state: GameState, person: Person) {
     if (person.destBuildingId === 0) {
       const drop = chooseDropoff(state, person.playerId, person.cargo, person.x, person.y);
       if (!drop) {
+        const waiting = (FOODS as readonly string[]).includes(person.cargo) ? 'ждёт: нет амбара' : 'ждёт: нет склада';
         building.buffer += person.cargoQty;
         building.bufferRes = person.cargo;
         person.cargo = null;
         person.cargoQty = 0;
         task.mode = 'labor';
+        note(state, `${def.name}: ${waiting}`);
         return;
       }
       person.destX = drop.x;
@@ -815,8 +977,10 @@ function updateWorker(state: GameState, person: Person) {
     return;
   }
 
-  if (Math.hypot(person.x - center.x, person.y - center.y) > 0.35) {
-    moveToward(person, center.x, center.y, PERSON_SPEED);
+  const stall = stallReason(state, building);
+  if (stall) {
+    note(state, `${def.name}: ${stall}`);
+    if (Math.hypot(person.x - spot.x, person.y - spot.y) > 0.4) moveToward(person, spot.x, spot.y, PERSON_SPEED);
     return;
   }
 
@@ -841,6 +1005,12 @@ function updateWorker(state: GameState, person: Person) {
       task.targetId = srcId;
     }
     return;
+  }
+
+  const dist = Math.hypot(person.x - spot.x, person.y - spot.y);
+  if (dist > 0.42) {
+    moveToward(person, spot.x, spot.y, PERSON_SPEED);
+    if (!insideBuilding(person, building)) return;
   }
 
   if (building.plague > 0) {

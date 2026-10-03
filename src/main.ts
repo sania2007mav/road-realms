@@ -21,12 +21,13 @@ import {
   step,
   suggestedTile,
   usedCount,
+  workerStatus,
   type BuildingType,
   type Command,
   type GameState,
   type Ration,
 } from './sim';
-import { TILE, ZOOM_MAX, clampCamera, focusTile, screenToTile, worldToScreen, type Camera } from './render/camera';
+import { TILE, ZOOM_MAX, clampCamera, focusTile, screenToTile, screenToWorld, worldToScreen, type Camera } from './render/camera';
 import { bakeMinimap, bakeTerrain, renderMinimap, renderWorld, type Ghost } from './render/draw';
 
 const SAVE_KEY = 'dorozhnye-kraya-v1';
@@ -89,6 +90,7 @@ let miniBaked = bakeMinimap(state);
 let speed = 1;
 let placing: BuildingType | null = null;
 let selectedId: number | null = null;
+let selectedPersonId: number | null = null;
 let category: keyof typeof CATEGORY_NAME = 'storage';
 let hover: { x: number; y: number } | null = null;
 let tutorialStep = 0;
@@ -505,11 +507,7 @@ function syncHud() {
 }
 
 function jobLabel(person: GameState['people'][number]): string {
-  if (person.task.type === 'idle') return 'Без дела';
-  const building = buildingById(state, person.task.buildingId);
-  const name = building ? BUILDINGS[building.type].name : 'постройка';
-  if (person.task.type === 'build') return `Строит: ${name}`;
-  return `Работает: ${name}`;
+  return workerStatus(state, person);
 }
 
 function syncPanel() {
@@ -517,13 +515,38 @@ function syncPanel() {
     panel.hidden = true;
     return;
   }
+  const personOnly = selectedPersonId != null ? state.people.find((p) => p.id === selectedPersonId && p.hp > 0) : undefined;
   const building = selectedId != null ? buildingById(state, selectedId) : undefined;
+  if ((!building || building.hp <= 0) && personOnly) {
+    const status = workerStatus(state, personOnly);
+    const sig = `person|${personOnly.id}|${status}`;
+    if (sig !== panelSig) {
+      panelSig = sig;
+      panel.hidden = false;
+      const job = personOnly.task.type === 'idle' ? null : buildingById(state, personOnly.task.buildingId);
+      panel.innerHTML = `<h2>Работник</h2>
+        <p class="worker-status" data-testid="worker-status">${status}</p>
+        <p>${job ? `Место: ${BUILDINGS[job.type].name}` : 'Свободен, стоит у главного здания.'}</p>
+        <div class="row"><button type="button" id="close-panel">Закрыть</button></div>`;
+      panel.querySelector<HTMLButtonElement>('#close-panel')!.onclick = () => {
+        selectedId = null;
+        selectedPersonId = null;
+        panelSig = '';
+      };
+    }
+    return;
+  }
   if (!building || building.hp <= 0) {
     panel.hidden = true;
     panelSig = '';
     return;
   }
   const def = BUILDINGS[building.type];
+  const statuses = building.workerIds
+    .map((id) => state.people.find((p) => p.id === id && p.hp > 0))
+    .filter((p): p is NonNullable<typeof p> => !!p)
+    .map((p) => workerStatus(state, p))
+    .join('|');
   const sig = [
     building.id,
     building.complete,
@@ -536,6 +559,8 @@ function syncPanel() {
     building.hp,
     state.players[0].gold,
     idleCount(state, 0),
+    selectedPersonId ?? '',
+    statuses,
   ].join('|');
   if (sig === panelSig) return;
   panelSig = sig;
@@ -574,16 +599,30 @@ function syncPanel() {
     building.buffer > 0 && building.bufferRes
       ? `<p>На площадке: ${building.buffer} ${RESOURCE_NAME[building.bufferRes]}</p>`
       : '';
+  const workerLines = building.workerIds
+    .map((id) => state.people.find((p) => p.id === id && p.hp > 0))
+    .filter((p): p is NonNullable<typeof p> => !!p)
+    .map(
+      (p) =>
+        `<p class="worker-status${p.id === selectedPersonId ? ' picked' : ''}" data-testid="worker-status">${workerStatus(state, p)}</p>`,
+    )
+    .join('');
+  const noPeople =
+    mine && def.workers > building.workerIds.length && idleCount(state, 0) === 0
+      ? `<p class="worker-status warn" data-testid="worker-status">нет свободных людей</p>`
+      : '';
   panel.innerHTML = `<h2>${def.name}</h2>
     <p>${def.desc}</p>
     <p>${building.complete ? 'Построено' : 'Строится'} · прочность ${Math.max(0, building.hp)}/${building.maxHp}${building.type === 'keep' ? ` · уровень ${building.level}` : ''}</p>
     ${building.type === 'keep' ? `<p>Жильё этого здания: ${[0, 5, 8, 12, 18, 28][building.level] ?? building.level}. Общий предел людей: ${housingCap(state, building.playerId)}.</p>` : ''}
     ${def.housing ? `<p>Даёт жильё: ${def.housing}</p>` : ''}
     ${stockNote}
+    ${workerLines}
+    ${noPeople}
     ${building.plague > 0 ? '<p>На ферме чума, коровы не доятся.</p>' : ''}
     ${workers}${upgrade}${train}${market}
     <div class="row">${demolish}<button type="button" id="close-panel">Закрыть</button></div>
-    ${idleCount(state, 0) === 0 && mine && def.workers > building.workerIds.length ? '<p>Нет свободных людей — назначить некого.</p>' : ''}`;
+    ${idleCount(state, 0) === 0 && mine && def.workers > building.workerIds.length ? '<p>Назначить некого: все люди заняты.</p>' : ''}`;
   panel.querySelector<HTMLButtonElement>('[data-testid="worker-plus"]')?.addEventListener('click', () => {
     queue.push({ kind: 'assign', playerId: 0, buildingId: building.id, delta: 1 });
     panelSig = '';
@@ -599,6 +638,7 @@ function syncPanel() {
   panel.querySelector<HTMLButtonElement>('[data-testid="demolish"]')?.addEventListener('click', () => {
     queue.push({ kind: 'demolish', playerId: 0, buildingId: building.id });
     selectedId = null;
+    selectedPersonId = null;
     panelSig = '';
   });
   panel.querySelector<HTMLButtonElement>('[data-testid="train-club"]')?.addEventListener('click', () => {
@@ -629,6 +669,7 @@ function syncPanel() {
   });
   panel.querySelector<HTMLButtonElement>('#close-panel')!.onclick = () => {
     selectedId = null;
+    selectedPersonId = null;
     panel.hidden = true;
     panelSig = '';
   };
@@ -688,6 +729,25 @@ function pick(screenX: number, screenY: number) {
     worldCanvas.classList.remove('placing');
     return;
   }
+  const world = screenToWorld(camera, w, h, screenX, screenY);
+  let personHit: number | null = null;
+  let personD = 18;
+  for (const person of state.people) {
+    if (person.hp <= 0 || person.playerId !== 0) continue;
+    const d = Math.hypot(person.x * TILE - world.x, person.y * TILE - world.y);
+    if (d < personD) {
+      personD = d;
+      personHit = person.id;
+    }
+  }
+  if (personHit != null) {
+    selectedPersonId = personHit;
+    const person = state.people.find((p) => p.id === personHit);
+    selectedId = person && person.task.type !== 'idle' ? person.task.buildingId : null;
+    panelSig = '';
+    return;
+  }
+  selectedPersonId = null;
   let found: number | null = null;
   for (const building of state.buildings) {
     if (building.hp <= 0) continue;
@@ -748,7 +808,7 @@ function frame(now: number) {
   if (playing) clampView();
   const { w, h } = viewSize();
   const dpr = Math.min(2, window.devicePixelRatio || 1);
-  renderWorld(ctx, state, camera, w, h, dpr, baked, ghost(), selectedId, now);
+  renderWorld(ctx, state, camera, w, h, dpr, baked, ghost(), selectedId, now, selectedPersonId);
   const map = document.querySelector<HTMLElement>('#mapwrap');
   if (map) renderMinimap(miniCtx, state, camera, w, h, miniBaked, miniCanvas.width, miniCanvas.height);
   if (playing) syncHud();
@@ -909,6 +969,7 @@ window.addEventListener('keydown', (event) => {
     placing = null;
     worldCanvas.classList.remove('placing');
     selectedId = null;
+    selectedPersonId = null;
   } else if (event.key.toLowerCase() === 'h' && playing) {
     tutorialStep = 0;
     showTutorial();

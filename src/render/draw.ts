@@ -2,6 +2,7 @@ import { BUILDINGS } from '../sim/balance';
 import { hash2 } from '../sim/rng';
 import type { Building, BuildingType, GameState, Mob, Person, Resource } from '../sim/types';
 import { Terrain } from '../sim/types';
+import { buildingWarning } from '../sim/update';
 import { terrainAt } from '../sim/world';
 import { TILE, type Camera } from './camera';
 
@@ -154,6 +155,7 @@ export function renderWorld(
   ghost: Ghost | null,
   selectedId: number | null,
   time: number,
+  selectedPersonId: number | null = null,
 ) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = '#c8b48a';
@@ -212,9 +214,22 @@ export function renderWorld(
   for (const person of state.people) {
     if (person.hp <= 0 || !seen(person.x, person.y)) continue;
     const walk = moving(person);
+    let ySort = person.y * TILE + 1;
+    for (const building of state.buildings) {
+      if (building.hp <= 0) continue;
+      const def = BUILDINGS[building.type];
+      if (
+        person.x >= building.x - 0.35 &&
+        person.x <= building.x + def.w + 0.35 &&
+        person.y >= building.y - 0.35 &&
+        person.y <= building.y + def.h + 0.35
+      ) {
+        ySort = Math.max(ySort, (building.y + def.h) * TILE + 4);
+      }
+    }
     sprites.push({
-      y: person.y * TILE,
-      draw: () => drawPerson(ctx, state, person, walk, time),
+      y: ySort,
+      draw: () => drawPerson(ctx, state, person, walk, time, person.id === selectedPersonId),
     });
   }
   for (const soldier of state.soldiers) {
@@ -485,6 +500,36 @@ function drawBuilding(ctx: CanvasRenderingContext2D, state: GameState, building:
     ctx.fillStyle = '#d4543c';
     ctx.fillRect(x + 4, y - 4, (w - 8) * Math.max(0, building.hp / building.maxHp), 3);
   }
+  if (building.complete && def.workers > 0) {
+    ctx.fillStyle = '#1c1612';
+    ctx.beginPath();
+    ctx.arc(x + w - 9, y + 10, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = building.workerIds.length > 0 ? '#f6ead7' : '#e6b15a';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(String(building.workerIds.length), x + w - 9, y + 14);
+    ctx.textAlign = 'left';
+    if (def.cycle > 0 && building.workerIds.length > 0) {
+      const ratio = Math.max(0, Math.min(1, building.work / def.cycle));
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(x + 4, y - 9, w - 8, 4);
+      ctx.fillStyle = '#8dce67';
+      ctx.fillRect(x + 4, y - 9, (w - 8) * ratio, 4);
+    }
+  }
+  const warning = buildingWarning(state, building);
+  if (warning) {
+    ctx.fillStyle = '#e6b15a';
+    ctx.beginPath();
+    ctx.arc(x + w / 2, y - 16, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#1c1612';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('!', x + w / 2, y - 11);
+    ctx.textAlign = 'left';
+  }
   ctx.restore();
 }
 
@@ -523,13 +568,26 @@ function drawGhost(ctx: CanvasRenderingContext2D, ghost: Ghost) {
   ctx.restore();
 }
 
-function drawPerson(ctx: CanvasRenderingContext2D, state: GameState, person: Person, walk: boolean, time: number) {
+function drawPerson(
+  ctx: CanvasRenderingContext2D,
+  state: GameState,
+  person: Person,
+  walk: boolean,
+  time: number,
+  selected: boolean,
+) {
   const color = state.players[person.playerId]?.color ?? '#ccc';
-  const swing = walk ? Math.sin(time / 90 + person.anim) : 0;
-  const bob = walk ? Math.sin(time / 90 + person.anim) * 1.2 : 0;
+  const working = person.task.type === 'work' && person.task.mode === 'labor';
+  const swing = walk || working ? Math.sin(time / 90 + person.anim) : 0;
+  const bob = walk ? Math.sin(time / 90 + person.anim) * 1.2 : working ? Math.sin(time / 140) * 0.6 : 0;
   const x = person.x * TILE;
   const y = person.y * TILE + bob;
   shadow(ctx, x, person.y * TILE);
+  if (selected) {
+    ctx.strokeStyle = '#fff4d2';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x - 9, y - 20, 18, 32);
+  }
   ctx.strokeStyle = '#3a2a22';
   ctx.lineWidth = 2;
   ctx.beginPath();
@@ -550,11 +608,49 @@ function drawPerson(ctx: CanvasRenderingContext2D, state: GameState, person: Per
     ctx.arc(x + 6, y - 16, 2.3, 0, Math.PI * 2);
     ctx.fill();
   }
+  if (person.task.type === 'work' && person.task.mode === 'labor') {
+    const workplace = person.task.buildingId;
+    const job = state.buildings.find((b) => b.id === workplace);
+    drawTool(ctx, x, y, swing, job?.type ?? 'orchard');
+  }
   if (person.cargo) {
+    const wide = person.cargoQty > 1 ? 10 : 5;
+    const tall = person.cargoQty > 1 ? 8 : 4;
+    ctx.fillStyle = '#6e5134';
+    ctx.fillRect(x + 4, y - 6, wide + 2, tall + 2);
     ctx.fillStyle = CARGO[person.cargo] ?? '#ccc';
-    ctx.fillRect(x + 4, y - 5, 5, 4);
+    ctx.fillRect(x + 5, y - 5, wide, tall);
   }
   ctx.lineWidth = 1;
+}
+
+function drawTool(ctx: CanvasRenderingContext2D, x: number, y: number, swing: number, type: BuildingType) {
+  ctx.save();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#6e5134';
+  if (type === 'woodcutter' || type === 'quarry' || type === 'mine' || type === 'pitch') {
+    ctx.beginPath();
+    ctx.moveTo(x + 4, y - 2);
+    ctx.lineTo(x + 11, y - 12 + swing * 4);
+    ctx.stroke();
+    ctx.strokeStyle = type === 'woodcutter' ? '#c9c3b4' : '#9a9a9a';
+    ctx.beginPath();
+    ctx.moveTo(x + 8, y - 10 + swing * 4);
+    ctx.lineTo(x + 14, y - 14 + swing * 4);
+    ctx.stroke();
+  } else if (type === 'hunter') {
+    ctx.strokeStyle = '#d7dde2';
+    ctx.beginPath();
+    ctx.moveTo(x + 3, y - 4);
+    ctx.lineTo(x + 12, y - 14 + swing * 3);
+    ctx.stroke();
+  } else if (type === 'orchard' || type === 'wheat' || type === 'hop') {
+    ctx.fillStyle = type === 'orchard' ? '#d6453c' : '#e6c84a';
+    ctx.beginPath();
+    ctx.arc(x + 9, y - 8 + swing * 3, 2.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 function drawSoldier(
