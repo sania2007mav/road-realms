@@ -197,16 +197,11 @@ export function canPlace(
   }
 
   if (def.nearTerrain != null) {
-    let found = false;
-    for (let ty = y - def.nearRadius; ty < y + def.h + def.nearRadius && !found; ty++) {
-      for (let tx = x - def.nearRadius; tx < x + def.w + def.nearRadius; tx++) {
-        if (terrainAt(state, tx, ty) === def.nearTerrain) {
-          found = true;
-          break;
-        }
-      }
+    const cx = x + def.w / 2;
+    const cy = y + def.h / 2;
+    if (!nearestTerrainTile(state, cx, cy, def.nearTerrain, workRange(def))) {
+      return { ok: false, reason: def.nearHint || 'Неподходящее место' };
     }
-    if (!found) return { ok: false, reason: def.nearHint || 'Неподходящее место' };
   }
 
   if (def.needsDeer) {
@@ -748,6 +743,11 @@ function ruRes(res: Resource): string {
   return name.charAt(0).toLowerCase() + name.slice(1);
 }
 
+/** Circle around the footprint centre. The placement ghost draws this same radius. */
+export function workRange(def: { w: number; h: number; nearRadius: number }): number {
+  return def.nearRadius + Math.max(def.w, def.h) / 2;
+}
+
 function nearestTerrainTile(
   state: GameState,
   x: number,
@@ -756,7 +756,7 @@ function nearestTerrainTile(
   radius: number,
 ): { x: number; y: number } | null {
   let best: { x: number; y: number } | null = null;
-  let bestD = radius;
+  let bestD = radius + 0.05;
   const x0 = Math.max(0, Math.floor(x - radius));
   const y0 = Math.max(0, Math.floor(y - radius));
   const x1 = Math.min(state.mapW - 1, Math.ceil(x + radius));
@@ -765,7 +765,7 @@ function nearestTerrainTile(
     for (let tx = x0; tx <= x1; tx++) {
       if (terrainAt(state, tx, ty) !== terrain) continue;
       const d = Math.hypot(tx + 0.5 - x, ty + 0.5 - y);
-      if (d < bestD) {
+      if (d <= bestD) {
         best = { x: tx, y: ty };
         bestD = d;
       }
@@ -799,7 +799,7 @@ export function laborSpot(state: GameState, building: Building): { x: number; y:
     };
   }
   if (building.type === 'woodcutter') {
-    const tree = nearestTerrainTile(state, porch.x, porch.y, Terrain.Forest, (def.nearRadius || 2) + 1.4);
+    const tree = nearestTerrainTile(state, porch.x, porch.y, Terrain.Forest, workRange(def));
     if (tree) return { x: tree.x + 0.5, y: tree.y + 0.5 };
     return porch;
   }
@@ -820,7 +820,7 @@ export function laborSpot(state: GameState, building: Building): { x: number; y:
 export function stallReason(state: GameState, building: Building): string | null {
   const def = BUILDINGS[building.type];
   const porch = { x: building.x + def.w / 2, y: building.y + def.h / 2 };
-  if (building.type === 'woodcutter' && !nearestTerrainTile(state, porch.x, porch.y, Terrain.Forest, (def.nearRadius || 2) + 1.4)) {
+  if (building.type === 'woodcutter' && !nearestTerrainTile(state, porch.x, porch.y, Terrain.Forest, workRange(def))) {
     return 'ждёт: нет леса рядом';
   }
   if (building.type === 'hunter' && !nearestDeer(state, porch.x, porch.y, 12)) return 'ждёт: нет оленей рядом';

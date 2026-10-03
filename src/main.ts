@@ -20,8 +20,10 @@ import {
   serialize,
   step,
   suggestedTile,
+  terrainAt,
   usedCount,
   workerStatus,
+  Terrain,
   type BuildingType,
   type Command,
   type GameState,
@@ -138,6 +140,17 @@ function resize() {
   worldCanvas.height = Math.floor(h * dpr);
   miniCanvas.width = Math.max(1, Math.floor(miniCanvas.clientWidth * dpr));
   miniCanvas.height = Math.max(1, Math.floor(miniCanvas.clientHeight * dpr));
+  syncBuildScroll();
+}
+
+function syncBuildScroll() {
+  const host = document.querySelector<HTMLElement>('#buttons');
+  const prev = document.querySelector<HTMLButtonElement>('#build-prev');
+  const next = document.querySelector<HTMLButtonElement>('#build-next');
+  if (!host || !prev || !next) return;
+  const overflow = host.scrollWidth > host.clientWidth + 4;
+  prev.hidden = !overflow;
+  next.hidden = !overflow;
 }
 
 function bootPreview() {
@@ -321,7 +334,12 @@ function buildChrome() {
     button.onclick = () => setSpeed(Number(button.dataset.speed));
   });
 
-  buildbar.innerHTML = `<div id="tabs"></div><div id="buttons"></div>`;
+  buildbar.innerHTML = `<div id="tabs"></div><div id="buttonrow"><button type="button" id="build-prev" data-testid="build-prev" aria-label="Листать постройки влево">‹</button><div id="buttons"></div><button type="button" id="build-next" data-testid="build-next" aria-label="Листать постройки вправо">›</button></div>`;
+  const scrollBuild = (dir: number) => {
+    document.querySelector<HTMLElement>('#buttons')?.scrollBy({ left: dir * 180, behavior: 'smooth' });
+  };
+  document.querySelector<HTMLButtonElement>('#build-prev')!.onclick = () => scrollBuild(-1);
+  document.querySelector<HTMLButtonElement>('#build-next')!.onclick = () => scrollBuild(1);
   const tabEl = document.querySelector<HTMLElement>('#tabs')!;
   tabEl.innerHTML = (Object.keys(CATEGORY_NAME) as (keyof typeof CATEGORY_NAME)[])
     .map((key) => `<button type="button" data-cat="${key}" data-testid="tab-${key}">${CATEGORY_NAME[key]}</button>`)
@@ -369,6 +387,7 @@ function paintBuildButtons() {
       flash(`Выберите место: ${BUILDINGS[type].name}`);
     };
   });
+  syncBuildScroll();
 }
 
 function blockReason(type: BuildingType): string | null {
@@ -552,6 +571,13 @@ function updateTip(clientX: number, clientY: number) {
         text = def.name;
       }
     }
+  }
+  if (!text) {
+    const terrain = terrainAt(state, hover.x, hover.y);
+    if (terrain === Terrain.Forest) text = 'Лес';
+    else if (terrain === Terrain.Limestone) text = 'Известняк';
+    else if (terrain === Terrain.Iron) text = 'Железная руда';
+    else if (terrain === Terrain.Swamp) text = 'Чёрное болото';
   }
   if (!text) {
     tipEl.hidden = true;

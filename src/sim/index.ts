@@ -43,6 +43,7 @@ export {
   canPlace,
   workerStatus,
   buildingWarning,
+  workRange,
 } from './update';
 export type {
   Building,

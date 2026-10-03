@@ -134,6 +134,96 @@ async function place(page: import('@playwright/test').Page, tab: string, type: s
   await page.waitForFunction((kind) => window.__game?.snapshot().buildings.some((b) => b.type === kind) ?? false, type);
 }
 
+test('полоса, подсказка и список построек не перекрываются', async ({ page }) => {
+  test.setTimeout(120_000);
+  mkdirSync(shots, { recursive: true });
+  const views = [
+    { width: 1280, height: 800, phone: false },
+    { width: 1024, height: 640, phone: false },
+    { width: 390, height: 844, phone: true },
+  ];
+  for (const view of views) {
+    await page.setViewportSize({ width: view.width, height: view.height });
+    await page.goto('/road-realms/');
+    await page.evaluate(() => localStorage.removeItem('dorozhnye-kraya-tutorial'));
+    await page.getByTestId('new-game').click();
+    await page.getByTestId('tutorial-skip').click();
+    await page.getByTestId('tab-housing').click();
+    await expect(page.getByTestId('hint')).toBeVisible();
+    await expect(page.locator('.res', { hasText: 'Дерево' })).toBeVisible();
+    await expect(page.locator('.res', { hasText: 'Камень' })).toBeVisible();
+    const layout = await page.evaluate(() => {
+      const box = (sel: string) => {
+        const el = document.querySelector(sel);
+        if (!el || (el as HTMLElement).hidden) return null;
+        const r = el.getBoundingClientRect();
+        if (r.width < 2 || r.height < 2) return null;
+        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+      };
+      const hit = (a: { left: number; right: number; top: number; bottom: number }, b: typeof a) =>
+        a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1;
+      const bad: string[] = [];
+      for (const [a, b] of [
+        ['#hint', '#resources'],
+        ['#hint', '#status'],
+        ['#log', '#resources'],
+        ['#log', '#hint'],
+        ['#log', '#status'],
+        ['#dock', '#topbar'],
+      ] as const) {
+        const ra = box(a);
+        const rb = box(b);
+        if (ra && rb && hit(ra, rb)) bad.push(`${a}×${b}`);
+      }
+      const covered: string[] = [];
+      for (const label of ['Дерево', 'Камень']) {
+        const el = [...document.querySelectorAll('.res')].find((node) => node.textContent?.includes(label));
+        if (!el) {
+          covered.push(label);
+          continue;
+        }
+        const r = el.getBoundingClientRect();
+        const top = document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(8, r.height / 2));
+        if (!top || !el.contains(top)) covered.push(label);
+      }
+      return { bad, covered };
+    });
+    expect(layout.bad, `${view.width}×${view.height}`).toEqual([]);
+    expect(layout.covered, `${view.width}×${view.height}`).toEqual([]);
+
+    const buttons = page.locator('#buttons button');
+    const count = await buttons.count();
+    expect(count).toBeGreaterThan(2);
+    for (let i = 0; i < count; i++) {
+      const button = buttons.nth(i);
+      await button.scrollIntoViewIfNeeded();
+      const name = (await button.locator('b').innerText()).trim();
+      const fit = await button.evaluate((el) => {
+        const host = document.querySelector('#buttons');
+        if (!host) return { ok: false };
+        const er = el.getBoundingClientRect();
+        const hr = host.getBoundingClientRect();
+        const title = el.querySelector('b');
+        const nameOk = !title || title.scrollWidth <= title.clientWidth + 2;
+        return {
+          ok: er.left >= hr.left - 2 && er.right <= hr.right + 2 && er.top >= hr.top - 2 && er.bottom <= hr.bottom + 2 && nameOk,
+          nameOk,
+          left: Math.round(er.left - hr.left),
+          right: Math.round(hr.right - er.right),
+          top: Math.round(er.top - hr.top),
+          bottom: Math.round(hr.bottom - er.bottom),
+          ew: Math.round(er.width),
+          hw: Math.round(hr.width),
+        };
+      });
+      expect(fit.ok, `${view.width}: ${name} ${JSON.stringify(fit)}`).toBe(true);
+    }
+    const overflow = await page.locator('#buttons').evaluate((el) => el.scrollWidth > el.clientWidth + 4);
+    if (overflow) await expect(page.getByTestId('build-next')).toBeVisible();
+    if (view.phone) await page.screenshot({ path: `${shots}/iso_phone.png` });
+  }
+});
+
 declare global {
   interface Window {
     __game?: {
