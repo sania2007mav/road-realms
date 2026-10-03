@@ -1430,25 +1430,29 @@ window.addEventListener('keydown', (event) => {
     flash(`Отряд ${event.key}`);
     return;
   }
-  if (playing && !event.repeat && !event.ctrlKey && !event.metaKey && !event.altKey && /^[1-9]$/.test(event.key)) {
+  if (playing && !event.ctrlKey && !event.metaKey && !event.altKey && /^[1-9]$/.test(event.key)) {
     const n = Number(event.key);
     const living = controlGroups[n].filter((id) => state.soldiers.some((s) => s.id === id && s.hp > 0 && s.playerId === 0));
     if (living.length) {
       event.preventDefault();
-      const now = performance.now();
-      selectedSoldiers.clear();
-      for (const id of living) selectedSoldiers.add(id);
-      if (lastGroupTap.n === n && now - lastGroupTap.at < 400) centreSquad(living);
-      lastGroupTap = { n, at: now };
-      noteFirstSelection();
-      syncArmy();
+      if (!event.repeat) {
+        const now = performance.now();
+        selectedSoldiers.clear();
+        for (const id of living) selectedSoldiers.add(id);
+        if (lastGroupTap.n === n && now - lastGroupTap.at < 400) centreSquad(living);
+        lastGroupTap = { n, at: now };
+        noteFirstSelection();
+        syncArmy();
+      }
       return;
     }
   }
-  if (key === 'a' && !event.repeat && !event.ctrlKey && !event.metaKey && !event.altKey && playing && selectedSoldiers.size) {
+  if (key === 'a' && !event.ctrlKey && !event.metaKey && !event.altKey && playing && selectedSoldiers.size) {
     event.preventDefault();
-    attackArmed = !attackArmed;
-    syncArmy();
+    if (!event.repeat) {
+      attackArmed = !attackArmed;
+      syncArmy();
+    }
     return;
   }
   keys.add(key);

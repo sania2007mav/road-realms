@@ -455,11 +455,14 @@ function drawSelectBox(ctx: CanvasRenderingContext2D, box: { x: number; y: numbe
   const w = Math.abs(box.w);
   const h = Math.abs(box.h);
   ctx.save();
-  ctx.fillStyle = 'rgba(242, 231, 201, 0.16)';
-  ctx.strokeStyle = '#f2e7c9';
-  ctx.lineWidth = 1.5;
-  ctx.setLineDash([6, 4]);
+  ctx.fillStyle = 'rgba(242, 231, 201, 0.22)';
   ctx.fillRect(x, y, w, h);
+  ctx.setLineDash([8, 5]);
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(20, 14, 10, 0.85)';
+  ctx.strokeRect(x, y, w, h);
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = '#fff4d2';
   ctx.strokeRect(x, y, w, h);
   ctx.restore();
 }
