@@ -821,9 +821,10 @@ function updateWorker(state: GameState, person: Person) {
   }
 
   if (def.hauler === 'person' && building.buffer > 0 && building.bufferRes) {
+    const load = Math.min(building.buffer, Math.max(1, def.carry));
     person.cargo = building.bufferRes;
-    person.cargoQty = 1;
-    building.buffer -= 1;
+    person.cargoQty = load;
+    building.buffer -= load;
     if (building.buffer <= 0) {
       building.buffer = 0;
       building.bufferRes = null;

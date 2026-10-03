@@ -26,7 +26,7 @@ import {
   type GameState,
   type Ration,
 } from './sim';
-import { TILE, focusTile, screenToTile, type Camera } from './render/camera';
+import { TILE, ZOOM_MAX, clampCamera, focusTile, screenToTile, worldToScreen, type Camera } from './render/camera';
 import { bakeMinimap, bakeTerrain, renderMinimap, renderWorld, type Ghost } from './render/draw';
 
 const SAVE_KEY = 'dorozhnye-kraya-v1';
@@ -108,6 +108,12 @@ let pinch = 0;
 let dragging = false;
 let dragDist = 0;
 let lastPtr = { x: 0, y: 0 };
+let titleDir = 1;
+
+function clampView() {
+  const { w, h } = viewSize();
+  clampCamera(camera, w, h, state.mapW * TILE, state.mapH * TILE);
+}
 
 function viewSize() {
   return { w: worldCanvas.clientWidth, h: worldCanvas.clientHeight };
@@ -133,6 +139,7 @@ function bootPreview() {
   camera.y = state.roadY * TILE;
   camera.zoom = 0.55;
   playing = false;
+  clampView();
 }
 
 function startGame() {
@@ -148,6 +155,7 @@ function startGame() {
     camera.y = center.y * TILE;
   }
   camera.zoom = 1.15;
+  clampView();
   playing = true;
   speed = 1;
   placing = null;
@@ -185,6 +193,7 @@ function loadGame() {
       camera.x = center.x * TILE;
       camera.y = center.y * TILE;
     }
+    clampView();
     buildChrome();
     flash('Поселение загружено');
     expose();
@@ -713,8 +722,11 @@ function frame(now: number) {
   if (playing && keys.has('arrowright')) camera.x += pan * dt;
 
   if (!playing) {
-    camera.x += 18 * dt;
-    if (camera.x > state.mapW * TILE) camera.x = 0;
+    const intended = camera.x + 22 * dt * titleDir;
+    camera.x = intended;
+    clampView();
+    if (camera.x < intended - 0.01) titleDir = -1;
+    else if (camera.x > intended + 0.01) titleDir = 1;
   } else if (speed > 0 && state.outcome === 'playing') {
     acc += dt * TICKS_PER_SECOND * speed;
     let guard = 0;
@@ -733,6 +745,7 @@ function frame(now: number) {
     }
   }
 
+  if (playing) clampView();
   const { w, h } = viewSize();
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   renderWorld(ctx, state, camera, w, h, dpr, baked, ghost(), selectedId, now);
@@ -749,6 +762,7 @@ function expose() {
     },
     focusTile(x: number, y: number) {
       focusTile(camera, x, y);
+      clampView();
     },
     focusHome() {
       const keep = playerKeep(state, 0);
@@ -756,9 +770,15 @@ function expose() {
       const center = buildingCenter(keep);
       camera.x = center.x * TILE;
       camera.y = center.y * TILE;
+      clampView();
     },
     zoom(z: number) {
-      camera.zoom = Math.max(0.25, Math.min(2.4, z));
+      camera.zoom = Math.max(0.05, Math.min(ZOOM_MAX, z));
+      clampView();
+    },
+    tileCenter(x: number, y: number) {
+      const { w, h } = viewSize();
+      return worldToScreen(camera, w, h, (x + 0.5) * TILE, (y + 0.5) * TILE);
     },
     select(id: number) {
       selectedId = id;
@@ -775,6 +795,7 @@ function expose() {
         cap: housingCap(state, 0),
         popularity: state.players[0]?.popularity ?? 0,
         people: state.people.filter((p) => p.playerId === 0).length,
+        apples: state.players[0]?.stocks.apples ?? 0,
         buildings: state.buildings
           .filter((b) => b.playerId === 0)
           .map((b) => ({
@@ -810,7 +831,10 @@ worldCanvas.addEventListener('pointermove', (event) => {
   if (pointers.size >= 2) {
     const pts = [...pointers.values()];
     const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-    if (pinch > 0) camera.zoom = Math.max(0.28, Math.min(2.4, camera.zoom * (dist / pinch)));
+    if (pinch > 0) {
+      camera.zoom = Math.min(ZOOM_MAX, camera.zoom * (dist / pinch));
+      clampView();
+    }
     pinch = dist;
     dragging = false;
     return;
@@ -822,6 +846,7 @@ worldCanvas.addEventListener('pointermove', (event) => {
   dragDist += Math.hypot(dx, dy);
   camera.x -= dx / camera.zoom;
   camera.y -= dy / camera.zoom;
+  clampView();
   lastPtr = { x: event.clientX, y: event.clientY };
 });
 worldCanvas.addEventListener('pointerup', (event) => {
@@ -842,7 +867,8 @@ worldCanvas.addEventListener(
   'wheel',
   (event) => {
     event.preventDefault();
-    camera.zoom = Math.max(0.28, Math.min(2.4, camera.zoom * (event.deltaY > 0 ? 0.9 : 1.1)));
+    camera.zoom = Math.min(ZOOM_MAX, camera.zoom * (event.deltaY > 0 ? 0.9 : 1.1));
+    clampView();
   },
   { passive: false },
 );
@@ -858,6 +884,7 @@ miniCanvas.addEventListener('pointerdown', (event) => {
   const y = ((event.clientY - rect.top) / rect.height) * state.mapH;
   camera.x = x * TILE;
   camera.y = y * TILE;
+  clampView();
 });
 document.querySelector<HTMLButtonElement>('#home')!.onclick = () => {
   const keep = playerKeep(state, 0);
@@ -866,6 +893,7 @@ document.querySelector<HTMLButtonElement>('#home')!.onclick = () => {
   camera.x = center.x * TILE;
   camera.y = center.y * TILE;
   camera.zoom = 1.15;
+  clampView();
 };
 
 window.addEventListener('keydown', (event) => {
@@ -884,8 +912,13 @@ window.addEventListener('keydown', (event) => {
   } else if (event.key.toLowerCase() === 'h' && playing) {
     tutorialStep = 0;
     showTutorial();
-  } else if (event.key === '+' || event.key === '=') camera.zoom = Math.min(2.4, camera.zoom * 1.1);
-  else if (event.key === '-' || event.key === '_') camera.zoom = Math.max(0.28, camera.zoom * 0.9);
+  } else if (event.key === '+' || event.key === '=') {
+    camera.zoom = Math.min(ZOOM_MAX, camera.zoom * 1.1);
+    clampView();
+  } else if (event.key === '-' || event.key === '_') {
+    camera.zoom *= 0.9;
+    clampView();
+  }
 });
 window.addEventListener('keyup', (event) => keys.delete(event.key.toLowerCase()));
 window.addEventListener('resize', resize);
@@ -897,6 +930,7 @@ declare global {
       focusTile: (x: number, y: number) => void;
       focusHome: () => void;
       zoom: (z: number) => void;
+      tileCenter: (x: number, y: number) => { x: number; y: number };
       select: (id: number) => void;
       setSpeed: (n: number) => void;
       snapshot: () => {
@@ -906,6 +940,7 @@ declare global {
         cap: number;
         popularity: number;
         people: number;
+        apples: number;
         buildings: { id: number; type: string; complete: boolean; workers: number; x: number; y: number }[];
       };
     };

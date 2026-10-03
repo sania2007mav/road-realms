@@ -195,10 +195,12 @@ export interface BuildingDef {
   outputQty: number;
   input: Resource | null;
   hauler: 'person' | 'ox' | 'none';
+  /** Units a person picks up in one trip. Oxen use their own carry size. */
+  carry: number;
 }
 
-function def(partial: BuildingDef): BuildingDef {
-  return partial;
+function def(partial: Omit<BuildingDef, 'carry'> & { carry?: number }): BuildingDef {
+  return { carry: 1, ...partial };
 }
 
 export const BUILDINGS: Record<BuildingType, BuildingDef> = {
@@ -421,7 +423,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   orchard: def({
     type: 'orchard',
     name: 'Яблоневый сад',
-    desc: 'Дешёвые яблоки, но сад занимает много оазиса.',
+    desc: 'Дешёвые яблоки, но сад занимает много оазиса. Один работник кормит начальный посад.',
     w: 4,
     h: 3,
     cost: { wood: 6 },
@@ -429,18 +431,19 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     housing: 0,
     keepLevel: 1,
     category: 'food',
-    buildTicks: 170,
+    buildTicks: 120,
     hp: 90,
     terrain: [T.Oasis],
     nearTerrain: null,
     nearRadius: 0,
     nearHint: '',
     needsDeer: false,
-    cycle: 70,
+    cycle: 18,
     output: 'apples',
-    outputQty: 1,
+    outputQty: 36,
     input: null,
     hauler: 'person',
+    carry: 36,
   }),
   dairy: def({
     type: 'dairy',
@@ -813,7 +816,8 @@ export const PLAYER_NAMES = ['Ваш посад', 'Посад «Ольха»', '
 export const START_STOCKS: Partial<Record<Resource, number>> = {
   wood: 36,
   stone: 10,
-  apples: 40,
+  // A basket already in the stores: five people finish the granary and the first orchard before this runs out.
+  apples: 80,
 };
 
 export const START_GOLD = 100;

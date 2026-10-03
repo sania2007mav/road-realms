@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CONSUME_EVERY,
+  START_STOCKS,
   TAX_EVERY,
   consumeFood,
   createGame,
@@ -118,9 +119,9 @@ describe('еда, разнообразие и налоги', () => {
     const beforeMeal = createGame(3, { ai: 0 });
     beforeMeal.mobs = [];
     for (let i = 0; i < CONSUME_EVERY; i++) step(beforeMeal, []);
-    expect(beforeMeal.players[0].stocks.apples).toBe(40);
+    expect(beforeMeal.players[0].stocks.apples).toBe(START_STOCKS.apples);
     step(beforeMeal, []);
-    expect(beforeMeal.players[0].stocks.apples).toBe(35);
+    expect(beforeMeal.players[0].stocks.apples).toBe((START_STOCKS.apples ?? 0) - 5);
   });
 
   it('повышает цель настроения, когда в запасе больше видов еды', () => {

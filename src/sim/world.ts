@@ -143,7 +143,10 @@ export function createGame(seed: number, opts?: { ai?: number }): GameState {
     mobs: [],
     outcome: 'playing',
     message: '',
-    log: ['Тракт пролегает через весь край. Поставьте амбар и склад.'],
+    log: [
+      'Тракт пролегает через весь край. Поставьте амбар и склад.',
+      'В запасе уже есть яблоки: успейте поставить сад и назначить работника.',
+    ],
   };
 
   spawns.forEach((spawn, index) => {
