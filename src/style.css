@@ -277,13 +277,18 @@ input[type="number"], select {
   width: min(380px, calc(100% - 24px));
 }
 
-#menu, #popbox, #peoplebox {
+#menu {
   top: 64px;
   left: 12px;
   width: min(360px, calc(100% - 24px));
 }
 
-#popbox, #peoplebox { top: 64px; left: auto; right: 12px; }
+#popbox, #peoplebox {
+  top: 118px;
+  left: 12px;
+  right: auto;
+  width: min(340px, calc(100vw - 380px));
+}
 
 .reason { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--line); }
 .reason b.plus { color: var(--good); }
@@ -297,6 +302,7 @@ input[type="number"], select {
 }
 
 @media (max-width: 800px) {
+  #popbox, #peoplebox { width: min(340px, calc(100% - 24px)); top: 70px; }
   #dock { grid-template-columns: 1fr auto; }
   #speeds { grid-column: 1 / -1; }
   #mapwrap { width: 120px; height: 84px; }
