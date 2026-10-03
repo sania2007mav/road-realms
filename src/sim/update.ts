@@ -1661,6 +1661,12 @@ function evict(state: GameState, playerId: number) {
 }
 
 function finishOutcome(state: GameState) {
+  const humans = state.players.filter((p) => !p.isAi);
+  if (humans.length > 1) {
+    const alive = state.players.filter((p) => p.alive);
+    if (alive.length <= 1) state.outcome = 'victory';
+    return;
+  }
   const human = state.players[0];
   if (!human || !human.alive) {
     state.outcome = 'defeat';

@@ -183,10 +183,9 @@ button.active, button[aria-pressed="true"] {
 }
 
 #toast {
-  position: absolute;
-  bottom: 168px;
-  left: 50%;
-  transform: translateX(-50%);
+  position: static;
+  grid-column: 1 / -1;
+  justify-self: center;
   background: var(--panel);
   border: 1px solid var(--gold);
   color: var(--gold);
@@ -195,6 +194,46 @@ button.active, button[aria-pressed="true"] {
   z-index: 5;
   pointer-events: none;
 }
+
+.lobby-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+#lobby-list { min-height: 28px; }
+
+#net, #syncbox { position: absolute; z-index: 6; }
+
+#net {
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(28, 22, 18, 0.72);
+  overflow: auto;
+  padding: 12px;
+}
+
+#net .card { width: min(560px, calc(100% - 24px)); max-height: calc(100% - 24px); overflow: auto; }
+
+#net .actions { flex-wrap: wrap; }
+
+#net input, #net select { min-height: 44px; }
+
+#syncbox {
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(28, 22, 18, 0.45);
+  pointer-events: none;
+}
+
+#syncbox .card { pointer-events: auto; width: min(440px, calc(100% - 24px)); }
 
 #army {
   position: absolute;
@@ -296,6 +335,15 @@ button.active, button[aria-pressed="true"] {
 #econ select, #econ input { min-height: 36px; width: auto; flex: 1; }
 
 #speeds { display: flex; gap: 4px; }
+
+#presence {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  max-width: 180px;
+}
+#presence span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 #buildbar {
   background: var(--panel);

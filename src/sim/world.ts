@@ -66,9 +66,11 @@ function clearPad(terrain: Uint8Array, cx: number, cy: number, r: number) {
   }
 }
 
-export function createGame(seed: number, opts?: { ai?: number }): GameState {
-  const ai = Math.max(0, Math.min(3, opts?.ai ?? 3));
-  const playerCount = 1 + ai;
+export function createGame(seed: number, opts?: { ai?: number; humans?: number }): GameState {
+  const multi = opts?.humans != null;
+  const humans = multi ? Math.max(1, Math.min(4, Math.floor(opts?.humans ?? 1))) : 0;
+  const ai = multi ? 0 : Math.max(0, Math.min(3, opts?.ai ?? 3));
+  const playerCount = multi ? humans : 1 + ai;
   const { roadY, spawns } = planSpawns(playerCount);
   const terrain = new Uint8Array(MAP_W * MAP_H);
 
@@ -155,7 +157,7 @@ export function createGame(seed: number, opts?: { ai?: number }): GameState {
     const player: Player = {
       id: index,
       name: PLAYER_NAMES[index] ?? `Посад ${index + 1}`,
-      isAi: index !== 0,
+      isAi: multi ? false : index !== 0,
       alive: true,
       side: spawn.side,
       spawnX: spawn.x,

@@ -34,12 +34,15 @@ import {
   type GameState,
   type Ration,
 } from './sim';
+import { net } from './net/session';
+import { NetView } from './net/screens';
 import { ZOOM_MAX, clampCamera, focusTile, screenToTile, screenToWorld, worldToScreen, type Camera } from './render/camera';
 import { bakeTerrain, minimapToTile, renderMinimap, renderWorld, type Ghost, type OrderMarker } from './render/draw';
 import { soldiersInScreenRect } from './select';
 
 const SAVE_KEY = 'dorozhnye-kraya-v1';
 const TUTORIAL_KEY = 'dorozhnye-kraya-tutorial';
+const NAME_KEY = 'dorozhnye-kraya-name';
 const ARMY_HINT_KEY = 'dorozhnye-kraya-army-hint';
 const ARMY_HINT =
   'Щелчок выбирает солдата, рамка — нескольких (Shift добавляет). Двойной щелчок — всех такого оружия на экране. Правая кнопка: идти или атаковать цель. Клавиша A или кнопка «Атаковать область», затем щелчок. Ctrl+1…9 запоминает отряд, 1…9 выбирает его, повтор цифры показывает отряд на карте.';
@@ -106,6 +109,8 @@ let playing = false;
 let camera: Camera = { x: 0, y: 0, zoom: 1.15 };
 let baked = bakeTerrain(state);
 let speed = 1;
+let localPlayer = 0;
+let netMode = false;
 let placing: BuildingType | null = null;
 let selectedId: number | null = null;
 let selectedPersonId: number | null = null;
@@ -116,6 +121,12 @@ let toastUntil = 0;
 let lastMessage = '';
 let panelSig = '';
 let queue: Command[] = [];
+
+function pushCmd(command: Command) {
+  command.playerId = localPlayer;
+  if (netMode) net.submit(command);
+  else queue.push(command);
+}
 const keys = new Set<string>();
 let acc = 0;
 let lastFrame = performance.now();
@@ -191,15 +202,18 @@ function bootPreview() {
   lookAtTile(state.mapW / 2, state.roadY);
   camera.zoom = 0.55;
   playing = false;
+  localPlayer = 0;
   clampView();
 }
 
 function startGame() {
+  netMode = false;
+  localPlayer = 0;
   const seed = Number((document.querySelector<HTMLInputElement>('#seed')?.value ?? '20261003')) || 1;
   const ai = Number(document.querySelector<HTMLSelectElement>('#ai-count')?.value ?? '3');
   state = createGame(seed >>> 0, { ai: ai === 2 ? 2 : 3 });
   baked = bakeTerrain(state);
-  const keep = playerKeep(state, 0);
+  const keep = playerKeep(state, localPlayer);
   if (keep) {
     const center = buildingCenter(keep);
     lookAtPoint(center.x, center.y);
@@ -214,6 +228,8 @@ function startGame() {
   acc = 0;
   resetArmy();
   title.hidden = true;
+  netView.hide();
+  netView.wait(null, null);
   endScreen.hidden = true;
   menu.hidden = true;
   buildChrome();
@@ -225,6 +241,10 @@ function startGame() {
 }
 
 function loadGame() {
+  if (netMode) {
+    flash('В сетевой игре сохранения нет');
+    return;
+  }
   const raw = localStorage.getItem(SAVE_KEY);
   if (!raw) {
     flash('Сохранения нет');
@@ -235,9 +255,11 @@ function loadGame() {
     baked = bakeTerrain(state);
     playing = true;
     title.hidden = true;
+    netView.hide();
+    netView.wait(null, null);
     endScreen.hidden = true;
     menu.hidden = true;
-    const keep = playerKeep(state, 0);
+    const keep = playerKeep(state, localPlayer);
     if (keep) {
       const center = buildingCenter(keep);
       lookAtPoint(center.x, center.y);
@@ -253,6 +275,10 @@ function loadGame() {
 }
 
 function saveGame() {
+  if (netMode) {
+    flash('В сетевой игре сохранения нет');
+    return;
+  }
   if (!playing) return;
   localStorage.setItem(SAVE_KEY, serialize(state));
   flash('Сохранено на этом устройстве');
@@ -282,11 +308,25 @@ function showTutorial() {
   };
 }
 
+function storedName(): string {
+  const raw = (localStorage.getItem(NAME_KEY) || '').trim().slice(0, 20);
+  return raw || 'Путник';
+}
+
+function rememberName() {
+  const input = document.querySelector<HTMLInputElement>('#player-name');
+  const value = (input?.value || storedName()).trim().slice(0, 20) || 'Путник';
+  localStorage.setItem(NAME_KEY, value);
+  if (input) input.value = value;
+}
+
 function buildTitle() {
   title.hidden = false;
   title.innerHTML = `<div class="card">
     <h1>Дорожные края</h1>
     <p class="lede">Открытая стратегия вдоль большого тракта. Люди — редкость: их ровно столько, сколько влезает в жильё, и каждый занят только одним делом.</p>
+    <label for="player-name">Ваше имя</label>
+    <input id="player-name" data-testid="player-name" maxlength="20" />
     <label for="seed">Зерно мира</label>
     <input id="seed" data-testid="seed" type="number" value="20261003" />
     <label for="ai-count">Соседи по тракту</label>
@@ -296,18 +336,28 @@ function buildTitle() {
     </select>
     <div class="actions">
       <button type="button" id="load-title" data-testid="load-game">Загрузить</button>
-      <button type="button" id="start-title" data-testid="new-game">Начать путь</button>
+      <button type="button" id="start-title" data-testid="new-game">Одиночная игра</button>
+    </div>
+    <div class="actions">
+      <button type="button" id="net-title" data-testid="net-game">Сетевая игра</button>
     </div>
   </div>`;
+  const nameInput = document.querySelector<HTMLInputElement>('#player-name')!;
+  nameInput.value = storedName();
+  nameInput.addEventListener('change', () => rememberName());
   document.querySelector<HTMLInputElement>('#seed')!.addEventListener('change', () => {
     if (!playing) bootPreview();
   });
-  document.querySelector<HTMLButtonElement>('#start-title')!.onclick = () => startGame();
+  document.querySelector<HTMLButtonElement>('#start-title')!.onclick = () => {
+    rememberName();
+    startGame();
+  };
   document.querySelector<HTMLButtonElement>('#load-title')!.onclick = () => loadGame();
+  document.querySelector<HTMLButtonElement>('#net-title')!.onclick = () => openNet();
 }
 
 function buildChrome() {
-  const player = () => state.players[0];
+  const player = () => state.players[localPlayer];
   topbar.innerHTML = `
     <div id="status">
       <button type="button" id="open-menu" data-testid="open-menu">Меню</button>
@@ -316,6 +366,7 @@ function buildChrome() {
       <div class="readout" id="gold-readout"></div>
       <div class="readout" id="clock"></div>
       <div class="readout" id="fps">60 к/с</div>
+      <div id="presence" data-testid="presence" hidden></div>
     </div>
     <div id="resources"></div>`;
   document.querySelector<HTMLButtonElement>('#open-menu')!.onclick = () => {
@@ -341,14 +392,14 @@ function buildChrome() {
   const ration = document.querySelector<HTMLSelectElement>('#ration')!;
   ration.value = player().ration;
   ration.addEventListener('change', () => {
-    queue.push({ kind: 'ration', playerId: 0, ration: ration.value as Ration });
+    pushCmd({ kind: 'ration', playerId: localPlayer, ration: ration.value as Ration });
   });
 
   const tax = document.querySelector<HTMLInputElement>('#tax')!;
   tax.value = String(Math.max(0, TAXES.findIndex((t) => t.id === player().tax)));
   tax.addEventListener('input', () => {
     const def = TAXES[Number(tax.value)] ?? TAXES[1];
-    queue.push({ kind: 'tax', playerId: 0, tax: def.id });
+    pushCmd({ kind: 'tax', playerId: localPlayer, tax: def.id });
     const label = document.querySelector<HTMLElement>('#tax-label');
     if (label) label.textContent = def.label;
   });
@@ -421,7 +472,7 @@ function paintBuildButtons() {
 
 function buttonNote(type: BuildingType): string {
   const def = BUILDINGS[type];
-  const level = playerKeep(state, 0)?.level ?? 0;
+  const level = playerKeep(state, localPlayer)?.level ?? 0;
   if (def.keepLevel > level) return `Нужен уровень главного здания ${def.keepLevel}`;
   const cost = Object.entries(def.cost)
     .map(([res, amount]) => `${amount} ${RESOURCE_NAME[res as keyof typeof RESOURCE_NAME]}`)
@@ -431,12 +482,12 @@ function buttonNote(type: BuildingType): string {
 
 function blockReason(type: BuildingType): string | null {
   const def = BUILDINGS[type];
-  const keep = playerKeep(state, 0);
+  const keep = playerKeep(state, localPlayer);
   const level = keep?.level ?? 0;
-  if (!state.players[0]?.alive) return 'Поселение пало';
+  if (!state.players[localPlayer]?.alive) return 'Поселение пало';
   if (def.keepLevel > level) return `Нужен уровень главного здания ${def.keepLevel}`;
   for (const res of RESOURCES) {
-    if ((state.players[0].stocks[res] ?? 0) < (def.cost[res] ?? 0)) return 'Не хватает ресурсов';
+    if ((state.players[localPlayer].stocks[res] ?? 0) < (def.cost[res] ?? 0)) return 'Не хватает ресурсов';
   }
   return null;
 }
@@ -455,9 +506,11 @@ function refreshBuildState() {
 }
 
 function setSpeed(value: number) {
+  if (netMode) value = 1;
   speed = value;
   speeds.querySelectorAll<HTMLButtonElement>('button').forEach((button) => {
     button.classList.toggle('active', Number(button.dataset.speed) === value);
+    button.disabled = netMode;
   });
 }
 
@@ -486,6 +539,13 @@ function renderMenu() {
   document.querySelector<HTMLButtonElement>('#resign-btn')!.onclick = () => {
     menu.hidden = true;
     playing = false;
+    if (netMode) {
+      netMode = false;
+      localPlayer = 0;
+      void net.destroyMatch();
+    }
+    netView.hide();
+    netView.wait(null, null);
     buildTitle();
     bootPreview();
   };
@@ -495,11 +555,11 @@ function renderMenu() {
 }
 
 function syncHud() {
-  const player = state.players[0];
+  const player = state.players[localPlayer];
   if (!player) return;
-  const idle = idleCount(state, 0);
-  const used = usedCount(state, 0);
-  const cap = housingCap(state, 0);
+  const idle = idleCount(state, localPlayer);
+  const used = usedCount(state, localPlayer);
+  const cap = housingCap(state, localPlayer);
   const peopleBtn = document.querySelector<HTMLButtonElement>('#people-btn');
   if (peopleBtn) {
     peopleBtn.innerHTML = `Люди <strong>${used}</strong>/<strong>${cap}</strong> · свободно <strong>${idle}</strong>`;
@@ -545,7 +605,7 @@ function syncHud() {
     idle === 0 &&
     state.buildings.some(
       (b) =>
-        b.playerId === 0 &&
+        b.playerId === localPlayer &&
         b.hp > 0 &&
         (!b.complete || b.upgrading || (b.complete && BUILDINGS[b.type].workers > b.workerIds.length)),
     );
@@ -555,7 +615,7 @@ function syncHud() {
     : '';
 
   if (!popbox.hidden) {
-    const report = currentTarget(state, 0);
+    const report = currentTarget(state, localPlayer);
     popbox.innerHTML = `<div class="card"><h2>Настроение ${report.value}</h2>${report.reasons
       .map(
         (reason) =>
@@ -564,12 +624,17 @@ function syncHud() {
       .join('')}<p>Люди приходят выше нуля, уходят ниже нуля.</p></div>`;
   }
   if (!peoplebox.hidden) {
-    const mine = state.people.filter((p) => p.playerId === 0 && p.hp > 0);
+    const mine = state.people.filter((p) => p.playerId === localPlayer && p.hp > 0);
     peoplebox.innerHTML = `<div class="card"><h2>Люди поселения</h2>${mine
       .map((person) => `<div class="reason"><span>${jobLabel(person)}</span></div>`)
-      .join('')}<p>Солдат: ${state.soldiers.filter((s) => s.playerId === 0 && s.hp > 0).length}. Солдат больше не занимает жильё.</p></div>`;
+      .join('')}<p>Солдат: ${state.soldiers.filter((s) => s.playerId === localPlayer && s.hp > 0).length}. Солдат больше не занимает жильё.</p></div>`;
   }
-  logEl.innerHTML = state.log.map((line) => `<div>${line}</div>`).join('');
+  logEl.replaceChildren();
+  for (const line of state.log) {
+    const row = document.createElement('div');
+    row.textContent = line;
+    logEl.append(row);
+  }
   syncArmy();
   if (state.message && state.message !== lastMessage) {
     lastMessage = state.message;
@@ -577,6 +642,7 @@ function syncHud() {
   }
   refreshBuildState();
   syncPanel();
+  syncPresence();
   if (state.outcome !== 'playing') showEnd();
 }
 
@@ -585,8 +651,8 @@ function updateHint() {
     hintEl.hidden = true;
     return;
   }
-  const mine = (type: string) => state.buildings.some((b) => b.playerId === 0 && b.hp > 0 && b.type === type);
-  const orchard = state.buildings.find((b) => b.playerId === 0 && b.hp > 0 && b.type === 'orchard');
+  const mine = (type: string) => state.buildings.some((b) => b.playerId === localPlayer && b.hp > 0 && b.type === type);
+  const orchard = state.buildings.find((b) => b.playerId === localPlayer && b.hp > 0 && b.type === 'orchard');
   let text = '';
   if (!mine('granary')) text = 'Поставьте амбар рядом с главным зданием';
   else if (!orchard) text = 'Поставьте яблоневый сад на зелёном оазисе';
@@ -604,7 +670,7 @@ function updateTip(clientX: number, clientY: number) {
   }
   let text = '';
   if (placing) {
-    const check = canPlace(state, 0, placing, hover.x, hover.y);
+    const check = canPlace(state, localPlayer, placing, hover.x, hover.y);
     text = check.ok ? `${BUILDINGS[placing].name}: можно строить` : `${BUILDINGS[placing].name}: ${check.reason}`;
   } else {
     for (const building of state.buildings) {
@@ -638,7 +704,7 @@ function jobLabel(person: GameState['people'][number]): string {
 
 function keepUpgradeHtml(building: { level: number; upgrading: boolean }): string {
   if (building.upgrading) return '<p>Улучшение уже идёт.</p>';
-  const player = state.players[0];
+  const player = state.players[localPlayer];
   const cost = KEEP_UPGRADE_COST[building.level] ?? {};
   const parts: string[] = [];
   let short = false;
@@ -655,7 +721,7 @@ function keepUpgradeHtml(building: { level: number; upgrading: boolean }): strin
   const mins = Math.floor(KEEP_UPGRADE_TICKS / TICKS_PER_GAME_MINUTE);
   const secs = KEEP_UPGRADE_TICKS % TICKS_PER_GAME_MINUTE;
   const time = secs === 0 ? `${mins} мин` : `${mins} мин ${secs} с`;
-  const noWorker = idleCount(state, 0) <= 0;
+  const noWorker = idleCount(state, localPlayer) <= 0;
   const reason = short ? 'Не хватает ресурсов' : noWorker ? 'Нужен свободный человек' : '';
   return `<p data-testid="upgrade-cost">${parts.join(', ')}</p>
     <p>Время стройки: ${time}. Нужен свободный человек.</p>
@@ -711,22 +777,22 @@ function syncPanel() {
     building.buffer,
     building.input,
     building.hp,
-    state.players[0].gold,
-    state.players[0].stocks.wood,
-    state.players[0].stocks.stone,
-    state.players[0].stocks.iron,
-    idleCount(state, 0),
+    state.players[localPlayer].gold,
+    state.players[localPlayer].stocks.wood,
+    state.players[localPlayer].stocks.stone,
+    state.players[localPlayer].stocks.iron,
+    idleCount(state, localPlayer),
     selectedPersonId ?? '',
     statuses,
   ].join('|');
   if (sig === panelSig) return;
   panelSig = sig;
   panel.hidden = false;
-  const mine = building.playerId === 0;
+  const mine = building.playerId === localPlayer;
   const workers = def.workers
     ? `<div class="row"><span>Работники ${building.workerIds.length} / ${def.workers}</span>
         <button type="button" data-testid="worker-minus">−</button>
-        <button type="button" data-testid="worker-plus" ${idleCount(state, 0) <= 0 || building.workerIds.length >= def.workers || !building.complete ? 'disabled' : ''}>+</button>
+        <button type="button" data-testid="worker-plus" ${idleCount(state, localPlayer) <= 0 || building.workerIds.length >= def.workers || !building.complete ? 'disabled' : ''}>+</button>
       </div>`
     : '';
   const upgrade = mine && building.type === 'keep' && building.level < 5 ? keepUpgradeHtml(building) : '';
@@ -762,7 +828,7 @@ function syncPanel() {
     )
     .join('');
   const noPeople =
-    mine && def.workers > building.workerIds.length && idleCount(state, 0) === 0
+    mine && def.workers > building.workerIds.length && idleCount(state, localPlayer) === 0
       ? `<p class="worker-status warn" data-testid="worker-status">нет свободных людей</p>`
       : '';
   panel.innerHTML = `<h2>${def.name}</h2>
@@ -776,48 +842,48 @@ function syncPanel() {
     ${building.plague > 0 ? '<p>На ферме чума, коровы не доятся.</p>' : ''}
     ${workers}${upgrade}${train}${market}
     <div class="row">${demolish}<button type="button" id="close-panel">Закрыть</button></div>
-    ${idleCount(state, 0) === 0 && mine && def.workers > building.workerIds.length ? '<p>Назначить некого: все люди заняты.</p>' : ''}`;
+    ${idleCount(state, localPlayer) === 0 && mine && def.workers > building.workerIds.length ? '<p>Назначить некого: все люди заняты.</p>' : ''}`;
   panel.querySelector<HTMLButtonElement>('[data-testid="worker-plus"]')?.addEventListener('click', () => {
-    queue.push({ kind: 'assign', playerId: 0, buildingId: building.id, delta: 1 });
+    pushCmd({ kind: 'assign', playerId: localPlayer, buildingId: building.id, delta: 1 });
     panelSig = '';
   });
   panel.querySelector<HTMLButtonElement>('[data-testid="worker-minus"]')?.addEventListener('click', () => {
-    queue.push({ kind: 'assign', playerId: 0, buildingId: building.id, delta: -1 });
+    pushCmd({ kind: 'assign', playerId: localPlayer, buildingId: building.id, delta: -1 });
     panelSig = '';
   });
   panel.querySelector<HTMLButtonElement>('[data-testid="upgrade-keep"]')?.addEventListener('click', () => {
-    queue.push({ kind: 'upgrade', playerId: 0, buildingId: building.id });
+    pushCmd({ kind: 'upgrade', playerId: localPlayer, buildingId: building.id });
     panelSig = '';
   });
   panel.querySelector<HTMLButtonElement>('[data-testid="demolish"]')?.addEventListener('click', () => {
-    queue.push({ kind: 'demolish', playerId: 0, buildingId: building.id });
+    pushCmd({ kind: 'demolish', playerId: localPlayer, buildingId: building.id });
     selectedId = null;
     selectedPersonId = null;
     panelSig = '';
   });
   panel.querySelector<HTMLButtonElement>('[data-testid="train-club"]')?.addEventListener('click', () => {
-    queue.push({ kind: 'train', playerId: 0, weapon: 'club' });
+    pushCmd({ kind: 'train', playerId: localPlayer, weapon: 'club' });
     panelSig = '';
   });
   panel.querySelector<HTMLButtonElement>('[data-testid="train-sword"]')?.addEventListener('click', () => {
-    queue.push({ kind: 'train', playerId: 0, weapon: 'sword' });
+    pushCmd({ kind: 'train', playerId: localPlayer, weapon: 'sword' });
     panelSig = '';
   });
   panel.querySelector<HTMLButtonElement>('[data-testid="order-defend"]')?.addEventListener('click', () => {
-    queue.push({ kind: 'order', playerId: 0, order: 'defend' });
+    pushCmd({ kind: 'order', playerId: localPlayer, order: 'defend' });
   });
   panel.querySelector<HTMLButtonElement>('[data-testid="order-raid"]')?.addEventListener('click', () => {
-    queue.push({ kind: 'order', playerId: 0, order: 'raid' });
+    pushCmd({ kind: 'order', playerId: localPlayer, order: 'raid' });
   });
   panel.querySelectorAll<HTMLButtonElement>('[data-buy]').forEach((button) => {
     button.onclick = () => {
-      queue.push({ kind: 'market', playerId: 0, resource: button.dataset.buy as (typeof RESOURCES)[number], mode: 'buy', qty: 1 });
+      pushCmd({ kind: 'market', playerId: localPlayer, resource: button.dataset.buy as (typeof RESOURCES)[number], mode: 'buy', qty: 1 });
       panelSig = '';
     };
   });
   panel.querySelectorAll<HTMLButtonElement>('[data-sell]').forEach((button) => {
     button.onclick = () => {
-      queue.push({ kind: 'market', playerId: 0, resource: button.dataset.sell as (typeof RESOURCES)[number], mode: 'sell', qty: 1 });
+      pushCmd({ kind: 'market', playerId: localPlayer, resource: button.dataset.sell as (typeof RESOURCES)[number], mode: 'sell', qty: 1 });
       panelSig = '';
     };
   });
@@ -831,7 +897,7 @@ function syncPanel() {
 
 function showEnd() {
   if (!endScreen.hidden) return;
-  const victory = state.outcome === 'victory';
+  const victory = netMode ? !!state.players[localPlayer]?.alive : state.outcome === 'victory';
   endScreen.hidden = false;
   endScreen.innerHTML = `<div class="card">
     <h1>${victory ? 'Тракт ваш' : 'Поселение пало'}</h1>
@@ -840,6 +906,12 @@ function showEnd() {
   </div>`;
   document.querySelector<HTMLButtonElement>('#again')!.onclick = () => {
     playing = false;
+    if (netMode) {
+      netMode = false;
+      localPlayer = 0;
+    }
+    netView.hide();
+    netView.wait(null, null);
     endScreen.hidden = true;
     buildTitle();
     bootPreview();
@@ -880,7 +952,7 @@ function resetArmy() {
 
 function livingSelection() {
   for (const id of [...selectedSoldiers]) {
-    const soldier = state.soldiers.find((s) => s.id === id && s.playerId === 0 && s.hp > 0);
+    const soldier = state.soldiers.find((s) => s.id === id && s.playerId === localPlayer && s.hp > 0);
     if (!soldier) selectedSoldiers.delete(id);
   }
 }
@@ -918,9 +990,9 @@ function issueArmy(
   targetId = 0,
 ) {
   if (!selectedSoldiers.size) return;
-  queue.push({
+  pushCmd({
     kind: 'army',
-    playerId: 0,
+    playerId: localPlayer,
     ids: [...selectedSoldiers],
     mode,
     x,
@@ -939,7 +1011,7 @@ function ownSoldierAt(x: number, y: number) {
   let best: (typeof state.soldiers)[number] | null = null;
   let bestD = 0.75;
   for (const soldier of state.soldiers) {
-    if (soldier.hp <= 0 || soldier.playerId !== 0) continue;
+    if (soldier.hp <= 0 || soldier.playerId !== localPlayer) continue;
     const d = Math.hypot(soldier.x - x, soldier.y - y);
     if (d < bestD) {
       best = soldier;
@@ -953,7 +1025,7 @@ function hostileAt(x: number, y: number, tileX: number, tileY: number) {
   let bestD = 0.75;
   let soldierHit: (typeof state.soldiers)[number] | null = null;
   for (const soldier of state.soldiers) {
-    if (soldier.hp <= 0 || soldier.playerId === 0) continue;
+    if (soldier.hp <= 0 || soldier.playerId === localPlayer) continue;
     if (!state.players[soldier.playerId]?.alive) continue;
     const d = Math.hypot(soldier.x - x, soldier.y - y);
     if (d < bestD) {
@@ -974,7 +1046,7 @@ function hostileAt(x: number, y: number, tileX: number, tileY: number) {
   }
   if (mobHit) return { target: 'mob' as const, targetId: mobHit.id, x: mobHit.x, y: mobHit.y };
   for (const building of state.buildings) {
-    if (building.hp <= 0 || building.playerId === 0) continue;
+    if (building.hp <= 0 || building.playerId === localPlayer) continue;
     if (!state.players[building.playerId]?.alive) continue;
     const def = BUILDINGS[building.type];
     if (tileX >= building.x && tileX < building.x + def.w && tileY >= building.y && tileY < building.y + def.h) {
@@ -989,7 +1061,7 @@ function selectWeaponOnScreen(weapon: 'club' | 'sword') {
   const { w, h } = viewSize();
   selectedSoldiers.clear();
   for (const soldier of state.soldiers) {
-    if (soldier.playerId !== 0 || soldier.hp <= 0 || soldier.weapon !== weapon) continue;
+    if (soldier.playerId !== localPlayer || soldier.hp <= 0 || soldier.weapon !== weapon) continue;
     const point = worldToScreen(camera, w, h, soldier.x, soldier.y);
     if (point.x >= 0 && point.x <= w && point.y >= 0 && point.y <= h) selectedSoldiers.add(soldier.id);
   }
@@ -1003,7 +1075,7 @@ function paintBox() {
     w,
     h,
     { left: boxStart.x, top: boxStart.y, right: boxNow.x, bottom: boxNow.y },
-    0,
+    localPlayer,
   );
   selectedSoldiers.clear();
   if (boxAdditive) for (const id of boxBase) selectedSoldiers.add(id);
@@ -1073,7 +1145,7 @@ function orderAt(screenX: number, screenY: number) {
 
 function ghost(): Ghost | null {
   if (!placing || !hover || !playing) return null;
-  const check = canPlace(state, 0, placing, hover.x, hover.y);
+  const check = canPlace(state, localPlayer, placing, hover.x, hover.y);
   return { type: placing, x: hover.x, y: hover.y, ok: check.ok };
 }
 
@@ -1081,8 +1153,8 @@ function pick(screenX: number, screenY: number) {
   const { w, h } = viewSize();
   const tile = screenToTile(camera, w, h, screenX, screenY);
   if (placing) {
-    const command: Command = { kind: 'place', playerId: 0, building: placing, x: tile.x, y: tile.y };
-    queue.push(command);
+    const command: Command = { kind: 'place', playerId: localPlayer, building: placing, x: tile.x, y: tile.y };
+    pushCmd(command);
     placing = null;
     worldCanvas.classList.remove('placing');
     return;
@@ -1091,7 +1163,7 @@ function pick(screenX: number, screenY: number) {
   let personHit: number | null = null;
   let personD = 0.7;
   for (const person of state.people) {
-    if (person.hp <= 0 || person.playerId !== 0) continue;
+    if (person.hp <= 0 || person.playerId !== localPlayer) continue;
     const d = Math.hypot(person.x - world.x, person.y - world.y);
     if (d < personD) {
       personD = d;
@@ -1145,6 +1217,8 @@ function frame(now: number) {
     clampView();
     if (camera.x < intended - 0.01) titleDir = -1;
     else if (camera.x > intended + 0.01) titleDir = 1;
+  } else if (netMode && state.outcome === 'playing') {
+    net.pump(now);
   } else if (speed > 0 && state.outcome === 'playing') {
     acc += dt * TICKS_PER_SECOND * speed;
     let guard = 0;
@@ -1192,14 +1266,14 @@ function frame(now: number) {
 function expose() {
   window.__game = {
     suggest(type: string) {
-      return suggestedTile(state, 0, type as BuildingType);
+      return suggestedTile(state, localPlayer, type as BuildingType);
     },
     focusTile(x: number, y: number) {
       lookAtTile(x, y);
       clampView();
     },
     focusHome() {
-      const keep = playerKeep(state, 0);
+      const keep = playerKeep(state, localPlayer);
       if (!keep) return;
       const center = buildingCenter(keep);
       lookAtPoint(center.x, center.y);
@@ -1222,13 +1296,13 @@ function expose() {
     },
     debugArmy() {
       state.mobs = state.mobs.filter((mob) => mob.kind === 'deer');
-      const keep = playerKeep(state, 0);
+      const keep = playerKeep(state, localPlayer);
       if (!keep) return [];
       const ids: number[] = [];
       for (let i = 0; i < 4; i++) {
         const soldier = createSoldier(
           state,
-          0,
+          localPlayer,
           keep.x + 0.6 + (i % 2) * 1.1,
           keep.y + 3.4 + Math.floor(i / 2) * 0.9,
           i < 2 ? 'club' : 'sword',
@@ -1241,7 +1315,7 @@ function expose() {
     armyPoints() {
       const { w, h } = viewSize();
       return state.soldiers
-        .filter((s) => s.playerId === 0 && s.hp > 0)
+        .filter((s) => s.playerId === localPlayer && s.hp > 0)
         .map((s) => ({ id: s.id, ...worldToScreen(camera, w, h, s.x, s.y) }));
     },
     banditScreen() {
@@ -1255,7 +1329,7 @@ function expose() {
       return live.length ? live[live.length - 1].kind : '';
     },
     focusArmy() {
-      const mine = state.soldiers.filter((s) => s.playerId === 0 && s.hp > 0);
+      const mine = state.soldiers.filter((s) => s.playerId === localPlayer && s.hp > 0);
       const bandit = state.mobs.find((m) => m.alive && m.kind === 'bandit');
       if (!mine.length) return;
       let x = mine.reduce((sum, s) => sum + s.x, 0) / mine.length;
@@ -1270,14 +1344,14 @@ function expose() {
     snapshot() {
       return {
         tick: state.tick,
-        idle: idleCount(state, 0),
-        used: usedCount(state, 0),
-        cap: housingCap(state, 0),
-        popularity: state.players[0]?.popularity ?? 0,
-        people: state.people.filter((p) => p.playerId === 0).length,
-        apples: state.players[0]?.stocks.apples ?? 0,
+        idle: idleCount(state, localPlayer),
+        used: usedCount(state, localPlayer),
+        cap: housingCap(state, localPlayer),
+        popularity: state.players[localPlayer]?.popularity ?? 0,
+        people: state.people.filter((p) => p.playerId === localPlayer).length,
+        apples: state.players[localPlayer]?.stocks.apples ?? 0,
         buildings: state.buildings
-          .filter((b) => b.playerId === 0)
+          .filter((b) => b.playerId === localPlayer)
           .map((b) => ({
             id: b.id,
             type: b.type,
@@ -1287,6 +1361,18 @@ function expose() {
             y: b.y,
           })),
       };
+    },
+    mp() {
+      return {
+        hash: net.hash(),
+        turn: net.turn(),
+        tick: state.tick,
+        local: localPlayer,
+        names: state.players.map((p) => p.name),
+      };
+    },
+    cleanupNet() {
+      return net.destroyMatch();
     },
   };
 }
@@ -1413,7 +1499,7 @@ miniCanvas.addEventListener('pointerdown', (event) => {
   clampView();
 });
 document.querySelector<HTMLButtonElement>('#home')!.onclick = () => {
-  const keep = playerKeep(state, 0);
+  const keep = playerKeep(state, localPlayer);
   if (!keep) return;
   const center = buildingCenter(keep);
   lookAtPoint(center.x, center.y);
@@ -1432,7 +1518,7 @@ window.addEventListener('keydown', (event) => {
   }
   if (playing && !event.ctrlKey && !event.metaKey && !event.altKey && /^[1-9]$/.test(event.key)) {
     const n = Number(event.key);
-    const living = controlGroups[n].filter((id) => state.soldiers.some((s) => s.id === id && s.hp > 0 && s.playerId === 0));
+    const living = controlGroups[n].filter((id) => state.soldiers.some((s) => s.id === id && s.hp > 0 && s.playerId === localPlayer));
     if (living.length) {
       event.preventDefault();
       if (!event.repeat) {
@@ -1458,10 +1544,10 @@ window.addEventListener('keydown', (event) => {
   keys.add(key);
   if (event.code === 'Space') {
     event.preventDefault();
-    setSpeed(speed === 0 ? 1 : 0);
-  } else if (event.key === '1') setSpeed(1);
-  else if (event.key === '2') setSpeed(2);
-  else if (event.key === '3') setSpeed(3);
+    if (!netMode) setSpeed(speed === 0 ? 1 : 0);
+  } else if (!netMode && event.key === '1') setSpeed(1);
+  else if (!netMode && event.key === '2') setSpeed(2);
+  else if (!netMode && event.key === '3') setSpeed(3);
   else if (event.key === 'Escape') {
     placing = null;
     worldCanvas.classList.remove('placing');
@@ -1509,6 +1595,8 @@ declare global {
         apples: number;
         buildings: { id: number; type: string; complete: boolean; workers: number; x: number; y: number }[];
       };
+      mp: () => { hash: string; turn: number; tick: number; local: number; names: string[] };
+      cleanupNet: () => Promise<void>;
     };
   }
 }
@@ -1519,7 +1607,7 @@ armyBox.onclick = () => {
 };
 document.querySelector<HTMLButtonElement>('#army-hold')!.onclick = () => issueArmy('hold', 0, 0);
 document.querySelector<HTMLButtonElement>('#army-home')!.onclick = () => {
-  const keep = playerKeep(state, 0);
+  const keep = playerKeep(state, localPlayer);
   const center = keep ? buildingCenter(keep) : { x: 0, y: 0 };
   issueArmy('home', center.x, center.y + 1.6);
 };
@@ -1533,8 +1621,127 @@ armyAttack.onclick = () => {
   syncArmy();
 };
 
+function syncPresence() {
+  const node = document.querySelector<HTMLElement>('#presence');
+  if (!node) return;
+  if (!netMode || !playing) {
+    node.hidden = true;
+    node.replaceChildren();
+    return;
+  }
+  node.hidden = false;
+  node.replaceChildren();
+  for (const line of net.presenceLines()) {
+    const span = document.createElement('span');
+    span.textContent = `${line.name}: ${line.online ? 'в сети' : 'не в сети'}`;
+    node.append(span);
+  }
+}
+
+function beginNet(next: GameState, playerId: number) {
+  state = next;
+  localPlayer = playerId;
+  netMode = true;
+  baked = bakeTerrain(state);
+  const keep = playerKeep(state, localPlayer);
+  if (keep) {
+    const center = buildingCenter(keep);
+    lookAtPoint(center.x, center.y);
+  }
+  camera.zoom = 1.15;
+  clampView();
+  playing = true;
+  speed = 1;
+  placing = null;
+  selectedId = keep?.id ?? null;
+  selectedPersonId = null;
+  queue = [];
+  acc = 0;
+  resetArmy();
+  title.hidden = true;
+  endScreen.hidden = true;
+  menu.hidden = true;
+  tutorial.hidden = true;
+  netView.hide();
+  netView.wait(null, null);
+  buildChrome();
+  setSpeed(1);
+  expose();
+}
+
+let inviteHandled = false;
+
+function openNet() {
+  rememberName();
+  title.hidden = true;
+  playing = false;
+  netView.showList();
+  void net.listenList().catch((err) => netMessage(err, 'Не удалось открыть список'));
+  const invite = new URLSearchParams(location.search).get('lobby');
+  if (invite && !inviteHandled) {
+    inviteHandled = true;
+    void net.join(invite).catch((err) => netView.error(err instanceof Error ? err.message : 'Не удалось войти'));
+  }
+}
+
+function closeNet() {
+  netView.hide();
+  netView.wait(null, null);
+  buildTitle();
+  bootPreview();
+}
+
+function netMessage(err: unknown, fallback: string) {
+  netView.error(err instanceof Error ? err.message : fallback);
+}
+
+const netView = new NetView(document.querySelector<HTMLElement>('#net')!, document.querySelector<HTMLElement>('#syncbox')!, {
+  create: (name, maxPlayers) => {
+    rememberName();
+    void net.create(name, maxPlayers).catch((err) => netMessage(err, 'Не удалось создать лобби'));
+  },
+  join: (id) => {
+    rememberName();
+    void net.join(id).catch((err) => netMessage(err, 'Не удалось войти'));
+  },
+  leave: () => {
+    void net.leave().then(() => openNet()).catch((err) => netMessage(err, 'Не удалось выйти'));
+  },
+  ready: (value) => {
+    void net.setReady(value).catch((err) => netMessage(err, 'Не удалось сменить готовность'));
+  },
+  start: () => {
+    void net.start().catch((err) => netMessage(err, 'Не удалось начать'));
+  },
+  back: () => {
+    void net.leave().catch(() => {});
+    closeNet();
+  },
+  exclude: (uid) => net.exclude(uid),
+  copy: (url) => {
+    void navigator.clipboard.writeText(url).then(
+      () => flash('Ссылка скопирована'),
+      () => flash('Ссылка показана в комнате'),
+    );
+  },
+});
+
+net.hooks = {
+  onList: (rows) => netView.setRows(rows),
+  onRoom: (room) => netView.showRoom(room),
+  onStart: (game, playerId) => beginNet(game, playerId),
+  onWait: (wait) => netView.wait(wait, null),
+  onDesync: (detail) => netView.wait(null, detail),
+  onClosed: () => {
+    if (!playing) openNet();
+  },
+  onError: (message) => netView.error(message),
+  onEnded: () => {},
+};
+
 resize();
 buildTitle();
 bootPreview();
 expose();
+if (new URLSearchParams(location.search).get('lobby')) openNet();
 requestAnimationFrame(frame);

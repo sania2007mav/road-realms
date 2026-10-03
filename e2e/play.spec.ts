@@ -9,6 +9,18 @@ test('изометрия: работники, посад, весь тракт и
   await expect(page.getByRole('heading', { name: 'Дорожные края' })).toBeVisible();
   await page.getByTestId('new-game').click();
   await page.getByTestId('tutorial-skip').click();
+  const stacked = await page.evaluate(() => {
+    const toast = document.querySelector<HTMLElement>('#toast')!;
+    const hint = document.querySelector<HTMLElement>('#hint')!;
+    toast.hidden = false;
+    toast.textContent = 'Строим: амбар';
+    const tr = toast.getBoundingClientRect();
+    const hr = hint.getBoundingClientRect();
+    toast.hidden = true;
+    return { overlap: tr.bottom > hr.top + 1 && tr.top < hr.bottom - 1, toastBottom: tr.bottom, hintTop: hr.top, hintHidden: hint.hidden };
+  });
+  expect(stacked.hintHidden, 'подсказка должна быть видна').toBe(false);
+  expect(stacked.overlap, `тост перекрывает подсказку ${stacked.toastBottom} / ${stacked.hintTop}`).toBe(false);
   await page.getByTestId('speed-3').click();
 
   await place(page, 'storage', 'granary');
@@ -191,7 +203,20 @@ test('рамка выделяет солдат, атака области пок
   await page.getByTestId('army-attack').click();
   const bandit = await page.evaluate(() => window.__game!.banditScreen());
   expect(bandit).not.toBeNull();
-  await page.mouse.click(box.x + bandit!.x, box.y + bandit!.y);
+  for (let i = 0; i < 12; i++) {
+    const clear = await page.evaluate(() => {
+      const spot = window.__game!.banditScreen();
+      const dock = document.querySelector('#dock')?.getBoundingClientRect();
+      return !!spot && !!dock && spot.y < dock.top - 20 && spot.y > 80;
+    });
+    if (clear) break;
+    await page.keyboard.down('s');
+    await page.waitForTimeout(60);
+    await page.keyboard.up('s');
+  }
+  const aim = await page.evaluate(() => window.__game!.banditScreen());
+  expect(aim).not.toBeNull();
+  await page.mouse.click(box.x + aim!.x, box.y + aim!.y);
   await page.getByTestId('speed-3').click();
   await page.waitForTimeout(450);
   await expect.poll(async () => page.evaluate(() => window.__game!.markerKind())).toBe('attack');
@@ -288,6 +313,69 @@ test('полоса, подсказка и список построек не п�
   }
 });
 
+test('сетевая игра: два браузера в одном лобби', async ({ browser }) => {
+  test.setTimeout(120_000);
+  mkdirSync(shots, { recursive: true });
+  const lobbyName = `Тракт ${Date.now().toString(36)}`.slice(0, 32);
+  const host = await browser.newContext();
+  const guest = await browser.newContext();
+  await host.addInitScript(() => {
+    localStorage.setItem('dorozhnye-kraya-name', 'Хозяин');
+    localStorage.setItem('dorozhnye-kraya-tutorial', '1');
+  });
+  await guest.addInitScript(() => {
+    localStorage.setItem('dorozhnye-kraya-name', 'Гость');
+    localStorage.setItem('dorozhnye-kraya-tutorial', '1');
+  });
+  const a = await host.newPage();
+  const b = await guest.newPage();
+  try {
+    await a.goto('/road-realms/');
+    await b.goto('/road-realms/');
+    await a.getByTestId('net-game').click();
+    await expect(a.getByTestId('lobby-list')).toBeVisible();
+    await a.waitForTimeout(1500);
+    await a.screenshot({ path: `${shots}/mp_lobbies.png` });
+    await a.getByTestId('lobby-name').fill(lobbyName);
+    await a.getByTestId('lobby-create').click();
+    await expect(a.getByTestId('lobby-room')).toBeVisible({ timeout: 20_000 });
+
+    await b.getByTestId('net-game').click();
+    const row = b.locator('.lobby-row', { hasText: lobbyName });
+    await expect(row).toBeVisible({ timeout: 20_000 });
+    await row.getByTestId('lobby-join').click();
+    await expect(a.getByTestId('lobby-room')).toContainText('Гость');
+    await expect(b.getByTestId('lobby-room')).toContainText('Хозяин');
+    await a.screenshot({ path: `${shots}/mp_room.png` });
+
+    await a.getByTestId('lobby-ready').click();
+    await b.getByTestId('lobby-ready').click();
+    await expect(a.getByTestId('lobby-start')).toBeEnabled({ timeout: 15_000 });
+    await a.getByTestId('lobby-start').click();
+    await expect(a.getByTestId('speed-1')).toBeDisabled({ timeout: 20_000 });
+    await expect(b.getByTestId('speed-1')).toBeDisabled({ timeout: 20_000 });
+    await a.locator('#ration').selectOption('feast');
+
+    await expect
+      .poll(async () => {
+        const left = await a.evaluate(() => window.__game?.mp());
+        const right = await b.evaluate(() => window.__game?.mp());
+        if (!left || !right || !left.hash || left.hash !== right.hash) return false;
+        return left.turn >= 4 && right.turn >= 4 && left.local !== right.local;
+      }, { timeout: 40_000 })
+      .toBe(true);
+
+    await a.screenshot({ path: `${shots}/mp_match_a.png` });
+    await b.screenshot({ path: `${shots}/mp_match_b.png` });
+    await expect(a.getByTestId('presence')).toContainText('в сети');
+    await expect(b.getByTestId('presence')).toContainText('в сети');
+  } finally {
+    await a.evaluate(() => window.__game?.cleanupNet()).catch(() => {});
+    await host.close();
+    await guest.close();
+  }
+});
+
 declare global {
   interface Window {
     __game?: {
@@ -313,6 +401,8 @@ declare global {
         apples: number;
         buildings: { id: number; type: string; complete: boolean; workers: number; x: number; y: number }[];
       };
+      mp: () => { hash: string; turn: number; tick: number; local: number; names: string[] };
+      cleanupNet: () => Promise<void>;
     };
   }
 }
