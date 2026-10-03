@@ -5,6 +5,7 @@ import {
   PRICES,
   RESOURCE_NAME,
   RESOURCES,
+  FOODS,
   TAXES,
   TICKS_PER_GAME_MINUTE,
   TICKS_PER_SECOND,
@@ -117,6 +118,9 @@ let selectedPersonId: number | null = null;
 let category: keyof typeof CATEGORY_NAME = 'storage';
 let hover: { x: number; y: number } | null = null;
 let tutorialStep = 0;
+let guideOn = false;
+let guideFocus = '';
+let guideSig = '';
 let toastUntil = 0;
 let lastMessage = '';
 let panelSig = '';
@@ -203,6 +207,7 @@ function bootPreview() {
   camera.zoom = 0.55;
   playing = false;
   localPlayer = 0;
+  guideOn = false;
   clampView();
 }
 
@@ -233,10 +238,8 @@ function startGame() {
   endScreen.hidden = true;
   menu.hidden = true;
   buildChrome();
-  if (!localStorage.getItem(TUTORIAL_KEY)) {
-    tutorialStep = 0;
-    showTutorial();
-  } else tutorial.hidden = true;
+  tutorial.hidden = true;
+  if (!netMode && !localStorage.getItem(TUTORIAL_KEY)) beginGuide();
   expose();
 }
 
@@ -254,6 +257,7 @@ function loadGame() {
     state = deserialize(raw);
     baked = bakeTerrain(state);
     playing = true;
+    guideOn = false;
     title.hidden = true;
     netView.hide();
     netView.wait(null, null);
@@ -296,21 +300,26 @@ function showTutorial() {
     </div>
   </div>`;
   tutorial.querySelector<HTMLButtonElement>('[data-testid="tutorial-skip"]')!.onclick = () => {
-    localStorage.setItem(TUTORIAL_KEY, '1');
     tutorial.hidden = true;
   };
   tutorial.querySelector<HTMLButtonElement>('[data-testid="tutorial-next"]')!.onclick = () => {
     tutorialStep += 1;
-    if (tutorialStep >= TUTORIAL.length) {
-      localStorage.setItem(TUTORIAL_KEY, '1');
-      tutorial.hidden = true;
-    } else showTutorial();
+    if (tutorialStep >= TUTORIAL.length) tutorial.hidden = true;
+    else showTutorial();
   };
 }
 
 function storedName(): string {
   const raw = (localStorage.getItem(NAME_KEY) || '').trim().slice(0, 20);
   return raw || 'Путник';
+}
+
+function syncKnowButton() {
+  const button = document.querySelector<HTMLButtonElement>('#know-game');
+  if (!button) return;
+  const skipped = localStorage.getItem(TUTORIAL_KEY) === '1';
+  button.textContent = skipped ? 'Вернуть обучение' : 'Я умею играть';
+  button.setAttribute('aria-pressed', skipped ? 'true' : 'false');
 }
 
 function rememberName() {
@@ -339,6 +348,7 @@ function buildTitle() {
       <button type="button" id="start-title" data-testid="new-game">Одиночная игра</button>
     </div>
     <div class="actions">
+      <button type="button" id="know-game" data-testid="know-game">Я умею играть</button>
       <button type="button" id="net-title" data-testid="net-game">Сетевая игра</button>
     </div>
   </div>`;
@@ -353,6 +363,12 @@ function buildTitle() {
     startGame();
   };
   document.querySelector<HTMLButtonElement>('#load-title')!.onclick = () => loadGame();
+  document.querySelector<HTMLButtonElement>('#know-game')!.onclick = () => {
+    if (localStorage.getItem(TUTORIAL_KEY) === '1') localStorage.removeItem(TUTORIAL_KEY);
+    else localStorage.setItem(TUTORIAL_KEY, '1');
+    syncKnowButton();
+  };
+  syncKnowButton();
   document.querySelector<HTMLButtonElement>('#net-title')!.onclick = () => openNet();
 }
 
@@ -442,6 +458,7 @@ function paintBuildButtons() {
   const tabEl = document.querySelector<HTMLElement>('#tabs');
   tabEl?.querySelectorAll<HTMLButtonElement>('button').forEach((button) => {
     button.classList.toggle('active', button.dataset.cat === category);
+    button.classList.toggle('guide-pulse', guidePulseTab(button.dataset.cat || ''));
   });
   const host = document.querySelector<HTMLElement>('#buttons');
   if (!host || !playing) return;
@@ -471,6 +488,8 @@ function paintBuildButtons() {
 }
 
 function buttonNote(type: BuildingType): string {
+  const guided = guideLock(type);
+  if (guided) return guided;
   const def = BUILDINGS[type];
   const level = playerKeep(state, localPlayer)?.level ?? 0;
   if (def.keepLevel > level) return `Нужен уровень главного здания ${def.keepLevel}`;
@@ -481,6 +500,8 @@ function buttonNote(type: BuildingType): string {
 }
 
 function blockReason(type: BuildingType): string | null {
+  const guided = guideLock(type);
+  if (guided) return guided;
   const def = BUILDINGS[type];
   const keep = playerKeep(state, localPlayer);
   const level = keep?.level ?? 0;
@@ -499,6 +520,7 @@ function refreshBuildState() {
     const locked = blockReason(type);
     button.classList.toggle('locked', !!locked);
     button.classList.toggle('active', placing === type);
+    button.classList.toggle('guide-pulse', guidePulseBuild(type));
     const note = button.querySelector('small');
     const text = buttonNote(type);
     if (note && note.textContent !== text) note.textContent = text;
@@ -524,6 +546,7 @@ function renderMenu() {
     </div>
     <div class="actions">
       <button type="button" id="help-btn">Подсказки</button>
+      <button type="button" id="guide-restart" data-testid="guide-restart">Обучение</button>
       <button type="button" id="resign-btn">Новая игра</button>
     </div>
     <p>Мышь: тянуть карту, колесо — масштаб. На телефоне: жест и щипок. Клавиши: WASD, пробел — пауза, 1–3 — скорость, Esc — отмена стройки, H — подсказки.</p>
@@ -533,8 +556,22 @@ function renderMenu() {
   document.querySelector<HTMLButtonElement>('#load-btn')!.onclick = () => loadGame();
   document.querySelector<HTMLButtonElement>('#help-btn')!.onclick = () => {
     menu.hidden = true;
+    if (guideOn) return;
     tutorialStep = 0;
     showTutorial();
+  };
+  document.querySelector<HTMLButtonElement>('#guide-restart')!.onclick = () => {
+    menu.hidden = true;
+    localStorage.removeItem(TUTORIAL_KEY);
+    playing = false;
+    if (netMode) {
+      netMode = false;
+      localPlayer = 0;
+      void net.destroyMatch();
+    }
+    netView.hide();
+    netView.wait(null, null);
+    startGame();
   };
   document.querySelector<HTMLButtonElement>('#resign-btn')!.onclick = () => {
     menu.hidden = true;
@@ -601,7 +638,9 @@ function syncHud() {
   const ration = document.querySelector<HTMLSelectElement>('#ration');
   if (ration && document.activeElement !== ration) ration.value = player.ration;
   updateHint();
+  const danger = dangerText();
   const waiting =
+    !danger &&
     idle === 0 &&
     state.buildings.some(
       (b) =>
@@ -609,10 +648,12 @@ function syncHud() {
         b.hp > 0 &&
         (!b.complete || b.upgrading || (b.complete && BUILDINGS[b.type].workers > b.workerIds.length)),
     );
-  banner.hidden = !waiting;
-  banner.textContent = waiting
-    ? 'Нет свободных людей. Снимите кого-нибудь с работы или дождитесь переселенцев — иначе стройка и новые места будут стоять пустыми.'
-    : '';
+  banner.hidden = !danger && !waiting;
+  banner.textContent = danger
+    ? danger
+    : waiting
+      ? 'Нет свободных людей. Снимите кого-нибудь с работы или дождитесь переселенцев — иначе стройка и новые места будут стоять пустыми.'
+      : '';
 
   if (!popbox.hidden) {
     const report = currentTarget(state, localPlayer);
@@ -635,6 +676,7 @@ function syncHud() {
     row.textContent = line;
     logEl.append(row);
   }
+  syncGuide();
   syncArmy();
   if (state.message && state.message !== lastMessage) {
     lastMessage = state.message;
@@ -646,8 +688,239 @@ function syncHud() {
   if (state.outcome !== 'playing') showEnd();
 }
 
+type GuideStep = {
+  id: string;
+  title: string;
+  type?: BuildingType;
+  cat?: keyof typeof CATEGORY_NAME;
+  body: string;
+  done: boolean;
+};
+
+function ownBuilding(type: BuildingType) {
+  return state.buildings.find((b) => b.playerId === localPlayer && b.hp > 0 && b.type === type);
+}
+
+function guideSteps(): GuideStep[] {
+  const granary = !!ownBuilding('granary');
+  const stockpile = !!ownBuilding('stockpile');
+  const orchard = ownBuilding('orchard');
+  const wood = ownBuilding('woodcutter');
+  const orchardReady = !!orchard?.complete && orchard.workerIds.length > 0;
+  const woodReady = !!wood?.complete && wood.workerIds.length > 0;
+  let workerBody = 'Назначьте по человеку в яблоневый сад и в хижину лесоруба. Кнопка «+» в карточке здания.';
+  if (!orchard?.complete || !wood?.complete) workerBody = 'Сад и хижина ещё строятся. Когда карточка откроется, нажмите «+» у каждого.';
+  else if (!orchardReady) workerBody = 'Сад готов. Нажмите «+», чтобы отправить туда человека.';
+  else if (!woodReady) workerBody = 'Хижина готова. Нажмите «+», чтобы отправить туда лесоруба.';
+  return [
+    {
+      id: 'granary',
+      title: 'Амбар',
+      type: 'granary',
+      cat: 'storage',
+      body: 'Поставьте амбар рядом с главным зданием. Сюда носят еду. Без амбара урожай не попадёт в запас. Зелёный след на карте — подходящее место.',
+      done: granary,
+    },
+    {
+      id: 'stockpile',
+      title: 'Склад',
+      type: 'stockpile',
+      cat: 'storage',
+      body: 'Поставьте склад. Дерево и камень носят только на склад. Пока его нет, лес и каменоломня ничего не сохранят.',
+      done: stockpile,
+    },
+    {
+      id: 'orchard',
+      title: 'Яблоневый сад',
+      type: 'orchard',
+      cat: 'food',
+      body: 'Поставьте яблоневый сад на зелёном оазисе. Один работник в саду кормит начальный посад, и настроение не падает.',
+      done: !!orchard,
+    },
+    {
+      id: 'woodcutter',
+      title: 'Хижина лесоруба',
+      type: 'woodcutter',
+      cat: 'industry',
+      body: 'Поставьте хижину лесоруба рядом с лесом. Иначе дерево кончится, и новые постройки будет не из чего ставить.',
+      done: !!wood,
+    },
+    {
+      id: 'workers',
+      title: 'Работники',
+      body: workerBody,
+      done: orchardReady && woodReady,
+    },
+  ];
+}
+
+function currentGuide(): GuideStep | null {
+  return guideSteps().find((step) => !step.done) ?? null;
+}
+
+function guideLock(type: BuildingType): string | null {
+  if (!guideOn || netMode) return null;
+  const step = currentGuide();
+  if (!step) return null;
+  if (step.type && type !== step.type) return `Сначала поставьте ${step.title}`;
+  if (!step.type) return 'Сначала назначьте работников';
+  return null;
+}
+
+function guidePulseBuild(type: BuildingType): boolean {
+  if (!guideOn || netMode) return false;
+  return currentGuide()?.type === type;
+}
+
+function guidePulseTab(cat: string): boolean {
+  if (!guideOn || netMode) return false;
+  const step = currentGuide();
+  return !!step?.cat && step.cat === cat;
+}
+
+function guidePulsePlus(type: BuildingType): boolean {
+  if (!guideOn || netMode) return false;
+  const step = currentGuide();
+  if (!step || step.id !== 'workers') return false;
+  const orchard = ownBuilding('orchard');
+  const wood = ownBuilding('woodcutter');
+  if (orchard?.complete && orchard.workerIds.length === 0) return type === 'orchard';
+  if (wood?.complete && wood.workerIds.length === 0) return type === 'woodcutter';
+  return false;
+}
+
+function beginGuide() {
+  guideOn = true;
+  guideFocus = '';
+  guideSig = '';
+  tutorial.hidden = false;
+}
+
+function finishGuide() {
+  guideOn = false;
+  guideFocus = '';
+  guideSig = '';
+  localStorage.setItem(TUTORIAL_KEY, '1');
+  tutorial.hidden = true;
+  tutorial.replaceChildren();
+  flash('Основа заложена: еда и дерево пойдут в запас.');
+  paintBuildButtons();
+}
+
+function focusGuide(step: GuideStep) {
+  const key = step.id === 'workers' ? (workerTarget() ?? 'workers') : step.id;
+  if (guideFocus === key) return;
+  guideFocus = key;
+  if (step.type && step.id !== 'workers') {
+    category = step.cat ?? category;
+    paintBuildButtons();
+    const tile = suggestedTile(state, localPlayer, step.type);
+    if (tile) {
+      const def = BUILDINGS[step.type];
+      lookAtTile(tile.x + def.w / 2, tile.y + def.h / 2);
+      camera.zoom = 1.15;
+      clampView();
+    }
+    document.querySelector(`[data-testid="build-${step.type}"]`)?.scrollIntoView({ inline: 'center', block: 'nearest' });
+    return;
+  }
+  const target = workerTarget();
+  const building = target ? ownBuilding(target) : undefined;
+  if (!building) return;
+  selectedId = building.id;
+  panelSig = '';
+  const center = buildingCenter(building);
+  lookAtPoint(center.x, center.y);
+  camera.zoom = 1.15;
+  clampView();
+}
+
+function workerTarget(): BuildingType | null {
+  const orchard = ownBuilding('orchard');
+  const wood = ownBuilding('woodcutter');
+  if (orchard?.complete && orchard.workerIds.length === 0) return 'orchard';
+  if (wood?.complete && wood.workerIds.length === 0) return 'woodcutter';
+  return orchard && !orchard.complete ? 'orchard' : wood ? 'woodcutter' : null;
+}
+
+function syncGuide() {
+  if (!guideOn || netMode || !playing) return;
+  const steps = guideSteps();
+  const step = steps.find((item) => !item.done);
+  if (!step) {
+    finishGuide();
+    return;
+  }
+  const index = steps.indexOf(step);
+  const sig = `${step.id}|${step.body}`;
+  if (sig !== guideSig) {
+    guideSig = sig;
+    tutorial.hidden = false;
+    tutorial.replaceChildren();
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.dataset.testid = 'guide';
+    const title = document.createElement('h2');
+    title.dataset.testid = 'guide-title';
+    title.textContent = step.title;
+    const count = document.createElement('p');
+    count.textContent = `Шаг ${index + 1} из ${steps.length}`;
+    const body = document.createElement('p');
+    body.dataset.testid = 'guide-body';
+    body.textContent = step.body;
+    card.append(title, count, body);
+    tutorial.append(card);
+  }
+  focusGuide(step);
+}
+
+function foodOf(playerId: number): number {
+  const player = state.players[playerId];
+  if (!player) return 0;
+  return FOODS.reduce((sum, food) => sum + (player.stocks[food] ?? 0), 0);
+}
+
+function foodComing(playerId: number): boolean {
+  return state.buildings.some((building) => {
+    if (building.playerId !== playerId || building.hp <= 0 || !building.complete || building.workerIds.length === 0) return false;
+    const output = BUILDINGS[building.type].output;
+    return !!output && (FOODS as readonly string[]).includes(output);
+  });
+}
+
+function checklistText(): string {
+  const pending = guideSteps().filter((step) => !step.done).map((step) => step.title);
+  if (!pending.length) return '';
+  return `Подсказка, игру не останавливает: ${pending.join(', ')}`;
+}
+
+function dangerText(): string | null {
+  const player = state.players[localPlayer];
+  if (!player?.alive) return null;
+  const people = state.people.filter((person) => person.playerId === localPlayer && person.hp > 0).length;
+  if (people === 0) return 'В поселении никого нет. Главное здание скоро примет одного человека — назначьте его в сад или к лесорубу.';
+  if (!foodComing(localPlayer) && foodOf(localPlayer) < 40) {
+    return 'Еда кончается, а её никто не добывает. Поставьте яблоневый сад на зелёном оазисе и назначьте работника кнопкой +.';
+  }
+  const cutter = !!ownBuilding('woodcutter');
+  if (!cutter && (player.stocks.wood ?? 0) === 0) {
+    return 'Дерева нет и лесоруба тоже. Главное здание понемногу отдаёт брёвна — поставьте хижину лесоруба у леса.';
+  }
+  return null;
+}
+
 function updateHint() {
-  if (!playing || state.tick >= 10 * TICKS_PER_GAME_MINUTE) {
+  if (!playing || guideOn) {
+    hintEl.hidden = true;
+    return;
+  }
+  if (netMode) {
+    const text = checklistText();
+    hintEl.hidden = !text;
+    hintEl.textContent = text;
+    return;
+  }
+  if (state.tick >= 10 * TICKS_PER_GAME_MINUTE) {
     hintEl.hidden = true;
     return;
   }
@@ -792,7 +1065,7 @@ function syncPanel() {
   const workers = def.workers
     ? `<div class="row"><span>Работники ${building.workerIds.length} / ${def.workers}</span>
         <button type="button" data-testid="worker-minus">−</button>
-        <button type="button" data-testid="worker-plus" ${idleCount(state, localPlayer) <= 0 || building.workerIds.length >= def.workers || !building.complete ? 'disabled' : ''}>+</button>
+        <button type="button" data-testid="worker-plus" class="${guidePulsePlus(building.type) ? 'guide-pulse' : ''}" ${idleCount(state, localPlayer) <= 0 || building.workerIds.length >= def.workers || !building.complete ? 'disabled' : ''}>+</button>
       </div>`
     : '';
   const upgrade = mine && building.type === 'keep' && building.level < 5 ? keepUpgradeHtml(building) : '';
@@ -1144,9 +1417,16 @@ function orderAt(screenX: number, screenY: number) {
 }
 
 function ghost(): Ghost | null {
-  if (!placing || !hover || !playing) return null;
-  const check = canPlace(state, localPlayer, placing, hover.x, hover.y);
-  return { type: placing, x: hover.x, y: hover.y, ok: check.ok };
+  if (placing && hover && playing) {
+    const check = canPlace(state, localPlayer, placing, hover.x, hover.y);
+    return { type: placing, x: hover.x, y: hover.y, ok: check.ok };
+  }
+  const step = guideOn && !netMode ? currentGuide() : null;
+  if (step?.type && playing) {
+    const tile = suggestedTile(state, localPlayer, step.type);
+    if (tile) return { type: step.type, x: tile.x, y: tile.y, ok: true };
+  }
+  return null;
 }
 
 function pick(screenX: number, screenY: number) {
@@ -1224,8 +1504,8 @@ function frame(now: number) {
     let guard = 0;
     while (acc >= 1 && guard < 8) {
       const commands = guard === 0 ? queue.splice(0) : [];
-      step(state, commands);
-      if (state.tick > 0 && state.tick % (TICKS_PER_GAME_MINUTE * 2) === 0) {
+      step(state, commands, guideOn && !netMode ? { shelter: true } : undefined);
+      if (!guideOn && state.tick > 0 && state.tick % (TICKS_PER_GAME_MINUTE * 2) === 0) {
         try {
           localStorage.setItem(SAVE_KEY, serialize(state));
         } catch {
@@ -1556,7 +1836,7 @@ window.addEventListener('keydown', (event) => {
     attackArmed = false;
     selectedSoldiers.clear();
     syncArmy();
-  } else if (event.key.toLowerCase() === 'h' && playing) {
+  } else if (event.key.toLowerCase() === 'h' && playing && !guideOn) {
     tutorialStep = 0;
     showTutorial();
   } else if (event.key === '+' || event.key === '=') {
@@ -1662,6 +1942,7 @@ function beginNet(next: GameState, playerId: number) {
   endScreen.hidden = true;
   menu.hidden = true;
   tutorial.hidden = true;
+  guideOn = false;
   netView.hide();
   netView.wait(null, null);
   buildChrome();

@@ -440,7 +440,16 @@ input[type="number"], select {
 #tutorial {
   left: 12px;
   bottom: 168px;
-  width: min(380px, calc(100% - 24px));
+  width: min(420px, calc(100% - 24px));
+}
+
+button.guide-pulse {
+  outline: 2px solid var(--gold);
+  animation: guide-pulse 1s ease-in-out infinite;
+}
+
+@keyframes guide-pulse {
+  50% { box-shadow: 0 0 0 5px rgba(224, 161, 27, 0.75); }
 }
 
 #menu {

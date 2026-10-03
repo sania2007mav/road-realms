@@ -1610,6 +1610,21 @@ function updateEconomy(state: GameState) {
       else if (player.popularity > target) player.popularity -= 1;
     }
     migrate(state, player);
+    relieveDeadEnd(state, player);
+  }
+}
+
+/**
+ * A settlement must stay playable.
+ * With no woodcutter and fewer than 3 wood, the keep drips one log a minute, up to the hut's price.
+ * With nobody left, the keep takes in one settler after a short wait. Same rule on every client.
+ */
+function relieveDeadEnd(state: GameState, player: Player) {
+  if (state.tick <= 0) return;
+  const cutter = state.buildings.some((b) => b.playerId === player.id && b.type === 'woodcutter' && b.hp > 0);
+  if (!cutter && state.tick % 60 === 0 && (player.stocks.wood ?? 0) < 3) {
+    player.stocks.wood = (player.stocks.wood ?? 0) + 1;
+    note(state, 'Главное здание отдало брёвна на хижину лесоруба');
   }
 }
 
@@ -1634,6 +1649,18 @@ function migrate(state: GameState, player: Player) {
       const center = buildingCenter(keep);
       createPerson(state, player.id, center.x, center.y + 1.7, state.tick % 7);
       pushLog(state, 'В поселение пришёл новый человек');
+    }
+    return;
+  }
+  if (people.length === 0) {
+    const keep = playerKeep(state, player.id);
+    if (!keep) return;
+    player.migrate += 1;
+    if (player.migrate >= 80) {
+      player.migrate = 0;
+      const center = buildingCenter(keep);
+      createPerson(state, player.id, center.x, center.y + 1.7, state.tick % 7);
+      note(state, 'В главное здание вернулся один человек');
     }
     return;
   }
@@ -1675,7 +1702,7 @@ function finishOutcome(state: GameState) {
   if (state.players.length > 1 && state.players.every((p) => p.id === 0 || !p.alive)) state.outcome = 'victory';
 }
 
-export function step(state: GameState, commands: Command[] = []): void {
+export function step(state: GameState, commands: Command[] = [], opts?: { shelter?: boolean }): void {
   if (state.outcome !== 'playing') return;
   for (const command of commands) applyCommand(state, command);
   planAi(state);
@@ -1685,7 +1712,8 @@ export function step(state: GameState, commands: Command[] = []): void {
   state.people = state.people.filter((p) => p.hp > 0);
   state.soldiers = state.soldiers.filter((s) => s.hp > 0);
   state.mobs = state.mobs.filter((m) => m.alive || m.respawn > 0);
-  updateEconomy(state);
+  // Single-player onboarding only. Multiplayer never sets this, so every client still shares one economy.
+  if (!opts?.shelter) updateEconomy(state);
   finishOutcome(state);
   state.tick += 1;
 }

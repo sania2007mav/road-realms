@@ -7,8 +7,8 @@ test('изометрия: работники, посад, весь тракт и
   mkdirSync(shots, { recursive: true });
   await page.goto('/road-realms/');
   await expect(page.getByRole('heading', { name: 'Дорожные края' })).toBeVisible();
+  await page.getByTestId('know-game').click();
   await page.getByTestId('new-game').click();
-  await page.getByTestId('tutorial-skip').click();
   const stacked = await page.evaluate(() => {
     const toast = document.querySelector<HTMLElement>('#toast')!;
     const hint = document.querySelector<HTMLElement>('#hint')!;
@@ -150,9 +150,8 @@ test('карточка главного здания показывает цен
   mkdirSync(shots, { recursive: true });
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto('/road-realms/');
-  await page.evaluate(() => localStorage.removeItem('dorozhnye-kraya-tutorial'));
+  await page.getByTestId('know-game').click();
   await page.getByTestId('new-game').click();
-  await page.getByTestId('tutorial-skip').click();
   const cost = page.getByTestId('upgrade-cost');
   await expect(cost).toBeVisible();
   await expect(cost).toContainText('Дерево');
@@ -174,9 +173,8 @@ test('рамка выделяет солдат, атака области пок
   mkdirSync(shots, { recursive: true });
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto('/road-realms/');
-  await page.evaluate(() => localStorage.removeItem('dorozhnye-kraya-tutorial'));
+  await page.getByTestId('know-game').click();
   await page.getByTestId('new-game').click();
-  await page.getByTestId('tutorial-skip').click();
   await page.evaluate(() => {
     window.__game!.debugArmy();
     window.__game!.focusArmy();
@@ -234,9 +232,8 @@ test('полоса, подсказка и список построек не п�
   for (const view of views) {
     await page.setViewportSize({ width: view.width, height: view.height });
     await page.goto('/road-realms/');
-    await page.evaluate(() => localStorage.removeItem('dorozhnye-kraya-tutorial'));
+    await page.evaluate(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
     await page.getByTestId('new-game').click();
-    await page.getByTestId('tutorial-skip').click();
     await page.getByTestId('tab-housing').click();
     await expect(page.getByTestId('hint')).toBeVisible();
     await expect(page.locator('.res', { hasText: 'Дерево' })).toBeVisible();
@@ -311,6 +308,52 @@ test('полоса, подсказка и список построек не п�
     if (overflow) await expect(page.getByTestId('build-next')).toBeVisible();
     if (view.phone) await page.screenshot({ path: `${shots}/iso_phone.png` });
   }
+});
+
+test('обучение не даёт пропустить основу и десять минут держат людей', async ({ page }) => {
+  test.setTimeout(120_000);
+  mkdirSync(shots, { recursive: true });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/road-realms/');
+  await page.evaluate(() => localStorage.removeItem('dorozhnye-kraya-tutorial'));
+  await page.getByTestId('new-game').click();
+  await expect(page.getByTestId('guide-title')).toHaveText('Амбар');
+  await expect(page.getByTestId('build-granary')).toHaveClass(/guide-pulse/);
+  await page.screenshot({ path: `${shots}/guide_granary.png` });
+  await page.getByTestId('tab-housing').click();
+  await expect(page.getByTestId('build-shack').locator('small')).toHaveText('Сначала поставьте Амбар');
+  await page.getByTestId('build-shack').click();
+  await expect.poll(async () => page.evaluate(() => window.__game!.snapshot().buildings.some((b) => b.type === 'shack'))).toBe(false);
+
+  for (const [tab, type] of [
+    ['storage', 'granary'],
+    ['storage', 'stockpile'],
+    ['food', 'orchard'],
+    ['industry', 'woodcutter'],
+  ] as const) {
+    await place(page, tab, type);
+  }
+  await expect(page.getByTestId('guide-title')).toHaveText('Работники');
+  await page.screenshot({ path: `${shots}/guide_workers.png` });
+  await page.getByTestId('speed-3').click();
+  await page.waitForFunction(() => {
+    const snap = window.__game?.snapshot();
+    if (!snap) return false;
+    return ['orchard', 'woodcutter'].every((kind) => snap.buildings.some((b) => b.type === kind && b.complete));
+  });
+  for (let i = 0; i < 2; i++) {
+    await expect(page.getByTestId('worker-plus')).toBeEnabled();
+    await page.getByTestId('worker-plus').click();
+  }
+  await expect(page.getByTestId('guide')).toBeHidden();
+  const mark = await page.evaluate(() => ({
+    tick: window.__game!.snapshot().tick,
+    people: window.__game!.snapshot().people,
+  }));
+  await page.waitForFunction((from) => (window.__game?.snapshot().tick ?? 0) >= from + 10 * 60, mark.tick);
+  const after = await page.evaluate(() => window.__game!.snapshot());
+  expect(after.popularity).toBeGreaterThanOrEqual(0);
+  expect(after.people).toBeGreaterThanOrEqual(mark.people);
 });
 
 test('сетевая игра: два браузера в одном лобби', async ({ browser }) => {
