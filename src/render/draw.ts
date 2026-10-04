@@ -527,7 +527,14 @@ function unitDepth(state: GameState, x: number, y: number) {
       y <= building.y + def.h + 0.35;
     if (!inside) continue;
     const front = building.y + def.h * 0.48;
-    if (y >= front) depth = Math.max(depth, anchorDepth(building.x, building.y, def.w, def.h) + 0.35);
+    const atop =
+      building.type === 'woodtower' ||
+      building.type === 'stonetower' ||
+      building.type === 'wall' ||
+      building.type === 'palisade' ||
+      building.type === 'stairs' ||
+      building.type === 'gate';
+    if (y >= front || atop) depth = Math.max(depth, anchorDepth(building.x, building.y, def.w, def.h) + 0.35);
   }
   return depth;
 }
