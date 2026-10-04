@@ -464,9 +464,9 @@ function openSettings() {
     if (menuButton) menuButton.textContent = gfxLabel();
   };
   host.querySelector<HTMLButtonElement>('#settings-audio')!.onclick = () => {
-    document.querySelector<HTMLElement>('#audio-panel')?.removeAttribute('hidden');
-    const audio = document.querySelector<HTMLElement>('#audio-panel');
-    if (audio) audio.hidden = false;
+    mountAudio();
+    const audioPanel = document.querySelector<HTMLElement>('#audio-panel');
+    if (audioPanel) audioPanel.hidden = false;
   };
   host.querySelector<HTMLSelectElement>('#settings-speed')!.onchange = () => {
     const value = Number(host.querySelector<HTMLSelectElement>('#settings-speed')!.value);
@@ -913,13 +913,19 @@ function mountAudio() {
   }
   paintMute();
   const sheet = panel;
-  document.querySelector<HTMLButtonElement>('#mute-btn')!.onclick = () => {
-    audio.toggleMuted();
-    paintMute();
-  };
-  document.querySelector<HTMLButtonElement>('#audio-open')!.onclick = () => {
-    if (sheet) sheet.hidden = !sheet.hidden;
-  };
+  const mute = document.querySelector<HTMLButtonElement>('#mute-btn');
+  if (mute) {
+    mute.onclick = () => {
+      audio.toggleMuted();
+      paintMute();
+    };
+  }
+  const opener = document.querySelector<HTMLButtonElement>('#audio-open');
+  if (opener) {
+    opener.onclick = () => {
+      if (sheet) sheet.hidden = !sheet.hidden;
+    };
+  }
 }
 
 function buildChrome() {
@@ -2916,11 +2922,12 @@ function expose() {
       for (let x = keep.x; x <= keep.x + 4; x++) queue.push({ kind: 'road', playerId: localPlayer, x, y });
       const person = state.people.find((p) => p.playerId === localPlayer && p.hp > 0);
       if (person) {
-        person.x = keep.x + 1.2;
+        person.x = keep.x + 0.6;
         person.y = y + 0.45;
-        person.destX = keep.x + 4;
+        person.destX = keep.x + 4.2;
         person.destY = y + 0.45;
         person.task = { type: 'idle' };
+        person.idlePhase = 90;
       }
       lookAtPoint(keep.x + 2, y);
       camera.zoom = 1.6;
