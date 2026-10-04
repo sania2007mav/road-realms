@@ -67,6 +67,13 @@ import { ZOOM_MAX, clampCamera, focusTile, screenToTile, screenToWorld, worldToS
 import { bakeTerrain, minimapToTile, renderMinimap, renderWorld, type Ghost, type OrderMarker } from './render/draw';
 import { createAudio } from './audio/bus';
 import type { AudioSettings } from './audio/settings';
+import { botCommand } from './campaign/bot';
+import { advanceCampaign } from './campaign/run';
+import { openSession, scenarioBonus, type CampaignSession } from './campaign/director';
+import { goalLine } from './campaign/goals';
+import { award, isUnlocked, loadProgress, saveProgress, starsFor } from './campaign/progress';
+import { SCENARIOS, createCampaignGame, scenarioById, scenarioIndex } from './campaign/scenarios';
+import { campaignIntroHtml, campaignMapHtml, starMarkup } from './campaign/view';
 import { soldiersInScreenRect } from './select';
 
 const SAVE_KEY = 'dorozhnye-kraya-v1';
@@ -148,6 +155,7 @@ let selectedPersonId: number | null = null;
 let category: keyof typeof CATEGORY_NAME = 'storage';
 let hover: { x: number; y: number } | null = null;
 let tutorialStep = 0;
+let campaignSession: CampaignSession | null = null;
 let guideOn = false;
 let guideFocus = '';
 let guideSig = '';
@@ -308,6 +316,7 @@ function bootPreview() {
 function startGame() {
   netMode = false;
   localPlayer = 0;
+  campaignSession = null;
   const seed = Number((document.querySelector<HTMLInputElement>('#seed')?.value ?? '20261003')) || 1;
   const setup = readSetup();
   state = createGame(seed >>> 0, { ai: setup.ai, setup });
@@ -350,6 +359,7 @@ function loadGame() {
   try {
     state = deserialize(raw);
     baked = bakeTerrain(state);
+    campaignSession = null;
     playing = true;
     guideOn = false;
     title.hidden = true;
@@ -378,6 +388,10 @@ function saveGame() {
     return;
   }
   if (!playing) return;
+  if (campaignSession) {
+    flash('В кампании прогресс пишется на карте стоянок');
+    return;
+  }
   localStorage.setItem(SAVE_KEY, serialize(state));
   flash('Сохранено на этом устройстве');
 }
@@ -537,6 +551,7 @@ function buildTitle() {
     <div class="menu-foot">
       <button type="button" id="start-title" class="start-main" data-testid="new-game">Начать</button>
       <div class="actions">
+        <button type="button" id="campaign-title" data-testid="campaign-open">Кампания</button>
         <button type="button" id="load-title" data-testid="load-game">Загрузить</button>
         <button type="button" id="know-game" data-testid="know-game">Я умею играть</button>
         <button type="button" id="net-title" data-testid="net-game">Сетевая игра</button>
@@ -571,6 +586,70 @@ function buildTitle() {
   };
   syncKnowButton();
   document.querySelector<HTMLButtonElement>('#net-title')!.onclick = () => openNet();
+  document.querySelector<HTMLButtonElement>('#campaign-title')!.onclick = () => showCampaignMap();
+}
+
+function showCampaignMap() {
+  playing = false;
+  campaignSession = null;
+  title.hidden = false;
+  endScreen.hidden = true;
+  goalsEl.hidden = true;
+  const save = loadProgress();
+  title.innerHTML = campaignMapHtml(save);
+  document.querySelector<HTMLButtonElement>('#campaign-close')!.onclick = () => {
+    buildTitle();
+    bootPreview();
+  };
+  title.querySelectorAll<HTMLButtonElement>('[data-scenario]').forEach((button) => {
+    button.onclick = () => {
+      const scenario = scenarioById(button.dataset.scenario ?? '');
+      if (scenario) showScenarioIntro(scenario);
+    };
+  });
+}
+
+function showScenarioIntro(scenario: ReturnType<typeof scenarioById>) {
+  if (!scenario) return;
+  title.hidden = false;
+  endScreen.hidden = true;
+  title.innerHTML = campaignIntroHtml(scenario);
+  document.querySelector<HTMLButtonElement>('#scenario-start')!.onclick = () => startScenario(scenario.id);
+  document.querySelector<HTMLButtonElement>('#scenario-back')!.onclick = () => showCampaignMap();
+}
+
+function startScenario(id: string) {
+  const scenario = scenarioById(id);
+  if (!scenario) return;
+  netMode = false;
+  localPlayer = 0;
+  guideOn = false;
+  campaignSession = openSession(scenario);
+  state = createCampaignGame(scenario);
+  baked = bakeTerrain(state);
+  const keep = playerKeep(state, localPlayer);
+  if (keep) {
+    const center = buildingCenter(keep);
+    lookAtPoint(center.x, center.y);
+  }
+  camera.zoom = 1.15;
+  clampView();
+  playing = true;
+  speed = 1;
+  placing = null;
+  selectedId = keep?.id ?? null;
+  selectedPersonId = null;
+  queue = [];
+  acc = 0;
+  resetArmy();
+  title.hidden = true;
+  netView.hide();
+  netView.wait(null, null);
+  endScreen.hidden = true;
+  menu.hidden = true;
+  buildChrome();
+  tutorial.hidden = true;
+  expose();
 }
 
 function speakerIcon(muted: boolean): string {
@@ -846,6 +925,7 @@ function renderMenu() {
   document.querySelector<HTMLButtonElement>('#resign-btn')!.onclick = () => {
     menu.hidden = true;
     playing = false;
+    campaignSession = null;
     if (netMode) {
       netMode = false;
       localPlayer = 0;
@@ -881,6 +961,20 @@ function goalText(playerId: number): string {
 }
 
 function paintGoals() {
+  if (campaignSession) {
+    const scenario = scenarioById(campaignSession.id);
+    if (!playing || !scenario || state.outcome !== 'playing') {
+      goalsEl.hidden = true;
+      return;
+    }
+    goalsEl.hidden = false;
+    const bonus = scenarioBonus(campaignSession, state) ? 'выполнено' : 'ещё нет';
+    goalsEl.innerHTML = `<div class="goal-title" data-testid="goal-title">${scenario.title}</div>
+      <p class="goal-objective">${scenario.objective}</p>
+      <p class="goal-progress">${goalLine(scenario.goal, state)}</p>
+      <p class="goal-bonus">Дополнительно: ${scenario.bonus} — ${bonus}</p>`;
+    return;
+  }
   const setup = state.match;
   if (!playing || !setup || state.outcome !== 'playing') {
     goalsEl.hidden = true;
@@ -1618,9 +1712,33 @@ function showEnd() {
       </article>`,
     )
     .join('');
+  const scenario = campaignSession ? scenarioById(campaignSession.id) : undefined;
+  let titleText = copy.title;
+  let detailText = `${copy.detail} Время: ${formatClock(state.tick)}.`;
+  let starsHtml = '';
+  let actionHtml = `<button type="button" id="again" data-testid="again">Реванш</button>
+      <button type="button" id="to-menu" data-testid="to-menu">В меню</button>`;
+  if (scenario && campaignSession) {
+    const won = state.outcome === 'victory';
+    const minutes = Math.round((state.tick / TICKS_PER_GAME_MINUTE) * 10) / 10;
+    const bonus = scenarioBonus(campaignSession, state);
+    const stars = starsFor(won, minutes, scenario.parMinutes, bonus);
+    if (won) saveProgress(award(loadProgress(), scenario.id, stars, minutes));
+    titleText = won ? 'Победа' : 'Поражение';
+    detailText = won
+      ? `Цель «${scenario.objective}» выполнена. ${bonus ? 'Дополнительная цель тоже.' : 'Дополнительная цель не выполнена.'} Время: ${formatClock(state.tick)}.`
+      : `Поражение. ${scenario.objective} Время: ${formatClock(state.tick)}.`;
+    starsHtml = `<p class="campaign-stars" data-testid="campaign-stars" aria-label="${stars} из 3">${starMarkup(stars)}</p>`;
+    actionHtml = won
+      ? `<button type="button" id="campaign-next" data-testid="campaign-next">Далее</button>
+      <button type="button" id="to-menu" data-testid="to-menu">К карте</button>`
+      : `<button type="button" id="again" data-testid="again">Ещё раз</button>
+      <button type="button" id="to-menu" data-testid="to-menu">К карте</button>`;
+  }
   endScreen.innerHTML = `<div class="card results-card">
-    <h1 data-testid="results-title">${copy.title}</h1>
-    <p data-testid="results-detail">${copy.detail} Время: ${formatClock(state.tick)}.</p>
+    <h1 data-testid="results-title">${titleText}</h1>
+    ${starsHtml}
+    <p data-testid="results-detail">${detailText}</p>
     <div class="results-scroll">
     <table class="results-table">
       <thead><tr><th>Посад</th><th>Счёт</th><th>Люди</th><th>Еда</th><th>Золото</th><th>Дома</th><th>Воины</th><th>Убито</th><th>Руины</th></tr></thead>
@@ -1632,14 +1750,18 @@ function showEnd() {
     <p class="chart-note">Сплошная линия — население, пунктир — золото.</p>
     <p class="score-formula">${SCORE_TEXT}</p>
     <div class="actions">
-      <button type="button" id="again" data-testid="again">Реванш</button>
-      <button type="button" id="to-menu" data-testid="to-menu">В меню</button>
+      ${actionHtml}
     </div>
   </div>`;
   const chart = document.querySelector<HTMLCanvasElement>('#results-chart');
   if (chart) paintResultsChart(chart);
-  document.querySelector<HTMLButtonElement>('#again')!.onclick = () => {
+  document.querySelector<HTMLButtonElement>('#again')?.addEventListener('click', () => {
     endScreen.hidden = true;
+    if (campaignSession) {
+      const id = campaignSession.id;
+      startScenario(id);
+      return;
+    }
     if (netMode) {
       playing = false;
       netMode = false;
@@ -1649,7 +1771,17 @@ function showEnd() {
       return;
     }
     startGame();
-  };
+  });
+  document.querySelector<HTMLButtonElement>('#campaign-next')?.addEventListener('click', () => {
+    const current = campaignSession ? scenarioIndex(campaignSession.id) : -1;
+    const next = SCENARIOS[current + 1];
+    const save = loadProgress();
+    endScreen.hidden = true;
+    playing = false;
+    goalsEl.hidden = true;
+    if (next && isUnlocked(save, current + 1, SCENARIOS.map((item) => item.id))) showScenarioIntro(next);
+    else showCampaignMap();
+  });
   document.querySelector<HTMLButtonElement>('#to-menu')!.onclick = () => {
     playing = false;
     netMode = false;
@@ -1659,6 +1791,10 @@ function showEnd() {
     netView.wait(null, null);
     endScreen.hidden = true;
     goalsEl.hidden = true;
+    if (campaignSession) {
+      showCampaignMap();
+      return;
+    }
     buildTitle();
     bootPreview();
   };
@@ -1996,8 +2132,9 @@ function frame(now: number) {
     let guard = 0;
     while (acc >= 1 && guard < 8) {
       const commands = guard === 0 ? queue.splice(0) : [];
-      step(state, commands, guideOn && !netMode ? { shelter: true } : undefined);
-      if (!guideOn && state.tick > 0 && state.tick % (TICKS_PER_GAME_MINUTE * 2) === 0) {
+      if (campaignSession) advanceCampaign(state, campaignSession, commands);
+      else step(state, commands, guideOn && !netMode ? { shelter: true } : undefined);
+      if (!guideOn && !campaignSession && state.tick > 0 && state.tick % (TICKS_PER_GAME_MINUTE * 2) === 0) {
         try {
           localStorage.setItem(SAVE_KEY, serialize(state));
         } catch {
@@ -2421,6 +2558,18 @@ function expose() {
       if (!state.log.includes(line)) state.log.push(line);
       if (state.log.length > 8) state.log.shift();
     },
+    playCampaignScript() {
+      if (!campaignSession) return null;
+      const scenario = scenarioById(campaignSession.id);
+      if (!scenario) return null;
+      setSpeed(0);
+      const cap = scenario.proofMinutes * TICKS_PER_GAME_MINUTE;
+      while (state.outcome === 'playing' && state.tick < cap) {
+        const command = botCommand(scenario.bot, state);
+        advanceCampaign(state, campaignSession, command ? [command] : []);
+      }
+      return { outcome: state.outcome, tick: state.tick };
+    },
     debugResults() {
       setSpeed(0);
       state.tick = 18 * 60 + 12;
@@ -2705,6 +2854,7 @@ declare global {
       debugScene: (kind: string) => void;
       debugBoard: () => void;
       debugResults: () => void;
+      playCampaignScript: () => { outcome: string; tick: number } | null;
     };
   }
 }
@@ -2750,6 +2900,7 @@ function beginNet(next: GameState, playerId: number) {
   state = next;
   localPlayer = playerId;
   netMode = true;
+  campaignSession = null;
   baked = bakeTerrain(state);
   const keep = playerKeep(state, localPlayer);
   if (keep) {

@@ -562,6 +562,44 @@ test('ии: сложность, войско и стены', async ({ page }) =>
   await page.screenshot({ path: `${shots}/ai_walls.png` });
 });
 
+test('кампания: карта, вступление и цель первой стоянки', async ({ page }) => {
+  mkdirSync(shots, { recursive: true });
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(String(error)));
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.addInitScript(() => {
+    localStorage.setItem('dorozhnye-kraya-tutorial', '1');
+    localStorage.removeItem('dorozhnye-kraya-campaign');
+  });
+  await page.goto('/road-realms/');
+  await page.getByTestId('campaign-open').click();
+  await expect(page.getByTestId('campaign-map')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Кампания' })).toBeVisible();
+  await expect(page.getByTestId('campaign-node-1')).toBeEnabled();
+  await expect(page.getByTestId('campaign-node-2')).toBeDisabled();
+  await page.screenshot({ path: `${shots}/campaign_map.png` });
+  await page.getByTestId('campaign-node-1').click();
+  await expect(page.getByTestId('scenario-intro')).toBeVisible();
+  await expect(page.getByTestId('scenario-intro')).toContainText('Прокормите 15 человек');
+  await page.screenshot({ path: `${shots}/campaign_intro.png` });
+  await page.getByTestId('scenario-start').click();
+  await expect(page.getByTestId('goals')).toBeVisible();
+  await expect(page.getByTestId('goals')).toContainText('Прокормите 15 человек');
+  const result = await page.evaluate(() => window.__game!.playCampaignScript());
+  expect(result?.outcome).toBe('victory');
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }),
+  );
+  await expect(page.getByTestId('results-title')).toHaveText('Победа');
+  await expect(page.getByTestId('campaign-stars')).toContainText('★');
+  await expect(page.getByTestId('campaign-next')).toHaveText('Далее');
+  await page.screenshot({ path: `${shots}/campaign_results.png` });
+  expect(errors).toEqual([]);
+});
+
 test('звук: панель настроек', async ({ page }) => {
   mkdirSync(shots, { recursive: true });
   const errors: string[] = [];
@@ -609,6 +647,7 @@ declare global {
       debugScene: (kind: string) => void;
       debugBoard: () => void;
       debugResults: () => void;
+      playCampaignScript: () => { outcome: string; tick: number } | null;
     };
   }
 }
