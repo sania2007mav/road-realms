@@ -1,5 +1,6 @@
 import { BUILDINGS, BOW_RANGE, CLOUD_RADIUS, CLOUD_TICKS, PITCH_BURN, POP_MAX, POP_MIN, TOWER_RANGE } from './balance';
 import { findPath, tileBlocked } from './path';
+import { roadPace } from './roads';
 import type { Building, BuildingType, Command, GameState, Player, Resource, Soldier, Weapon } from './types';
 
 export const LINE_TYPES: readonly BuildingType[] = ['palisade', 'wall', 'moat', 'pitchditch'];
@@ -219,6 +220,7 @@ export function approach(
   playerId: number,
   kind: Mover,
 ): boolean {
+  speed = roadPace(state, ent.x, ent.y, speed);
   if (!settlementHasForts(state)) return straight(ent, x, y, speed);
   const dx = x - ent.x;
   const dy = y - ent.y;

@@ -10,10 +10,12 @@ export interface CampaignSession {
   id: string;
   fired: boolean[];
   drought: boolean;
+  /** Lowest hp seen on each neighbour keep. Stops an upgrade from refilling a keep the army already cracked. */
+  keepHp: number[];
 }
 
 export function openSession(scenario: Scenario): CampaignSession {
-  return { id: scenario.id, fired: scenario.events.map(() => false), drought: false };
+  return { id: scenario.id, fired: scenario.events.map(() => false), drought: false, keepHp: [] };
 }
 
 function log(state: GameState, text: string) {
@@ -91,6 +93,20 @@ function dryFarms(state: GameState) {
   }
 }
 
+function holdKeepDamage(session: CampaignSession, state: GameState) {
+  for (const player of state.players) {
+    if (!player.isAi) continue;
+    const keep = playerKeep(state, player.id);
+    if (!keep || keep.hp <= 0) continue;
+    const prev = session.keepHp[player.id];
+    if (prev != null && keep.hp > prev) {
+      keep.hp = prev;
+      if (keep.maxHp > prev) keep.maxHp = Math.max(prev, 1);
+    }
+    session.keepHp[player.id] = keep.hp;
+  }
+}
+
 /** Client-side campaign rules. Called after step, never from the sim itself. */
 export function enact(session: CampaignSession, state: GameState) {
   const scenario = scenarioById(session.id);
@@ -103,6 +119,7 @@ export function enact(session: CampaignSession, state: GameState) {
     applyEvent(state, event);
   });
   if (session.drought && state.tick > 0 && state.tick % TICKS_PER_GAME_MINUTE === 0) dryFarms(state);
+  if (scenario.id === 'dvoe') holdKeepDamage(session, state);
   if (state.outcome !== 'playing') return;
   if (playerLost(scenario, state)) {
     state.outcome = 'defeat';

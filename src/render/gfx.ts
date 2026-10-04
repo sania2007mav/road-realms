@@ -23,8 +23,8 @@ export function gfxLabel() {
   return quality === 'high' ? 'Графика: высокая' : 'Графика: простая';
 }
 
-export function cycleGfx(): GfxQuality {
-  quality = quality === 'high' ? 'simple' : 'high';
+export function setGfx(next: GfxQuality): GfxQuality {
+  quality = next === 'simple' ? 'simple' : 'high';
   try {
     localStorage.setItem(KEY, quality);
   } catch {
@@ -32,6 +32,10 @@ export function cycleGfx(): GfxQuality {
   }
   clearSprites();
   return quality;
+}
+
+export function cycleGfx(): GfxQuality {
+  return setGfx(quality === 'high' ? 'simple' : 'high');
 }
 
 export function zoomBucket(zoom: number) {

@@ -81,5 +81,9 @@ export function hashState(state: GameState): string {
   for (const mob of mobs) {
     parts.push(`M${mob.id}|${mob.kind}|${mob.alive ? 1 : 0}|${num(mob.x)}|${num(mob.y)}|${mob.hp}|${num(mob.destX)}|${num(mob.destY)}|${mob.wander}`);
   }
+  const roads = state.roads;
+  if (roads) {
+    for (let i = 0; i < roads.length; i++) if (roads[i]) parts.push(`R${i}`);
+  }
   return fnv(parts.join('\n'));
 }

@@ -19,6 +19,13 @@ html, body, #app {
   overflow: hidden;
   background: #241c16;
   color: var(--paper);
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+#topbar, #dock, #panel, #menu, #goals, #army, #tutorial, #end, #title, #popbox, #peoplebox,
+#help-book, #settings-panel, #save-panel, #audio-panel, #banner, #tip {
+  zoom: var(--ui, 1);
 }
 
 button, input, select { font: inherit; color: inherit; }
@@ -129,6 +136,8 @@ button.active, button[aria-pressed="true"] {
 
 .readout.idle-empty { border-color: var(--bad); }
 .readout.idle-empty strong { color: var(--bad); }
+.readout.idle-ready { border-color: var(--gold); animation: idle-pulse 1.6s ease-in-out infinite; }
+@keyframes idle-pulse { 50% { box-shadow: 0 0 0 3px rgba(230, 177, 90, 0.35); } }
 
 .readout.mood-up strong { color: var(--good); }
 .readout.mood-down strong { color: var(--bad); }
@@ -490,7 +499,7 @@ details.advanced summary {
   position: static;
   grid-column: 1 / -1;
   z-index: 3;
-  pointer-events: none;
+  pointer-events: auto;
   color: var(--paper);
   text-shadow: 0 1px 2px #000;
   font-size: 13px;
@@ -498,10 +507,43 @@ details.advanced summary {
   flex-direction: column;
   justify-content: flex-end;
   gap: 2px;
-  max-height: 36px;
+  max-height: 52px;
   overflow: hidden;
   min-width: 0;
 }
+.log-line {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  color: inherit;
+  text-shadow: inherit;
+  cursor: pointer;
+}
+#phone-goal {
+  display: none;
+  grid-column: 1 / -1;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+#help-book, #settings-panel, #save-panel {
+  position: absolute;
+  z-index: 12;
+  inset: 24px;
+  overflow: auto;
+}
+.help-card, #settings-panel .card, #save-panel .card { max-width: 720px; margin: 0 auto; }
+.help-entry { border-top: 1px solid var(--line); padding-top: 8px; }
+.help-entry h3 { margin: 0 0 4px; }
+.chain { white-space: pre-wrap; background: rgba(0,0,0,0.25); padding: 10px; border-radius: 8px; }
+.checkline { display: flex; gap: 8px; align-items: center; }
+.save-row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+.save-row span { flex: 1; min-width: 140px; }
+.help-mark { min-width: 44px; min-height: 36px; margin-left: 8px; }
 
 #dock {
   position: absolute;
@@ -732,4 +774,16 @@ button.guide-pulse {
   }
   #banner { top: auto; bottom: 210px; }
   .card h1 { font-size: 34px; }
+  #phone-goal:not([hidden]) { display: block; }
+}
+
+@media (max-width: 420px), (max-height: 420px) {
+  #topbar { top: 4px; left: 4px; gap: 4px; }
+  .readout, #status button { padding: 4px 8px; font-size: 12px; }
+  #dock { left: 4px; right: 4px; bottom: 4px; gap: 4px; }
+  #mapwrap { width: 84px; height: 56px; }
+  #econ { display: none; }
+  #log { max-height: 32px; }
+  #panel { bottom: 108px; max-height: 32vh; }
+  .menu-card, #title .card { max-height: calc(100vh - 16px); }
 }

@@ -5,7 +5,7 @@ import { Terrain } from '../sim/types';
 import { buildingWarning, workRange } from '../sim/update';
 import { terrainAt } from '../sim/world';
 import { TILE_H, TILE_W, isoToTile, mapIsoBounds, screenToIso, tileToIso, type Camera } from './camera';
-import { blitSprite, gfxHigh, noteGfxFrame, renderSprite } from './gfx';
+import { blitSprite, gfxHigh, noteGfxFrame, renderSprite, zoomBucket } from './gfx';
 
 export interface Ghost {
   type: BuildingType;
@@ -151,7 +151,7 @@ function groundColor(state: GameState, x: number, y: number): string {
     g = mix(g, 142, t);
     b = mix(b, 78, t);
   }
-  const wobble = Math.round((dune - 0.5) * 16);
+  const wobble = Math.round((dune - 0.5) * 6);
   return rgb(r + wobble, g + Math.round(wobble * 0.85), b + Math.round(wobble * 0.45));
 }
 
@@ -378,27 +378,21 @@ function paintStamp(ctx: CanvasRenderingContext2D, terrain: number, variant: num
     return lerp(lerp(pts[0], pts[1], u), lerp(pts[3], pts[2], u), v);
   };
   if (terrain === Terrain.Desert || terrain === Terrain.Land) {
-    for (let i = 0; i < 20; i++) {
-      const p = at(i, 1);
-      ctx.fillStyle = i % 4 === 0 ? 'rgba(110,82,48,0.35)' : 'rgba(255,244,214,0.32)';
-      ctx.fillRect(p.x, p.y, 1.3, 1.3);
-    }
-    ctx.fillStyle = '#8d7352';
+    ctx.strokeStyle = terrain === Terrain.Desert ? 'rgba(255,236,196,0.28)' : 'rgba(255,246,220,0.22)';
+    ctx.lineWidth = 1.15;
     for (let i = 0; i < 3; i++) {
-      const p = at(i, 40);
-      ctx.beginPath();
-      ctx.ellipse(p.x, p.y, 1.7, 1.1, (i - 1) * 0.4, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.strokeStyle = 'rgba(150,110,64,0.4)';
-    ctx.lineWidth = 1;
-    for (let i = 0; i < 2; i++) {
-      const a = lerp(pts[3], pts[0], 0.28 + i * 0.28);
-      const b = lerp(pts[2], pts[1], 0.28 + i * 0.28);
+      const a = lerp(pts[3], pts[0], 0.2 + i * 0.22);
+      const b = lerp(pts[2], pts[1], 0.2 + i * 0.22);
+      const lift = i % 2 === 0 ? -0.7 : 0.55;
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
-      ctx.quadraticCurveTo((a.x + b.x) / 2, (a.y + b.y) / 2 - 1.5, b.x, b.y);
+      ctx.quadraticCurveTo((a.x + b.x) / 2, (a.y + b.y) / 2 + lift, b.x, b.y);
       ctx.stroke();
+    }
+    for (let i = 0; i < 12; i++) {
+      const p = at(i, 3);
+      ctx.fillStyle = i % 3 === 0 ? 'rgba(255,248,230,0.26)' : 'rgba(214,186,140,0.14)';
+      ctx.fillRect(p.x, p.y, 1.05, 1.05);
     }
   } else if (terrain === Terrain.Oasis) {
     ctx.strokeStyle = '#2c6e38';
@@ -539,6 +533,148 @@ function unitDepth(state: GameState, x: number, y: number) {
   return depth;
 }
 
+const CHUNK = 16;
+const CHUNK_CAP = 64;
+
+interface ChunkSprite {
+  canvas: HTMLCanvasElement;
+  originX: number;
+  originY: number;
+  scale: number;
+  used: number;
+}
+
+const chunkCache = new Map<string, ChunkSprite>();
+let chunksEnabled = true;
+let chunkClock = 0;
+
+export function setTerrainChunks(on: boolean) {
+  chunksEnabled = on;
+  if (!on) clearTerrainChunks();
+}
+
+export function clearTerrainChunks() {
+  chunkCache.clear();
+}
+
+function roadDigest(state: GameState, x0: number, y0: number, x1: number, y1: number): number {
+  const roads = state.roads;
+  if (!roads) return 0;
+  let hash = 0;
+  for (let y = y0; y < y1; y++) {
+    const row = y * state.mapW;
+    for (let x = x0; x < x1; x++) if (roads[row + x]) hash = (hash + (row + x) * 3 + 1) >>> 0;
+  }
+  return hash;
+}
+
+function paintTile(ctx: CanvasRenderingContext2D, state: GameState, x: number, y: number) {
+  const index = y * state.mapW + x;
+  const playerRoad = (state.roads?.[index] ?? 0) === 1;
+  if (playerRoad) {
+    fillDiamond(ctx, x, y, '#c4a06a');
+    const pts = diamond(x, y, 1, 1);
+    ctx.strokeStyle = 'rgba(255,236,200,0.4)';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo((pts[0].x + pts[3].x) / 2, (pts[0].y + pts[3].y) / 2);
+    ctx.lineTo((pts[1].x + pts[2].x) / 2, (pts[1].y + pts[2].y) / 2);
+    ctx.stroke();
+    return;
+  }
+  const terrain = terrainAt(state, x, y);
+  fillDiamond(ctx, x, y, groundColor(state, x, y));
+  const sandy = terrain === Terrain.Desert || terrain === Terrain.Land;
+  if (!sandy && !gfxHigh()) return;
+  const variant = hash2(state.seed, x, y) % 4;
+  const origin = tileToIso(x, y);
+  blitSprite(ctx, groundStamp(terrain, variant), origin.x, origin.y);
+}
+
+function paintTiles(ctx: CanvasRenderingContext2D, state: GameState, span: { minX: number; maxX: number; minY: number; maxY: number }) {
+  for (let y = span.minY; y < span.maxY; y++) {
+    for (let x = span.minX; x < span.maxX; x++) paintTile(ctx, state, x, y);
+  }
+}
+
+function takeChunk(state: GameState, cx: number, cy: number, scale: number, bucket: number): ChunkSprite {
+  const x0 = cx * CHUNK;
+  const y0 = cy * CHUNK;
+  const x1 = Math.min(state.mapW, x0 + CHUNK);
+  const y1 = Math.min(state.mapH, y0 + CHUNK);
+  const key = `${state.seed}|${gfxHigh() ? 1 : 0}|${bucket}|${scale}|${cx}|${cy}|${roadDigest(state, x0, y0, x1, y1)}`;
+  const hit = chunkCache.get(key);
+  chunkClock += 1;
+  if (hit) {
+    hit.used = chunkClock;
+    return hit;
+  }
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  const consider = (x: number, y: number) => {
+    const pts = diamond(x, y, 1, 1);
+    for (const point of pts) {
+      if (point.x < minX) minX = point.x;
+      if (point.y < minY) minY = point.y;
+      if (point.x > maxX) maxX = point.x;
+      if (point.y > maxY) maxY = point.y;
+    }
+  };
+  for (let y = y0; y < y1; y++) {
+    consider(x0, y);
+    consider(x1 - 1, y);
+  }
+  const pad = 2;
+  minX -= pad;
+  minY -= pad;
+  maxX += pad;
+  maxY += pad;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.ceil((maxX - minX) * scale));
+  canvas.height = Math.max(1, Math.ceil((maxY - minY) * scale));
+  const off = canvas.getContext('2d');
+  if (off) {
+    off.setTransform(scale, 0, 0, scale, -minX * scale, -minY * scale);
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) paintTile(off, state, x, y);
+    }
+  }
+  const sprite: ChunkSprite = { canvas, originX: minX, originY: minY, scale, used: chunkClock };
+  chunkCache.set(key, sprite);
+  while (chunkCache.size > CHUNK_CAP) {
+    let oldest = '';
+    let oldestUsed = Infinity;
+    for (const [id, item] of chunkCache) {
+      if (item.used < oldestUsed) {
+        oldestUsed = item.used;
+        oldest = id;
+      }
+    }
+    if (!oldest) break;
+    chunkCache.delete(oldest);
+  }
+  return sprite;
+}
+
+function paintChunked(ctx: CanvasRenderingContext2D, state: GameState, camera: Camera, span: { minX: number; maxX: number; minY: number; maxY: number }) {
+  const scale = camera.zoom < 0.8 ? 0.5 : 1;
+  const bucket = zoomBucket(camera.zoom);
+  const minCx = Math.floor(span.minX / CHUNK);
+  const maxCx = Math.floor((span.maxX - 1) / CHUNK);
+  const minCy = Math.floor(span.minY / CHUNK);
+  const maxCy = Math.floor((span.maxY - 1) / CHUNK);
+  for (let cy = minCy; cy <= maxCy; cy++) {
+    for (let cx = minCx; cx <= maxCx; cx++) {
+      if (cx < 0 || cy < 0) continue;
+      if (cx * CHUNK >= state.mapW || cy * CHUNK >= state.mapH) continue;
+      const sprite = takeChunk(state, cx, cy, scale, bucket);
+      ctx.drawImage(sprite.canvas, sprite.originX, sprite.originY, sprite.canvas.width / sprite.scale, sprite.canvas.height / sprite.scale);
+    }
+  }
+}
+
 export function renderWorld(
   ctx: CanvasRenderingContext2D,
   state: GameState,
@@ -576,17 +712,10 @@ export function renderWorld(
       baked.canvas.width / baked.scale,
       baked.canvas.height / baked.scale,
     );
+  } else if (chunksEnabled) {
+    paintChunked(ctx, state, camera, span);
   } else {
-    for (let y = span.minY; y < span.maxY; y++) {
-      for (let x = span.minX; x < span.maxX; x++) {
-        fillDiamond(ctx, x, y, groundColor(state, x, y));
-        if (!gfxHigh()) continue;
-        const variant = hash2(state.seed, x, y) % 4;
-        const stamp = groundStamp(terrainAt(state, x, y), variant);
-        const origin = tileToIso(x, y);
-        blitSprite(ctx, stamp, origin.x, origin.y);
-      }
-    }
+    paintTiles(ctx, state, span);
   }
 
   type Sprite = { depth: number; draw: () => void };

@@ -45,6 +45,7 @@ import type {
 import { FOODS, RESOURCES, Terrain } from './types';
 import { formationPoints } from './formation';
 import { findPath } from './path';
+import { ROAD_COST, roadError } from './roads';
 import {
   approach,
   bowRange,
@@ -564,6 +565,25 @@ export function applyCommand(state: GameState, command: Command): boolean {
       soldier.waypointI = 0;
     });
     state.message = command.mode === 'attackmove' ? 'Атака области' : command.mode === 'home' ? 'Войско возвращается' : 'Войско идёт';
+    return true;
+  }
+
+  if (command.kind === 'road') {
+    const index = command.y * state.mapW + command.x;
+    if ((state.roads?.[index] ?? 0) === 1 && roadError(state, command.x, command.y) === '') return true;
+    const error = roadError(state, command.x, command.y);
+    if (error) {
+      state.message = error;
+      return false;
+    }
+    if (!canAfford(player.stocks, ROAD_COST)) {
+      state.message = 'Не хватает дерева';
+      return false;
+    }
+    if (!state.roads || state.roads.length !== state.mapW * state.mapH) state.roads = new Uint8Array(state.mapW * state.mapH);
+    pay(player.stocks, ROAD_COST);
+    state.roads[index] = 1;
+    state.message = 'Дорога проложена';
     return true;
   }
 
@@ -1917,6 +1937,7 @@ export function serialize(state: GameState): string {
     mapH: state.mapH,
     roadY: state.roadY,
     terrain: Array.from(state.terrain),
+    roads: Array.from(state.roads ?? []),
     nextId: state.nextId,
     players: state.players,
     buildings: state.buildings,
@@ -1935,9 +1956,13 @@ export function serialize(state: GameState): string {
 }
 
 export function deserialize(raw: string): GameState {
-  const data = JSON.parse(raw) as GameState & { terrain: number[] };
+  const data = JSON.parse(raw) as GameState & { terrain: number[]; roads?: number[] };
   if (data.saveVersion !== 1) throw new Error('Неизвестная версия сохранения');
   const terrain = Uint8Array.from(data.terrain);
+  const roads =
+    data.roads && data.roads.length === data.mapW * data.mapH
+      ? Uint8Array.from(data.roads)
+      : new Uint8Array(data.mapW * data.mapH);
   const clouds = data.clouds ?? [];
   for (const building of data.buildings) {
     if (building.seal == null) building.seal = 0;
@@ -1953,6 +1978,7 @@ export function deserialize(raw: string): GameState {
   return {
     ...data,
     terrain,
+    roads,
     clouds,
     match: data.match ?? normalizeSetup(null, ai),
     samples: data.samples ?? [],

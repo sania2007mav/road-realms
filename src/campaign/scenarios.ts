@@ -1,7 +1,7 @@
 import { createGame } from '../sim/world';
 import { Terrain, type GameState, type MatchSetup } from '../sim/types';
 import type { Scenario } from './types';
-import { addWolves, clearHostiles, fortify, grant, paintDisc, setKeepLevel } from './prepare';
+import { addWolves, clearHostiles, fortify, grant, paintDisc, setKeepLevel, thinKeep } from './prepare';
 import { playerKeep } from '../sim/update';
 
 function match(partial: Partial<MatchSetup> & Pick<MatchSetup, 'ai' | 'victory'>): MatchSetup {
@@ -27,17 +27,17 @@ export const SCENARIOS: Scenario[] = [
     id: 'korm',
     title: 'Корм для тракта',
     intro:
-      'Караван ушёл на север и оставил вас у пустой обочины. В корзине ещё есть яблоки, но пятнадцать ртов сами себя не прокормят. Поставьте амбар и сад, пока тракт молчит: первые четыре минуты еда не тратится.',
-    objective: 'Прокормите 15 человек',
+      'Караван ушёл на север и оставил вас у пустой обочины. В корзине ещё есть яблоки, но десять ртов сами себя не прокормят. Поставьте амбар и сад, пока тракт молчит: первые две минуты еда не тратится.',
+    objective: 'Прокормите 10 человек',
     bonus: 'Два яблоневых сада',
-    goal: { kind: 'population', count: 15 },
+    goal: { kind: 'population', count: 10 },
     bonusKind: 'orchards',
     seed: 4101,
     setup: match({ ai: 0, victory: 'conquest' }),
-    parMinutes: 36,
-    proofMinutes: 50,
-    failMinutes: 55,
-    shelterMinutes: 4,
+    parMinutes: 15,
+    proofMinutes: 22,
+    failMinutes: 28,
+    shelterMinutes: 2,
     events: [{ minute: 1, kind: 'log', text: 'Тракт спокоен. Пока еда не тратится.' }],
     bot: {
       tax: 'none',
@@ -46,7 +46,7 @@ export const SCENARIOS: Scenario[] = [
         { type: 'orchard', max: 1 },
         { type: 'woodcutter', max: 1 },
         { type: 'stockpile', max: 1 },
-        { type: 'shack', max: 5 },
+        { type: 'shack', max: 3 },
         { type: 'orchard', max: 2 },
       ],
     },
@@ -319,8 +319,8 @@ export const SCENARIOS: Scenario[] = [
         { difficulty: 'easy', personality: 'merchant' },
       ],
     }),
-    parMinutes: 60,
-    proofMinutes: 68,
+    parMinutes: 42,
+    proofMinutes: 46,
     failMinutes: 0,
     shelterMinutes: 0,
     events: [{ minute: 4, kind: 'log', text: 'Оба соседа ещё копят силы.' }],
@@ -333,10 +333,10 @@ export const SCENARIOS: Scenario[] = [
         { type: 'woodcutter', max: 1 },
         { type: 'barracks', max: 1 },
       ],
-      train: [{ weapon: 'club', count: 6, keepPeople: 2 }],
+      train: [{ weapon: 'club', count: 10, keepPeople: 1 }],
       attack: 'raid',
-      attackSoldiers: 4,
-      attackMinute: 8,
+      attackSoldiers: 6,
+      attackMinute: 5,
     },
   },
 ];
@@ -400,5 +400,10 @@ function prepare(scenario: Scenario, state: GameState) {
     state.players[0].tax = 'none';
     grant(state, 0, 40, { wood: 24, stone: 4, apples: 56 });
   }
-  if (scenario.id === 'dvoe') calm(state);
+  if (scenario.id === 'dvoe') {
+    calm(state);
+    setKeepLevel(state, 0, 2);
+    grant(state, 0, 120, { wood: 64, apples: 100 });
+    thinKeep(state, 2, 300);
+  }
 }

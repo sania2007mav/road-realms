@@ -67,10 +67,10 @@ describe('кампания: цели и события', () => {
     const food = scenarioById('korm')!;
     const state = createCampaignGame(food);
     expect(goalMet(food.goal, state)).toBe(false);
-    expect(goalLine(food.goal, state)).toContain('5/15');
+    expect(goalLine(food.goal, state)).toContain('5/10');
     const keep = playerKeep(state, 0)!;
-    for (let i = 0; i < 10; i++) createPerson(state, 0, keep.x, keep.y + 2, i);
-    expect(civilians(state)).toBe(15);
+    for (let i = 0; i < 5; i++) createPerson(state, 0, keep.x, keep.y + 2, i);
+    expect(civilians(state)).toBe(10);
     expect(goalMet(food.goal, state)).toBe(true);
 
     const trade = scenarioById('torg')!;
@@ -117,7 +117,7 @@ describe('кампания: цели и события', () => {
     expect(bandits()).toBe(had + 2);
   });
 
-  it('пятнадцать человек заканчивают первую стоянку', () => {
+  it('десять человек заканчивают первую стоянку', () => {
     const food = scenarioById('korm')!;
     const state = createCampaignGame(food);
     const session = openSession(food);

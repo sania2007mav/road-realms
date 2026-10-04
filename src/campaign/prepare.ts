@@ -15,6 +15,13 @@ export function paintDisc(state: GameState, cx: number, cy: number, r: number, v
   }
 }
 
+export function thinKeep(state: GameState, playerId: number, hp: number) {
+  const keep = playerKeep(state, playerId);
+  if (!keep) return;
+  keep.maxHp = hp;
+  keep.hp = hp;
+}
+
 export function setKeepLevel(state: GameState, playerId: number, level: number) {
   const keep = playerKeep(state, playerId);
   if (!keep) return;

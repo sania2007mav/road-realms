@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 
 const shots = '/opt/cursor/artifacts/screenshots';
 
@@ -580,11 +580,11 @@ test('кампания: карта, вступление и цель перво�
   await page.screenshot({ path: `${shots}/campaign_map.png` });
   await page.getByTestId('campaign-node-1').click();
   await expect(page.getByTestId('scenario-intro')).toBeVisible();
-  await expect(page.getByTestId('scenario-intro')).toContainText('Прокормите 15 человек');
+  await expect(page.getByTestId('scenario-intro')).toContainText('Прокормите 10 человек');
   await page.screenshot({ path: `${shots}/campaign_intro.png` });
   await page.getByTestId('scenario-start').click();
   await expect(page.getByTestId('goals')).toBeVisible();
-  await expect(page.getByTestId('goals')).toContainText('Прокормите 15 человек');
+  await expect(page.getByTestId('goals')).toContainText('Прокормите 10 человек');
   const result = await page.evaluate(() => window.__game!.playCampaignScript());
   expect(result?.outcome).toBe('victory');
   await page.evaluate(
@@ -615,6 +615,75 @@ test('звук: панель настроек', async ({ page }) => {
   await expect(page.getByTestId('mute-audio')).toHaveAttribute('aria-pressed', 'true');
   await page.screenshot({ path: `${shots}/audio_settings.png` });
   expect(errors).toEqual([]);
+});
+
+test('справка, сохранения, песок, дорога и кадры', async ({ page }) => {
+  mkdirSync(shots, { recursive: true });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+  await page.goto('/road-realms/');
+  await page.getByTestId('help-open').click();
+  await expect(page.getByTestId('help-book')).toBeVisible();
+  await expect(page.getByTestId('help-book')).toContainText('Главное здание');
+  await expect(page.getByTestId('help-book')).toContainText('Мечник');
+  await expect(page.getByTestId('help-book')).toContainText('пшеница');
+  await page.screenshot({ path: `${shots}/encyclopedia.png` });
+  await page.getByTestId('help-close').click();
+
+  await page.getByTestId('new-game').click();
+  await page.getByTestId('open-menu').click();
+  await page.getByTestId('save-game').click();
+  await expect(page.getByTestId('save-panel')).toBeVisible();
+  await expect(page.getByTestId('save-panel')).toContainText('Ячейка 1');
+  await page.screenshot({ path: `${shots}/save_panel.png` });
+  await page.getByTestId('save-panel').getByRole('button', { name: 'Сохранить' }).first().click();
+  await expect(page.getByTestId('save-panel')).toContainText('партия');
+  await page.getByTestId('save-close').click();
+
+  await page.evaluate(() => window.__game!.focusTerrain('desert'));
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }),
+  );
+  await page.screenshot({ path: `${shots}/sand_closeup.png` });
+
+  await page.evaluate(() => window.__game!.stageRoad());
+  await page.waitForTimeout(700);
+  await page.screenshot({ path: `${shots}/road_in_use.png` });
+
+  await page.evaluate(() => window.__game!.debugScene('mid'));
+  await page.evaluate(() => window.__game!.setChunks(false));
+  await page.evaluate(() => window.__game!.measureFps(400));
+  const before = await page.evaluate(() => window.__game!.measureFps(1200));
+  await page.evaluate(() => window.__game!.setChunks(true));
+  await page.evaluate(() => window.__game!.measureFps(400));
+  const after = await page.evaluate(() => window.__game!.measureFps(1200));
+  writeFileSync(`${shots}/fps.json`, JSON.stringify({ before, after }));
+  expect(after).toBeGreaterThan(0);
+  expect(before).toBeGreaterThan(0);
+});
+
+test('телефон: портрет 360×640 и альбом', async ({ page }) => {
+  mkdirSync(shots, { recursive: true });
+  await page.setViewportSize({ width: 360, height: 640 });
+  await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+  await page.goto('/road-realms/');
+  await page.getByTestId('new-game').click();
+  const fit = await page.evaluate(() => ({
+    overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    target: document.querySelector('#home')?.getBoundingClientRect().height ?? 0,
+  }));
+  expect(fit.overflow).toBeLessThanOrEqual(1);
+  expect(fit.target).toBeGreaterThanOrEqual(44);
+  await expect(page.getByTestId('phone-goal')).toBeVisible();
+  await page.screenshot({ path: `${shots}/phone_portrait.png` });
+  await page.setViewportSize({ width: 640, height: 360 });
+  await page.waitForTimeout(200);
+  const wide = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(wide).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: `${shots}/phone_landscape.png` });
 });
 
 declare global {
@@ -648,6 +717,10 @@ declare global {
       debugBoard: () => void;
       debugResults: () => void;
       playCampaignScript: () => { outcome: string; tick: number } | null;
+      measureFps: (ms: number) => Promise<number>;
+      setChunks: (on: boolean) => void;
+      focusTerrain: (kind: string) => void;
+      stageRoad: () => void;
     };
   }
 }

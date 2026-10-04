@@ -259,6 +259,8 @@ export interface GameState {
   mapH: number;
   roadY: number;
   terrain: Uint8Array;
+  /** Player-drawn roads. 1 on a tile that is not the main trakt. Missing on old saves. */
+  roads: Uint8Array;
   nextId: number;
   players: Player[];
   buildings: Building[];
@@ -296,7 +298,8 @@ export type Command =
       target: 'none' | 'soldier' | 'mob' | 'building';
       targetId: number;
     }
-  | { kind: 'demolish'; playerId: number; buildingId: number };
+  | { kind: 'demolish'; playerId: number; buildingId: number }
+  | { kind: 'road'; playerId: number; x: number; y: number };
 
 export interface PopReason {
   label: string;

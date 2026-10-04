@@ -156,6 +156,7 @@ export function createGame(
     mapH,
     roadY,
     terrain,
+    roads: new Uint8Array(mapW * mapH),
     nextId: 1,
     players: [],
     buildings: [],

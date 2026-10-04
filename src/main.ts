@@ -17,7 +17,6 @@ import {
   createMob,
   createSoldier,
   currentTarget,
-  deserialize,
   housingCap,
   idleCount,
   KEEP_HOUSING,
@@ -38,7 +37,6 @@ import {
   viewerWon,
   CRUEL_BONUS_TEXT,
   SCORE_TEXT,
-  serialize,
   step,
   suggestedTile,
   terrainAt,
@@ -61,10 +59,14 @@ import { createBuilding } from './sim/entities';
 import { emptyStocks, PLAYER_NAMES } from './sim/balance';
 import { isLineBuilding, wallLine } from './sim/siege';
 import { cycleGfx, gfxLabel, loadGfx } from './render/gfx';
+import { bakeTerrain, clearTerrainChunks, minimapToTile, renderMinimap, renderWorld, setTerrainChunks, type Ghost, type OrderMarker } from './render/draw';
 import { net } from './net/session';
 import { NetView } from './net/screens';
 import { ZOOM_MAX, clampCamera, focusTile, screenToTile, screenToWorld, worldToScreen, type Camera } from './render/camera';
-import { bakeTerrain, minimapToTile, renderMinimap, renderWorld, type Ghost, type OrderMarker } from './render/draw';
+import { helpHtml } from './ui/help';
+import { loadUiSettings, saveUiSettings, settingsHtml, type UiSettings } from './ui/settings';
+import { clearSlots, migrateLegacy, newestSlot, readHeader, readSlot, sessionMeta, writeSlot, type SlotId } from './save/slots';
+import { CAMPAIGN_KEY } from './campaign/progress';
 import { createAudio } from './audio/bus';
 import type { AudioSettings } from './audio/settings';
 import { botCommand } from './campaign/bot';
@@ -76,7 +78,6 @@ import { SCENARIOS, createCampaignGame, scenarioById, scenarioIndex } from './ca
 import { campaignIntroHtml, campaignMapHtml, starMarkup } from './campaign/view';
 import { soldiersInScreenRect } from './select';
 
-const SAVE_KEY = 'dorozhnye-kraya-v1';
 const TUTORIAL_KEY = 'dorozhnye-kraya-tutorial';
 const NAME_KEY = 'dorozhnye-kraya-name';
 const ARMY_HINT_KEY = 'dorozhnye-kraya-army-hint';
@@ -157,6 +158,17 @@ let hover: { x: number; y: number } | null = null;
 let tutorialStep = 0;
 let campaignSession: CampaignSession | null = null;
 let guideOn = false;
+let roadMode = false;
+let uiSettings: UiSettings = loadUiSettings();
+let demolishArm: number | null = null;
+let saveBusy = false;
+let lastMouse = { x: -1, y: -1, mouse: false };
+let longHandled = false;
+let pinchMid: { x: number; y: number } | null = null;
+let fpsProbe: { start: number; frames: number; dur: number; done: (n: number) => void } | null = null;
+let resourceStamp = 0;
+let resourceSig = '';
+let logSig = '';
 let guideFocus = '';
 let guideSig = '';
 let toastUntil = 0;
@@ -197,7 +209,7 @@ const controlGroups: number[][] = [[], [], [], [], [], [], [], [], [], []];
 const markers: OrderMarker[] = [];
 let attackArmed = false;
 let boxMode = false;
-let pointerMode: 'none' | 'pan' | 'box' | 'wall' = 'none';
+let pointerMode: 'none' | 'pan' | 'box' | 'wall' | 'road' = 'none';
 let wallAnchor: { x: number; y: number } | null = null;
 let boxStart = { x: 0, y: 0 };
 let boxNow = { x: 0, y: 0 };
@@ -321,6 +333,7 @@ function startGame() {
   const setup = readSetup();
   state = createGame(seed >>> 0, { ai: setup.ai, setup });
   baked = bakeTerrain(state);
+  clearTerrainChunks();
   const keep = playerKeep(state, localPlayer);
   if (keep) {
     const center = buildingCenter(keep);
@@ -329,8 +342,9 @@ function startGame() {
   camera.zoom = 1.15;
   clampView();
   playing = true;
-  speed = 1;
+  speed = uiSettings.speed;
   placing = null;
+  roadMode = false;
   selectedId = keep?.id ?? null;
   queue = [];
   acc = 0;
@@ -346,54 +360,240 @@ function startGame() {
   expose();
 }
 
-function loadGame() {
+function applyUi() {
+  document.documentElement.style.setProperty('--ui', String(uiSettings.uiScale));
+}
+
+function saveMeta(slot: SlotId) {
+  return sessionMeta(campaignSession, slot);
+}
+
+async function storeSlot(slot: SlotId) {
   if (netMode) {
     flash('В сетевой игре сохранения нет');
     return;
   }
-  const raw = localStorage.getItem(SAVE_KEY);
-  if (!raw) {
-    flash('Сохранения нет');
-    return;
-  }
+  if (!playing || saveBusy) return;
+  saveBusy = true;
   try {
-    state = deserialize(raw);
-    baked = bakeTerrain(state);
-    campaignSession = null;
-    playing = true;
-    guideOn = false;
-    title.hidden = true;
-    netView.hide();
-    netView.wait(null, null);
-    endScreen.hidden = true;
-    menu.hidden = true;
-    const keep = playerKeep(state, localPlayer);
-    if (keep) {
-      const center = buildingCenter(keep);
-      lookAtPoint(center.x, center.y);
-    }
-    clampView();
-    resetArmy();
-    buildChrome();
-    flash('Поселение загружено');
-    expose();
+    await writeSlot(slot, state, saveMeta(slot));
+    flash(slot === 'auto' ? 'Автосохранение' : `Сохранено в ячейку ${slot}`);
   } catch {
-    flash('Сохранение повреждено');
+    flash('Не удалось сохранить');
+  } finally {
+    saveBusy = false;
   }
 }
 
-function saveGame() {
+async function restoreSlot(slot: SlotId) {
   if (netMode) {
     flash('В сетевой игре сохранения нет');
     return;
   }
-  if (!playing) return;
-  if (campaignSession) {
-    flash('В кампании прогресс пишется на карте стоянок');
+  const loaded = await readSlot(slot);
+  if (!loaded) {
+    flash('Сохранение повреждено или пусто');
     return;
   }
-  localStorage.setItem(SAVE_KEY, serialize(state));
-  flash('Сохранено на этом устройстве');
+  state = loaded.state;
+  baked = bakeTerrain(state);
+  clearTerrainChunks();
+  guideOn = false;
+  roadMode = false;
+  const scenario = loaded.meta.campaignId ? scenarioById(loaded.meta.campaignId) : undefined;
+  if (scenario && loaded.meta.session) {
+    campaignSession = {
+      id: scenario.id,
+      fired: loaded.meta.session.fired.slice(),
+      drought: loaded.meta.session.drought,
+      keepHp: loaded.meta.session.keepHp.slice(),
+    };
+  } else campaignSession = null;
+  playing = true;
+  speed = uiSettings.speed;
+  title.hidden = true;
+  netView.hide();
+  netView.wait(null, null);
+  endScreen.hidden = true;
+  menu.hidden = true;
+  hideBooks();
+  const keep = playerKeep(state, localPlayer);
+  if (keep) {
+    const center = buildingCenter(keep);
+    lookAtPoint(center.x, center.y);
+  }
+  clampView();
+  resetArmy();
+  buildChrome();
+  flash('Поселение загружено');
+  expose();
+}
+
+function hideBooks() {
+  for (const id of ['#help-book', '#settings-panel', '#save-panel']) {
+    const node = document.querySelector<HTMLElement>(id);
+    if (node) node.hidden = true;
+  }
+}
+
+function openHelp(anchor?: string) {
+  const book = document.querySelector<HTMLElement>('#help-book');
+  if (!book) return;
+  book.hidden = false;
+  book.innerHTML = helpHtml();
+  book.querySelector<HTMLButtonElement>('#help-close')!.onclick = () => {
+    book.hidden = true;
+  };
+  if (anchor) book.querySelector(`#help-${anchor}`)?.scrollIntoView({ block: 'start' });
+}
+
+function openSettings() {
+  const host = document.querySelector<HTMLElement>('#settings-panel');
+  if (!host) return;
+  host.hidden = false;
+  host.innerHTML = settingsHtml(uiSettings, gfxLabel());
+  host.querySelector<HTMLButtonElement>('#settings-close')!.onclick = () => {
+    host.hidden = true;
+  };
+  host.querySelector<HTMLButtonElement>('#settings-gfx')!.onclick = () => {
+    cycleGfx();
+    clearTerrainChunks();
+    const button = host.querySelector<HTMLButtonElement>('#settings-gfx');
+    const menuButton = document.querySelector<HTMLButtonElement>('#gfx-btn');
+    if (button) button.textContent = gfxLabel();
+    if (menuButton) menuButton.textContent = gfxLabel();
+  };
+  host.querySelector<HTMLButtonElement>('#settings-audio')!.onclick = () => {
+    document.querySelector<HTMLElement>('#audio-panel')?.removeAttribute('hidden');
+    const audio = document.querySelector<HTMLElement>('#audio-panel');
+    if (audio) audio.hidden = false;
+  };
+  host.querySelector<HTMLSelectElement>('#settings-speed')!.onchange = () => {
+    const value = Number(host.querySelector<HTMLSelectElement>('#settings-speed')!.value);
+    uiSettings.speed = value === 2 || value === 3 ? value : 1;
+    saveUiSettings(uiSettings);
+  };
+  host.querySelector<HTMLInputElement>('#settings-edge')!.onchange = () => {
+    uiSettings.edgeScroll = host.querySelector<HTMLInputElement>('#settings-edge')!.checked;
+    saveUiSettings(uiSettings);
+  };
+  host.querySelector<HTMLSelectElement>('#settings-scale')!.onchange = () => {
+    uiSettings.uiScale = Number(host.querySelector<HTMLSelectElement>('#settings-scale')!.value) || 1;
+    saveUiSettings(uiSettings);
+    applyUi();
+  };
+  host.querySelector<HTMLInputElement>('#settings-fps')!.onchange = () => {
+    uiSettings.showFps = host.querySelector<HTMLInputElement>('#settings-fps')!.checked;
+    saveUiSettings(uiSettings);
+  };
+  const reset = host.querySelector<HTMLButtonElement>('#settings-reset')!;
+  const yes = host.querySelector<HTMLButtonElement>('#settings-reset-yes')!;
+  reset.onclick = () => {
+    yes.hidden = false;
+  };
+  yes.onclick = () => {
+    clearSlots();
+    localStorage.removeItem(CAMPAIGN_KEY);
+    localStorage.removeItem(TUTORIAL_KEY);
+    yes.hidden = true;
+    flash('Прогресс сброшен');
+    if (!playing) buildTitle();
+  };
+}
+
+function slotLabel(id: SlotId): string {
+  const header = readHeader(id);
+  if (!header) return 'пусто';
+  const when = header.savedAt ? new Date(header.savedAt).toLocaleString('ru') : 'старое';
+  const where = header.campaignId ? 'кампания' : 'партия';
+  return `${where}, ${when}`;
+}
+
+function openSavePanel() {
+  if (netMode) {
+    flash('В сетевой игре сохранения нет');
+    return;
+  }
+  const host = document.querySelector<HTMLElement>('#save-panel');
+  if (!host) return;
+  host.hidden = false;
+  const row = (id: SlotId, name: string) =>
+    `<div class="save-row"><span>${name}: ${slotLabel(id)}</span>
+      <button type="button" data-save="${id}" ${playing ? '' : 'disabled'}>Сохранить</button>
+      <button type="button" data-load="${id}" ${readHeader(id) ? '' : 'disabled'}>Загрузить</button></div>`;
+  host.innerHTML = `<div class="card">
+    <h2>Сохранения</h2>
+    ${row(1, 'Ячейка 1')}
+    ${row(2, 'Ячейка 2')}
+    ${row(3, 'Ячейка 3')}
+    ${row('auto', 'Авто')}
+    <p class="ai-note">Автосохранение каждые 2 игровые минуты. В сетевой игре ячеек нет.</p>
+    <div class="actions"><button type="button" id="save-close" data-testid="save-close">Закрыть</button></div>
+  </div>`;
+  host.querySelector<HTMLButtonElement>('#save-close')!.onclick = () => {
+    host.hidden = true;
+  };
+  host.querySelectorAll<HTMLButtonElement>('[data-save]').forEach((button) => {
+    button.onclick = () => {
+      const id = button.dataset.save === 'auto' ? 'auto' : (Number(button.dataset.save) as SlotId);
+      void storeSlot(id).then(() => openSavePanel());
+    };
+  });
+  host.querySelectorAll<HTMLButtonElement>('[data-load]').forEach((button) => {
+    button.onclick = () => {
+      const id = button.dataset.load === 'auto' ? 'auto' : (Number(button.dataset.load) as SlotId);
+      void restoreSlot(id);
+    };
+  });
+}
+
+function continueGame() {
+  const slot = newestSlot();
+  if (!slot) {
+    flash('Сохранения нет');
+    return;
+  }
+  void restoreSlot(slot);
+}
+
+function closeOverlay(): boolean {
+  const help = document.querySelector<HTMLElement>('#help-book');
+  if (help && !help.hidden) {
+    help.hidden = true;
+    return true;
+  }
+  const settings = document.querySelector<HTMLElement>('#settings-panel');
+  if (settings && !settings.hidden) {
+    settings.hidden = true;
+    return true;
+  }
+  const saves = document.querySelector<HTMLElement>('#save-panel');
+  if (saves && !saves.hidden) {
+    saves.hidden = true;
+    return true;
+  }
+  const audio = document.querySelector<HTMLElement>('#audio-panel');
+  if (audio && !audio.hidden) {
+    audio.hidden = true;
+    return true;
+  }
+  if (!menu.hidden) {
+    menu.hidden = true;
+    return true;
+  }
+  if (!tutorial.hidden) {
+    tutorial.hidden = true;
+    return true;
+  }
+  if (!popbox.hidden) {
+    popbox.hidden = true;
+    return true;
+  }
+  if (!peoplebox.hidden) {
+    peoplebox.hidden = true;
+    return true;
+  }
+  return false;
 }
 
 function showTutorial() {
@@ -551,8 +751,11 @@ function buildTitle() {
     <div class="menu-foot">
       <button type="button" id="start-title" class="start-main" data-testid="new-game">Начать</button>
       <div class="actions">
+        <button type="button" id="continue-title" data-testid="continue-game"${newestSlot() ? '' : ' hidden'}>Продолжить</button>
         <button type="button" id="campaign-title" data-testid="campaign-open">Кампания</button>
         <button type="button" id="load-title" data-testid="load-game">Загрузить</button>
+        <button type="button" id="help-title" data-testid="help-open">Справка</button>
+        <button type="button" id="settings-title" data-testid="settings-open">Настройки</button>
         <button type="button" id="know-game" data-testid="know-game">Я умею играть</button>
         <button type="button" id="net-title" data-testid="net-game">Сетевая игра</button>
       </div>
@@ -578,7 +781,10 @@ function buildTitle() {
     rememberName();
     startGame();
   };
-  document.querySelector<HTMLButtonElement>('#load-title')!.onclick = () => loadGame();
+  document.querySelector<HTMLButtonElement>('#continue-title')!.onclick = () => continueGame();
+  document.querySelector<HTMLButtonElement>('#load-title')!.onclick = () => openSavePanel();
+  document.querySelector<HTMLButtonElement>('#help-title')!.onclick = () => openHelp();
+  document.querySelector<HTMLButtonElement>('#settings-title')!.onclick = () => openSettings();
   document.querySelector<HTMLButtonElement>('#know-game')!.onclick = () => {
     if (localStorage.getItem(TUTORIAL_KEY) === '1') localStorage.removeItem(TUTORIAL_KEY);
     else localStorage.setItem(TUTORIAL_KEY, '1');
@@ -627,6 +833,7 @@ function startScenario(id: string) {
   campaignSession = openSession(scenario);
   state = createCampaignGame(scenario);
   baked = bakeTerrain(state);
+  clearTerrainChunks();
   const keep = playerKeep(state, localPlayer);
   if (keep) {
     const center = buildingCenter(keep);
@@ -635,8 +842,9 @@ function startScenario(id: string) {
   camera.zoom = 1.15;
   clampView();
   playing = true;
-  speed = 1;
+  speed = uiSettings.speed;
   placing = null;
+  roadMode = false;
   selectedId = keep?.id ?? null;
   selectedPersonId = null;
   queue = [];
@@ -808,15 +1016,32 @@ function paintBuildButtons() {
   const host = document.querySelector<HTMLElement>('#buttons');
   if (!host || !playing) return;
   const types = BUILD_MENU.filter((type) => BUILDINGS[type].category === category);
-  host.innerHTML = types
-    .map((type) => {
-      const def = BUILDINGS[type];
-      return `<button type="button" data-build="${type}" data-testid="build-${type}">
+  const road =
+    category === 'industry'
+      ? `<button type="button" data-testid="build-road" class="${roadMode ? 'active' : ''}"><b>Дорога</b><small>1 дерево</small></button>`
+      : '';
+  host.innerHTML =
+    types
+      .map((type) => {
+        const def = BUILDINGS[type];
+        return `<button type="button" data-build="${type}" data-testid="build-${type}">
         <b>${def.name}</b><small>${buttonNote(type)}</small>
       </button>`;
-    })
-    .join('');
+      })
+      .join('') + road;
+  host.querySelector<HTMLButtonElement>('[data-testid="build-road"]')?.addEventListener('click', () => {
+    if ((state.players[localPlayer]?.stocks.wood ?? 0) < 1) {
+      flash('Не хватает дерева');
+      audio.play('ui-error');
+      return;
+    }
+    placing = null;
+    roadMode = true;
+    worldCanvas.classList.add('placing');
+    flash('Проведите дорогу');
+  });
   host.querySelectorAll<HTMLButtonElement>('button').forEach((button) => {
+    if (!button.dataset.build) return;
     button.onclick = () => {
       const type = button.dataset.build as BuildingType;
       const reason = blockReason(type);
@@ -825,6 +1050,7 @@ function paintBuildButtons() {
         audio.play('ui-error');
         return;
       }
+      roadMode = false;
       placing = type;
       worldCanvas.classList.add('placing');
       flash(`Выберите место: ${BUILDINGS[type].name}`);
@@ -862,6 +1088,10 @@ function blockReason(type: BuildingType): string | null {
 function refreshBuildState() {
   const host = document.querySelector<HTMLElement>('#buttons');
   host?.querySelectorAll<HTMLButtonElement>('button').forEach((button) => {
+    if (!button.dataset.build) {
+      button.classList.toggle('active', roadMode);
+      return;
+    }
     const type = button.dataset.build as BuildingType;
     const locked = blockReason(type);
     button.classList.toggle('locked', !!locked);
@@ -892,17 +1122,27 @@ function renderMenu() {
     </div>
     <div class="actions">
       <button type="button" id="help-btn">Подсказки</button>
+      <button type="button" id="book-btn" data-testid="help-menu">Справка</button>
+      <button type="button" id="settings-btn" data-testid="settings-menu">Настройки</button>
       <button type="button" id="guide-restart" data-testid="guide-restart">Обучение</button>
       <button type="button" id="resign-btn">Новая игра</button>
     </div>
     <div class="actions">
       <button type="button" id="gfx-btn" data-testid="gfx-toggle">${gfxLabel()}</button>
     </div>
-    <p>Мышь: тянуть карту, колесо — масштаб. На телефоне: жест и щипок. Клавиши: WASD, пробел — пауза, 1–3 — скорость, Esc — отмена стройки, H — подсказки.</p>
+    <p>Мышь: тянуть карту, колесо — масштаб, край экрана листает карту. На телефоне: два пальца двигают и меняют масштаб, долгое нажатие открывает постройку. Клавиши: WASD, Z X C V B N — вкладки построек, пробел — пауза, 1–3 — скорость, Esc закрывает панели, H — подсказки.</p>
     <div class="actions"><button type="button" id="close-menu">Закрыть</button></div>
   </div>`;
-  document.querySelector<HTMLButtonElement>('#save-btn')!.onclick = () => saveGame();
-  document.querySelector<HTMLButtonElement>('#load-btn')!.onclick = () => loadGame();
+  document.querySelector<HTMLButtonElement>('#save-btn')!.onclick = () => openSavePanel();
+  document.querySelector<HTMLButtonElement>('#load-btn')!.onclick = () => openSavePanel();
+  document.querySelector<HTMLButtonElement>('#book-btn')!.onclick = () => {
+    menu.hidden = true;
+    openHelp();
+  };
+  document.querySelector<HTMLButtonElement>('#settings-btn')!.onclick = () => {
+    menu.hidden = true;
+    openSettings();
+  };
   document.querySelector<HTMLButtonElement>('#help-btn')!.onclick = () => {
     menu.hidden = true;
     if (guideOn) return;
@@ -941,6 +1181,7 @@ function renderMenu() {
   };
   document.querySelector<HTMLButtonElement>('#gfx-btn')!.onclick = () => {
     cycleGfx();
+    clearTerrainChunks();
     baked = bakeTerrain(state);
     const button = document.querySelector<HTMLButtonElement>('#gfx-btn');
     if (button) button.textContent = gfxLabel();
@@ -960,11 +1201,35 @@ function goalText(playerId: number): string {
   return 'главное здание стоит';
 }
 
+function setPhoneGoal(text: string) {
+  const node = document.querySelector<HTMLElement>('#phone-goal');
+  if (!node) return;
+  node.hidden = !text;
+  if (text && node.textContent !== text) node.textContent = text;
+}
+
+function jumpToLine(line: string) {
+  for (const building of state.buildings) {
+    if (building.playerId !== localPlayer || building.hp <= 0) continue;
+    if (!line.includes(BUILDINGS[building.type].name)) continue;
+    const center = buildingCenter(building);
+    lookAtPoint(center.x, center.y);
+    selectedId = building.id;
+    panelSig = '';
+    return;
+  }
+  const keep = playerKeep(state, localPlayer);
+  if (!keep) return;
+  const center = buildingCenter(keep);
+  lookAtPoint(center.x, center.y);
+}
+
 function paintGoals() {
   if (campaignSession) {
     const scenario = scenarioById(campaignSession.id);
     if (!playing || !scenario || state.outcome !== 'playing') {
       goalsEl.hidden = true;
+      setPhoneGoal('');
       return;
     }
     goalsEl.hidden = false;
@@ -973,11 +1238,13 @@ function paintGoals() {
       <p class="goal-objective">${scenario.objective}</p>
       <p class="goal-progress">${goalLine(scenario.goal, state)}</p>
       <p class="goal-bonus">Дополнительно: ${scenario.bonus} — ${bonus}</p>`;
+    setPhoneGoal(`${scenario.title}: ${scenario.objective}`);
     return;
   }
   const setup = state.match;
   if (!playing || !setup || state.outcome !== 'playing') {
     goalsEl.hidden = true;
+    setPhoneGoal('');
     return;
   }
   goalsEl.hidden = false;
@@ -993,6 +1260,7 @@ function paintGoals() {
     })
     .join('');
   goalsEl.innerHTML = `<div class="goal-title">${victoryName(setup.victory)}${limit}${clock}</div>${rows}`;
+  setPhoneGoal(`${victoryName(setup.victory)}: ${goalText(localPlayer)}`);
 }
 
 function syncHud() {
@@ -1005,6 +1273,7 @@ function syncHud() {
   if (peopleBtn) {
     peopleBtn.innerHTML = `Люди <strong>${used}</strong>/<strong>${cap}</strong> · свободно <strong>${idle}</strong>`;
     peopleBtn.classList.toggle('idle-empty', idle === 0);
+    peopleBtn.classList.toggle('idle-ready', idle > 0);
   }
   const mood = document.querySelector<HTMLButtonElement>('#mood-btn');
   if (mood) {
@@ -1018,10 +1287,17 @@ function syncHud() {
   const clock = document.querySelector<HTMLElement>('#clock');
   if (clock) clock.textContent = `${Math.floor(state.tick / TICKS_PER_GAME_MINUTE)} мин`;
   const fpsEl = document.querySelector<HTMLElement>('#fps');
-  if (fpsEl) fpsEl.textContent = `${fps} к/с`;
+  if (fpsEl) {
+    fpsEl.hidden = !uiSettings.showFps;
+    if (uiSettings.showFps) fpsEl.textContent = `${fps} к/с`;
+  }
 
   const resources = document.querySelector<HTMLElement>('#resources');
-  if (resources) {
+  const stockSig = RESOURCES.map((res) => player.stocks[res]).join(',');
+  const nowHud = performance.now();
+  if (resources && (stockSig !== resourceSig || nowHud - resourceStamp > 150)) {
+    resourceSig = stockSig;
+    resourceStamp = nowHud;
     const groups: { label: string; items: (typeof RESOURCES)[number][] }[] = [
       { label: 'Еда', items: ['apples', 'cheese', 'meat', 'bread'] },
       { label: 'Материалы', items: ['wood', 'stone', 'iron', 'pitch'] },
@@ -1078,11 +1354,18 @@ function syncHud() {
       .map((person) => `<div class="reason"><span>${jobLabel(person)}</span></div>`)
       .join('')}<p>Солдат: ${state.soldiers.filter((s) => s.playerId === localPlayer && s.hp > 0).length}. Солдат больше не занимает жильё.</p></div>`;
   }
-  logEl.replaceChildren();
-  for (const line of state.log) {
-    const row = document.createElement('div');
-    row.textContent = line;
-    logEl.append(row);
+  const nextLog = state.log.join('\n');
+  if (nextLog !== logSig) {
+    logSig = nextLog;
+    logEl.replaceChildren();
+    for (const line of state.log) {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'log-line';
+      row.textContent = line;
+      row.onclick = () => jumpToLine(line);
+      logEl.append(row);
+    }
   }
   syncGuide();
   syncArmy();
@@ -1505,7 +1788,10 @@ function syncPanel() {
             <button type="button" data-sell="${res}">Продать ${price.sell}</button></div>`;
         }).join('')
       : '';
-  const demolish = mine && building.type !== 'keep' ? `<button type="button" data-testid="demolish">Снести</button>` : '';
+  const demolish =
+    mine && building.type !== 'keep'
+      ? `<button type="button" data-testid="demolish">${demolishArm === building.id ? 'Точно снести?' : 'Снести'}</button>`
+      : '';
   const stockNote =
     building.buffer > 0 && building.bufferRes
       ? `<p>На площадке: ${building.buffer} ${RESOURCE_NAME[building.bufferRes]}</p>`
@@ -1522,7 +1808,7 @@ function syncPanel() {
     mine && def.workers > building.workerIds.length && idleCount(state, localPlayer) === 0
       ? `<p class="worker-status warn" data-testid="worker-status">нет свободных людей</p>`
       : '';
-  panel.innerHTML = `<h2>${def.name}</h2>
+  panel.innerHTML = `<h2>${def.name} <button type="button" class="help-mark" data-testid="building-help" data-help="${building.type}">?</button></h2>
     <p>${def.desc}</p>
     <p>${building.complete ? 'Построено' : 'Строится'} · прочность ${Math.max(0, building.hp)}/${building.maxHp}${building.type === 'keep' ? ` · уровень ${building.level}` : ''}</p>
     ${building.type === 'keep' ? `<p>Жильё этого здания: ${[0, 5, 8, 12, 18, 28][building.level] ?? building.level}. Общий предел людей: ${housingCap(state, building.playerId)}.</p>` : ''}
@@ -1546,7 +1832,17 @@ function syncPanel() {
     pushCmd({ kind: 'upgrade', playerId: localPlayer, buildingId: building.id });
     panelSig = '';
   });
+  panel.querySelector<HTMLButtonElement>('[data-testid="building-help"]')?.addEventListener('click', () => {
+    openHelp(building.type);
+  });
   panel.querySelector<HTMLButtonElement>('[data-testid="demolish"]')?.addEventListener('click', () => {
+    if (demolishArm !== building.id) {
+      demolishArm = building.id;
+      const button = panel.querySelector<HTMLButtonElement>('[data-testid="demolish"]');
+      if (button) button.textContent = 'Точно снести?';
+      return;
+    }
+    demolishArm = null;
     pushCmd({ kind: 'demolish', playerId: localPlayer, buildingId: building.id });
     selectedId = null;
     selectedPersonId = null;
@@ -2107,9 +2403,28 @@ function frame(now: number) {
     frames = 0;
     fpsStamp = now;
   }
+  if (fpsProbe) {
+    fpsProbe.frames += 1;
+    if (now - fpsProbe.start >= fpsProbe.dur) {
+      const sample = Math.round((fpsProbe.frames * 1000) / (now - fpsProbe.start) * 10) / 10;
+      const done = fpsProbe.done;
+      fpsProbe = null;
+      done(sample);
+    }
+  }
   if (toastUntil && now > toastUntil) toast.hidden = true;
 
   const pan = 520 / camera.zoom;
+  if (playing && uiSettings.edgeScroll && lastMouse.mouse && pointers.size === 0) {
+    const rect = worldCanvas.getBoundingClientRect();
+    const margin = 28;
+    if (lastMouse.x > rect.left && lastMouse.x < rect.right && lastMouse.y > rect.top && lastMouse.y < rect.bottom) {
+      if (lastMouse.x < rect.left + margin) camera.x -= pan * dt;
+      if (lastMouse.x > rect.right - margin) camera.x += pan * dt;
+      if (lastMouse.y < rect.top + margin) camera.y -= pan * dt;
+      if (lastMouse.y > rect.bottom - margin) camera.y += pan * dt;
+    }
+  }
   if (playing && keys.has('w')) camera.y -= pan * dt;
   if (playing && keys.has('s')) camera.y += pan * dt;
   if (playing && keys.has('a')) camera.x -= pan * dt;
@@ -2134,12 +2449,8 @@ function frame(now: number) {
       const commands = guard === 0 ? queue.splice(0) : [];
       if (campaignSession) advanceCampaign(state, campaignSession, commands);
       else step(state, commands, guideOn && !netMode ? { shelter: true } : undefined);
-      if (!guideOn && !campaignSession && state.tick > 0 && state.tick % (TICKS_PER_GAME_MINUTE * 2) === 0) {
-        try {
-          localStorage.setItem(SAVE_KEY, serialize(state));
-        } catch {
-          /* private mode */
-        }
+      if (!netMode && !guideOn && state.tick > 0 && state.tick % (TICKS_PER_GAME_MINUTE * 2) === 0) {
+        void storeSlot('auto');
       }
       acc -= 1;
       guard += 1;
@@ -2570,6 +2881,52 @@ function expose() {
       }
       return { outcome: state.outcome, tick: state.tick };
     },
+    measureFps(ms: number) {
+      return new Promise<number>((resolve) => {
+        fpsProbe = { start: performance.now(), frames: 0, dur: Math.max(200, ms), done: resolve };
+      });
+    },
+    setChunks(on: boolean) {
+      setTerrainChunks(on);
+    },
+    focusTerrain(kind: string) {
+      const want = kind === 'road' ? Terrain.Road : Terrain.Desert;
+      const keep = playerKeep(state, localPlayer);
+      let best: { x: number; y: number } | null = null;
+      let bestD = Infinity;
+      for (let y = 0; y < state.mapH; y++) {
+        for (let x = 0; x < state.mapW; x++) {
+          if (state.terrain[y * state.mapW + x] !== want) continue;
+          const d = keep ? Math.hypot(x - keep.x, y - keep.y) : 0;
+          if (d < bestD) {
+            bestD = d;
+            best = { x, y };
+          }
+        }
+      }
+      if (!best) return;
+      lookAtPoint(best.x, best.y);
+      camera.zoom = 1.7;
+      clampView();
+    },
+    stageRoad() {
+      const keep = playerKeep(state, localPlayer);
+      if (!keep) return;
+      const y = keep.y + 3;
+      for (let x = keep.x; x <= keep.x + 4; x++) queue.push({ kind: 'road', playerId: localPlayer, x, y });
+      const person = state.people.find((p) => p.playerId === localPlayer && p.hp > 0);
+      if (person) {
+        person.x = keep.x + 1.2;
+        person.y = y + 0.45;
+        person.destX = keep.x + 4;
+        person.destY = y + 0.45;
+        person.task = { type: 'idle' };
+      }
+      lookAtPoint(keep.x + 2, y);
+      camera.zoom = 1.6;
+      clampView();
+      setSpeed(1);
+    },
     debugResults() {
       setSpeed(0);
       state.tick = 18 * 60 + 12;
@@ -2610,10 +2967,12 @@ worldCanvas.addEventListener('pointerdown', (event) => {
   if (pointers.size >= 2) {
     window.clearTimeout(longTimer);
     pointerMode = 'none';
+    pinchMid = null;
     return;
   }
   dragging = true;
   dragDist = 0;
+  longHandled = false;
   lastPtr = { x: event.clientX, y: event.clientY };
   const rect = worldCanvas.getBoundingClientRect();
   boxStart = { x: event.clientX - rect.left, y: event.clientY - rect.top };
@@ -2622,9 +2981,13 @@ worldCanvas.addEventListener('pointerdown', (event) => {
   const downRect = worldCanvas.getBoundingClientRect();
   const downTile = screenToTile(camera, viewSize().w, viewSize().h, event.clientX - downRect.left, event.clientY - downRect.top);
   const lineDrag = playing && !!placing && isLineBuilding(placing) && (event.button === 0 || touch);
+  const roadDrag = playing && roadMode && (event.button === 0 || touch);
   const selectDrag = playing && (event.button === 0 || touch) && (!touch || boxMode);
   if (lineDrag) {
     pointerMode = 'wall';
+    wallAnchor = { x: downTile.x, y: downTile.y };
+  } else if (roadDrag) {
+    pointerMode = 'road';
     wallAnchor = { x: downTile.x, y: downTile.y };
   } else if (selectDrag) {
     pointerMode = 'box';
@@ -2635,12 +2998,27 @@ worldCanvas.addEventListener('pointerdown', (event) => {
     if (touch && playing && !boxMode) {
       window.clearTimeout(longTimer);
       longTimer = window.setTimeout(() => {
-        if (dragDist < 14 && pointers.size === 1) {
-          pointerMode = 'box';
-          boxAdditive = false;
-          boxBase = [];
-          boxStart = { ...boxNow };
+        if (dragDist >= 14 || pointers.size !== 1) return;
+        let found: number | null = null;
+        for (const building of state.buildings) {
+          if (building.hp <= 0) continue;
+          const def = BUILDINGS[building.type];
+          if (downTile.x >= building.x && downTile.x < building.x + def.w && downTile.y >= building.y && downTile.y < building.y + def.h) {
+            found = building.id;
+          }
         }
+        if (found != null) {
+          selectedId = found;
+          selectedPersonId = null;
+          panelSig = '';
+          pointerMode = 'none';
+          longHandled = true;
+          return;
+        }
+        pointerMode = 'box';
+        boxAdditive = false;
+        boxBase = [];
+        boxStart = { ...boxNow };
       }, 480);
     }
   }
@@ -2652,22 +3030,29 @@ worldCanvas.addEventListener('pointermove', (event) => {
   const { w, h } = viewSize();
   hover = screenToTile(camera, w, h, localX, localY);
   updateTip(event.clientX, event.clientY);
+  if (event.pointerType === 'mouse') lastMouse = { x: event.clientX, y: event.clientY, mouse: true };
+  else lastMouse = { x: event.clientX, y: event.clientY, mouse: false };
   if (!pointers.has(event.pointerId)) return;
   pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
   if (pointers.size >= 2) {
     const pts = [...pointers.values()];
     const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-    if (pinch > 0) {
+    const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+    if (pinch > 0 && pinchMid) {
+      camera.x -= (mid.x - pinchMid.x) / camera.zoom;
+      camera.y -= (mid.y - pinchMid.y) / camera.zoom;
       camera.zoom = Math.min(ZOOM_MAX, camera.zoom * (dist / pinch));
       clampView();
     }
     pinch = dist;
+    pinchMid = mid;
     dragging = false;
     pointerMode = 'none';
     window.clearTimeout(longTimer);
     return;
   }
   pinch = 0;
+  pinchMid = null;
   if (!dragging) return;
   const dx = event.clientX - lastPtr.x;
   const dy = event.clientY - lastPtr.y;
@@ -2675,7 +3060,7 @@ worldCanvas.addEventListener('pointermove', (event) => {
   boxNow = { x: localX, y: localY };
   if (pointerMode === 'box') {
     if (dragDist >= 8) paintBox();
-  } else if (pointerMode !== 'wall') {
+  } else if (pointerMode !== 'wall' && pointerMode !== 'road') {
     camera.x -= dx / camera.zoom;
     camera.y -= dy / camera.zoom;
     clampView();
@@ -2686,8 +3071,23 @@ worldCanvas.addEventListener('pointerup', (event) => {
   const start = pointers.get(event.pointerId);
   pointers.delete(event.pointerId);
   window.clearTimeout(longTimer);
-  if (pointers.size < 2) pinch = 0;
+  if (pointers.size < 2) {
+    pinch = 0;
+    pinchMid = null;
+  }
   if (pointers.size === 0) {
+    if (pointerMode === 'road' && wallAnchor && roadMode) {
+      const end = hover ?? wallAnchor;
+      for (const cell of wallLine(wallAnchor.x, wallAnchor.y, end.x, end.y)) {
+        pushCmd({ kind: 'road', playerId: localPlayer, x: cell.x, y: cell.y });
+      }
+      roadMode = false;
+      wallAnchor = null;
+      pointerMode = 'none';
+      dragging = false;
+      worldCanvas.classList.remove('placing');
+      return;
+    }
     if (pointerMode === 'wall' && wallAnchor && placing && isLineBuilding(placing)) {
       const end = hover ?? wallAnchor;
       const type = placing;
@@ -2705,7 +3105,11 @@ worldCanvas.addEventListener('pointerup', (event) => {
     const boxed = pointerMode === 'box' && dragDist >= 8;
     pointerMode = 'none';
     dragging = false;
-    if (!boxed && dragDist < 8 && playing && event.button === 0) {
+    if (longHandled) {
+      longHandled = false;
+      return;
+    }
+    if (!boxed && dragDist < 8 && playing && (event.button === 0 || event.pointerType === 'touch')) {
       const rect = worldCanvas.getBoundingClientRect();
       onMapClick((start?.x ?? event.clientX) - rect.left, (start?.y ?? event.clientY) - rect.top, event.shiftKey, event.pointerType === 'touch');
     }
@@ -2728,8 +3132,9 @@ worldCanvas.addEventListener(
 );
 worldCanvas.addEventListener('contextmenu', (event) => {
   event.preventDefault();
-  const wasPlacing = placing != null;
+  const wasPlacing = placing != null || roadMode;
   placing = null;
+  roadMode = false;
   wallAnchor = null;
   worldCanvas.classList.remove('placing');
   if (!playing || wasPlacing || lastGesture >= 8 || !selectedSoldiers.size) return;
@@ -2788,6 +3193,22 @@ window.addEventListener('keydown', (event) => {
     }
     return;
   }
+  if (playing && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    const cats: Partial<Record<string, keyof typeof CATEGORY_NAME>> = {
+      z: 'housing',
+      x: 'food',
+      c: 'industry',
+      v: 'military',
+      b: 'storage',
+      n: 'defence',
+    };
+    const next = cats[key];
+    if (next) {
+      category = next;
+      paintBuildButtons();
+      return;
+    }
+  }
   keys.add(key);
   if (event.code === 'Space') {
     event.preventDefault();
@@ -2796,7 +3217,9 @@ window.addEventListener('keydown', (event) => {
   else if (!netMode && event.key === '2') setSpeed(2);
   else if (!netMode && event.key === '3') setSpeed(3);
   else if (event.key === 'Escape') {
+    if (closeOverlay()) return;
     placing = null;
+    roadMode = false;
     worldCanvas.classList.remove('placing');
     selectedId = null;
     selectedPersonId = null;
@@ -2815,6 +3238,13 @@ window.addEventListener('keydown', (event) => {
   }
 });
 window.addEventListener('keyup', (event) => keys.delete(event.key.toLowerCase()));
+window.addEventListener(
+  'wheel',
+  (event) => {
+    if (event.ctrlKey) event.preventDefault();
+  },
+  { passive: false },
+);
 window.addEventListener('resize', resize);
 document.addEventListener('pointerover', (event) => {
   if (event.target instanceof HTMLButtonElement) audio.play('ui-hover');
@@ -2855,6 +3285,10 @@ declare global {
       debugBoard: () => void;
       debugResults: () => void;
       playCampaignScript: () => { outcome: string; tick: number } | null;
+      measureFps: (ms: number) => Promise<number>;
+      setChunks: (on: boolean) => void;
+      focusTerrain: (kind: string) => void;
+      stageRoad: () => void;
     };
   }
 }
@@ -3002,8 +3436,12 @@ net.hooks = {
 };
 
 resize();
+applyUi();
 buildTitle();
 bootPreview();
+void migrateLegacy().then(() => {
+  if (!playing) buildTitle();
+});
 expose();
 if (new URLSearchParams(location.search).get('lobby')) openNet();
 requestAnimationFrame(frame);
