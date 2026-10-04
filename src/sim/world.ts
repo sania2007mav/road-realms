@@ -9,7 +9,7 @@ import {
   START_PEOPLE,
 } from './balance';
 import { createBuilding, createMob, createPerson } from './entities';
-import { emptyStats, mapSize, normalizeSetup, openingBundle } from './match';
+import { emptyStats, mapSize, normalizeProfiles, normalizeSetup, openingBundle } from './match';
 import { hash2 } from './rng';
 import { Terrain, type GameState, type MatchSetup, type Player } from './types';
 
@@ -71,17 +71,22 @@ function clampPlayers(value: number | undefined, max: number, fallback: number):
   return Math.max(0, Math.min(max, n));
 }
 
-export function createGame(seed: number, opts?: { ai?: number; humans?: number; setup?: Partial<MatchSetup> }): GameState {
-  const multi = opts?.humans != null;
+export function createGame(
+  seed: number,
+  opts?: { ai?: number; humans?: number; setup?: Partial<MatchSetup>; arena?: boolean },
+): GameState {
+  const arena = opts?.arena === true;
+  const multi = !arena && opts?.humans != null;
   const humans = multi ? clampPlayers(opts?.humans, 4, 1) || 1 : 0;
   let ai: number;
-  if (multi) {
+  if (arena) ai = Math.max(2, clampPlayers(opts?.ai ?? opts?.setup?.ai, 4, 2));
+  else if (multi) {
     const requested = opts?.setup ? clampPlayers(opts.ai ?? opts.setup.ai, 3, 0) : 0;
     ai = Math.max(0, Math.min(4 - humans, requested));
   } else {
     ai = clampPlayers(opts?.ai ?? opts?.setup?.ai, 3, 3);
   }
-  const playerCount = multi ? humans + ai : 1 + ai;
+  const playerCount = arena ? ai : multi ? humans + ai : 1 + ai;
   const match = normalizeSetup(opts?.setup ? { ...opts.setup, ai } : { ai }, ai);
   const { w: mapW, h: mapH } = mapSize(match.map);
   const { roadY, spawns } = planSpawns(playerCount, mapW, mapH);
@@ -169,6 +174,8 @@ export function createGame(seed: number, opts?: { ai?: number; humans?: number; 
   };
 
   const bundle = openingBundle(match.start);
+  const profiles = normalizeProfiles(match.profiles);
+  let aiSlot = 0;
   spawns.forEach((spawn, index) => {
     const stocks = emptyStocks();
     stocks.wood = bundle.wood;
@@ -176,10 +183,12 @@ export function createGame(seed: number, opts?: { ai?: number; humans?: number; 
     stocks.apples = bundle.apples;
     stocks.iron = bundle.iron;
     stocks.pitch = bundle.pitch;
+    const isAi = arena ? true : multi ? index >= humans : index !== 0;
+    const profile = isAi ? profiles[aiSlot++] : undefined;
     const player: Player = {
       id: index,
       name: PLAYER_NAMES[index] ?? `Посад ${index + 1}`,
-      isAi: multi ? index >= humans : index !== 0,
+      isAi,
       alive: true,
       side: spawn.side,
       spawnX: spawn.x,
@@ -194,6 +203,8 @@ export function createGame(seed: number, opts?: { ai?: number; humans?: number; 
       beerMood: 0,
       migrate: 0,
       stats: emptyStats(START_PEOPLE),
+      difficulty: profile?.difficulty ?? 'normal',
+      personality: profile?.personality ?? 'strategist',
     };
     player.popularity = popularityTarget({
       ration: player.ration,

@@ -22,7 +22,7 @@ import {
   type Unsubscribe,
 } from 'firebase/database';
 import { firebaseConfig } from '../firebase';
-import { describeSetup, unpackSeed } from '../sim/match';
+import { describeSetup, displayLobbyName, normalizeSetup, profilesFromLobbyName, unpackSeed } from '../sim/match';
 import { createGame } from '../sim/world';
 import { hashState } from '../sim/hash';
 import { step, type Command, type GameState } from '../sim';
@@ -223,7 +223,7 @@ export class NetSession {
           const hostName = lobby.players?.[lobby.hostUid]?.name || 'Хост';
           rows.push({
             id: child.key || '',
-            name: clampText(String(lobby.name || 'Лобби'), 32),
+            name: clampText(displayLobbyName(String(lobby.name || 'Лобби')), 32),
             host: clampText(String(hostName), 20),
             count,
             max: lobby.maxPlayers,
@@ -445,13 +445,15 @@ export class NetSession {
     url.searchParams.set('lobby', id);
     const canStart = this.uid === lobby.hostUid && rows.length >= 2 && rows.every((row) => row.ready);
     const decoded = unpackSeed((lobby.seed ?? 0) >>> 0);
+    const profiles = profilesFromLobbyName(String(lobby.name || ''));
+    const setup = normalizeSetup(profiles ? { ...decoded.setup, profiles } : decoded.setup);
     return {
       id,
-      name: String(lobby.name || ''),
+      name: displayLobbyName(String(lobby.name || '')) || 'Лобби',
       hostUid: lobby.hostUid,
       maxPlayers: lobby.maxPlayers,
       seed: decoded.worldSeed,
-      rules: describeSetup(decoded.setup),
+      rules: describeSetup(setup),
       me: this.uid,
       invite: url.toString(),
       seats: rows,
@@ -469,7 +471,12 @@ export class NetSession {
     const decoded = unpackSeed(lobby.seed >>> 0);
     const humans = this.roster.length;
     const ai = Math.max(0, Math.min(4 - humans, decoded.setup.ai));
-    const state = createGame(decoded.worldSeed, { humans, ai, setup: { ...decoded.setup, ai } });
+    const profiles = profilesFromLobbyName(String(lobby.name || ''));
+    const state = createGame(decoded.worldSeed, {
+      humans,
+      ai,
+      setup: profiles ? { ...decoded.setup, ai, profiles } : { ...decoded.setup, ai },
+    });
     for (const seat of this.roster) {
       const player = state.players[seat.playerId];
       if (player) player.name = seat.name;

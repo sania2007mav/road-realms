@@ -490,12 +490,57 @@ test('цели: настройка, панель и итог', async ({ page }) 
   await page.screenshot({ path: `${shots}/goal_panel.png` });
   await page.evaluate(() => window.__game!.debugResults());
   await expect(page.getByTestId('results-title')).toHaveText('Победа');
+  await expect(page.getByTestId('results-detail')).toContainText('Богатство');
+  await expect(page.getByTestId('results-detail')).toContainText('выполнено');
+  await expect(page.getByTestId('results-detail')).toContainText('Ваш посад');
+  await expect(page.getByTestId('goals')).toBeHidden();
+  await expect(page.locator('#panel')).toBeHidden();
   await expect(page.getByTestId('again')).toHaveText('Реванш');
   await expect(page.getByTestId('to-menu')).toHaveText('В меню');
   await expect(page.getByTestId('results-title')).toBeVisible();
+  await expect(page.locator('.results-table')).toBeVisible();
   await page.screenshot({ path: `${shots}/goal_results.png` });
+  await page.screenshot({ path: `${shots}/goal_results_fixed.png` });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('.results-player').first()).toBeVisible();
+  await expect(page.locator('.results-scroll')).toBeHidden();
+  await page.setViewportSize({ width: 1280, height: 800 });
   await page.getByTestId('to-menu').click();
   await expect(page.getByRole('heading', { name: 'Дорожные края' })).toBeVisible();
+});
+
+test('ии: сложность, войско и стены', async ({ page }) => {
+  mkdirSync(shots, { recursive: true });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+  await page.goto('/road-realms/');
+  await expect(page.getByTestId('neighbours')).toBeVisible();
+  await expect(page.getByTestId('diff-0')).toBeVisible();
+  await expect(page.getByTestId('pers-0')).toHaveValue('merchant');
+  await expect(page.getByTestId('pers-1')).toHaveValue('warlord');
+  await expect(page.getByTestId('pers-2')).toHaveValue('builder');
+  await page.getByTestId('diff-0').selectOption('cruel');
+  await page.getByTestId('pers-0').selectOption('merchant');
+  await page.getByTestId('diff-1').selectOption('easy');
+  await page.getByTestId('pers-1').selectOption('warlord');
+  await page.getByTestId('diff-2').selectOption('hard');
+  await page.getByTestId('pers-2').selectOption('builder');
+  await expect(page.getByTestId('ai-note')).toContainText('1 золото');
+  await page.screenshot({ path: `${shots}/ai_setup.png` });
+  await page.getByTestId('new-game').click();
+  const frame = () =>
+    page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
+  await page.evaluate(() => window.__game!.debugScene('ai-attack'));
+  await frame();
+  await page.screenshot({ path: `${shots}/ai_attack.png` });
+  await page.evaluate(() => window.__game!.debugScene('ai-walls'));
+  await frame();
+  await page.screenshot({ path: `${shots}/ai_walls.png` });
 });
 
 declare global {

@@ -1,9 +1,7 @@
 import {
-  AI_EVERY,
   BUFFER_CAP,
   BUILDINGS,
   BUILD_RADIUS,
-  CLUB_COST,
   CONSUME_EVERY,
   ENEMY_KEEP_GAP,
   KEEP_UPGRADE_COST,
@@ -26,7 +24,8 @@ import {
   popularityTarget,
   taxGold,
 } from './balance';
-import { consumeFood, totalFood } from './economy';
+import { cruelMinute, planOneAi, reactionTicks } from './ai';
+import { consumeFood } from './economy';
 import { createMob, createOx, createPerson, createSoldier } from './entities';
 import { emptyStats, normalizeSetup, scoreOf } from './match';
 import { rngNext } from './rng';
@@ -39,10 +38,8 @@ import type {
   Ox,
   Person,
   Player,
-  Ration,
   Resource,
   Soldier,
-  TaxId,
 } from './types';
 import { FOODS, RESOURCES, Terrain } from './types';
 import { formationPoints } from './formation';
@@ -54,7 +51,6 @@ import {
   moverOf,
   blocksMover,
   nearestBreach,
-  nextAiSiege,
   onOwnTower,
   routeBlocked,
   spawnCloud,
@@ -290,10 +286,6 @@ function releasePerson(state: GameState, person: Person) {
   person.task = { type: 'idle' };
   person.idlePhase = 1;
   person.flee = false;
-}
-
-function countType(state: GameState, playerId: number, type: BuildingType): number {
-  return state.buildings.filter((b) => b.playerId === playerId && b.type === type && b.hp > 0).length;
 }
 
 export function applyCommand(state: GameState, command: Command): boolean {
@@ -596,89 +588,14 @@ export function applyCommand(state: GameState, command: Command): boolean {
 }
 
 function planAi(state: GameState) {
-  if (state.tick % AI_EVERY !== 0) return;
+  cruelMinute(state);
   for (const player of state.players) {
     if (!player.isAi || !player.alive) continue;
-    const command = nextAiCommand(state, player);
+    const every = reactionTicks(player.difficulty);
+    if ((state.tick + player.id * 7) % every !== 0) continue;
+    const command = planOneAi(state, player);
     if (command) applyCommand(state, command);
   }
-}
-
-function nextAiCommand(state: GameState, player: Player): Command | null {
-  const id = player.id;
-  const place = (type: BuildingType): Command | null => {
-    const tile = suggestedTile(state, id, type);
-    if (!tile) return null;
-    return { kind: 'place', playerId: id, building: type, x: tile.x, y: tile.y };
-  };
-  const missing = (type: BuildingType) => countType(state, id, type) === 0;
-
-  if (missing('stockpile')) return place('stockpile');
-  if (missing('granary')) return place('granary');
-  if (missing('woodcutter')) return place('woodcutter');
-
-  const staff = state.buildings.find((b) => {
-    if (b.playerId !== id || !b.complete || b.hp <= 0) return false;
-    const workers = BUILDINGS[b.type].workers;
-    return workers > 0 && b.workerIds.length < workers && idleCount(state, id) > 0;
-  });
-  if (staff) return { kind: 'assign', playerId: id, buildingId: staff.id, delta: 1 };
-
-  if (missing('orchard')) return place('orchard');
-
-  const cap = housingCap(state, id);
-  const people = state.people.filter((p) => p.playerId === id && p.hp > 0).length;
-  if (cap - people < 2) {
-    const housing: BuildingType[] = ['highrise', 'khrush', 'house', 'cabin', 'shack'];
-    for (const type of housing) {
-      const tile = suggestedTile(state, id, type);
-      if (tile) return { kind: 'place', playerId: id, building: type, x: tile.x, y: tile.y };
-    }
-  }
-
-  if (missing('hunter')) return place('hunter');
-
-  const food = totalFood(player.stocks);
-  const types = foodTypesIn(player.stocks);
-  let ration: Ration = 'half';
-  if (!player.hunger && types >= 2 && food > 50) ration = 'double';
-  else if (!player.hunger && food > 18) ration = 'normal';
-  if (ration !== player.ration) return { kind: 'ration', playerId: id, ration };
-
-  let tax: TaxId = 'low';
-  if (player.popularity >= 25) tax = 'high';
-  else if (player.popularity >= 12) tax = 'normal';
-  else if (player.popularity < 0) tax = 'none';
-  if (tax !== player.tax) return { kind: 'tax', playerId: id, tax };
-
-  if (missing('quarry')) return place('quarry');
-  if (missing('wheat')) return place('wheat');
-
-  const keep = playerKeep(state, id);
-  if (keep && !keep.upgrading && keep.level < 5) {
-    const cost = KEEP_UPGRADE_COST[keep.level];
-    if (cost && canAfford(player.stocks, cost)) return { kind: 'upgrade', playerId: id, buildingId: keep.id };
-  }
-
-  const later: BuildingType[] = ['mill', 'hop', 'dairy', 'brewery', 'bakery', 'tavern', 'market', 'mine', 'pitch', 'barracks'];
-  for (const type of later) {
-    if (missing(type)) {
-      const cmd = place(type);
-      if (cmd) return cmd;
-    }
-  }
-
-  const barracks = state.buildings.find((b) => b.playerId === id && b.type === 'barracks' && b.complete && b.hp > 0);
-  const soldiers = state.soldiers.filter((s) => s.playerId === id && s.hp > 0).length;
-  if (barracks && soldiers < 3 && idleCount(state, id) >= 2 && canAfford(player.stocks, CLUB_COST)) {
-    return { kind: 'train', playerId: id, weapon: 'club' };
-  }
-  const siege = nextAiSiege(state, player, canPlace, canAfford, idleCount(state, id));
-  if (siege) return siege;
-  if (state.tick > 0 && state.tick % 800 === 0 && soldiers >= 2) {
-    return { kind: 'order', playerId: id, order: 'raid' };
-  }
-  return null;
 }
 
 function nearestIdle(state: GameState, building: Building): Person | null {
@@ -1841,10 +1758,12 @@ function finishOutcome(state: GameState) {
   const setup = state.match ?? normalizeSetup();
   const humans = state.players.filter((player) => !player.isAi);
   const multi = humans.length > 1;
+  const arena = humans.length === 0;
+  const side = (winnerId: number) => (multi || arena || winnerId === 0 ? 'victory' : 'defeat') as 'victory' | 'defeat';
   if (setup.victory === 'wealth') {
     const winner = state.players.find((player) => player.alive && player.gold >= setup.goldTarget);
     if (winner) {
-      conclude(state, winner.id, multi || winner.id === 0 ? 'victory' : 'defeat');
+      conclude(state, winner.id, side(winner.id));
       return;
     }
   }
@@ -1853,12 +1772,12 @@ function finishOutcome(state: GameState) {
       (player) => player.alive && keepLevel(state, player.id) >= 5 && livingPeople(state, player.id) >= setup.popTarget,
     );
     if (winner) {
-      conclude(state, winner.id, multi || winner.id === 0 ? 'victory' : 'defeat');
+      conclude(state, winner.id, side(winner.id));
       return;
     }
   }
   if (setup.victory === 'conquest') {
-    if (multi) {
+    if (multi || arena) {
       const alive = state.players.filter((player) => player.alive);
       if (alive.length <= 1) conclude(state, alive[0]?.id ?? -1, 'victory');
     } else {
@@ -1866,7 +1785,7 @@ function finishOutcome(state: GameState) {
       if (!human || !human.alive) conclude(state, -1, 'defeat');
       else if (state.players.length > 1 && state.players.every((player) => player.id === 0 || !player.alive)) conclude(state, 0, 'victory');
     }
-  } else if (!multi) {
+  } else if (!multi && !arena) {
     const human = state.players[0];
     if (!human || !human.alive) conclude(state, -1, 'defeat');
   } else if (state.players.every((player) => !player.alive)) {
@@ -1880,7 +1799,11 @@ function finishOutcome(state: GameState) {
   const hitScore = scoreAt > 0 && due >= scoreAt && !hitSurvive;
   if (!hitSurvive && !hitScore) return;
   if (hitSurvive) {
-    if (!multi) {
+    if (arena) {
+      const alive = state.players.filter((player) => player.alive);
+      if (alive.length === 1) conclude(state, alive[0].id, 'victory');
+      else conclude(state, alive.length > 1 ? -2 : -1, alive.length > 1 ? 'victory' : 'defeat');
+    } else if (!multi) {
       const alive = !!state.players[0]?.alive;
       conclude(state, alive ? 0 : -1, alive ? 'victory' : 'defeat');
     } else {
@@ -1898,7 +1821,7 @@ function finishOutcome(state: GameState) {
       bestScore = value;
     }
   }
-  if (!multi) conclude(state, best, best === 0 ? 'victory' : 'defeat');
+  if (!multi && !arena) conclude(state, best, best === 0 ? 'victory' : 'defeat');
   else conclude(state, best, 'victory');
 }
 
@@ -1999,6 +1922,8 @@ export function deserialize(raw: string): GameState {
   for (const player of data.players) {
     if (!player.stats) player.stats = emptyStats(0);
     if (!player.stats.food) player.stats.food = { apples: 0, cheese: 0, meat: 0, bread: 0 };
+    if (!player.difficulty) player.difficulty = 'normal';
+    if (!player.personality) player.personality = 'strategist';
   }
   return {
     ...data,

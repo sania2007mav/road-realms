@@ -1,5 +1,26 @@
-import { MAP_H, MAP_W, START_GOLD, START_STOCKS } from './balance';
-import type { Food, GameState, MapSizeId, MatchSetup, Player, PlayerStats, StartId, VictoryId } from './types';
+import { MAP_H, MAP_W, START_GOLD, START_STOCKS, TICKS_PER_GAME_MINUTE } from './balance';
+import type {
+  AiProfile,
+  DifficultyId,
+  Food,
+  GameState,
+  MapSizeId,
+  MatchSetup,
+  PersonalityId,
+  Player,
+  PlayerStats,
+  StartId,
+  VictoryId,
+} from './types';
+
+export const DIFFICULTIES = ['easy', 'normal', 'hard', 'cruel'] as const;
+export const PERSONALITIES = ['merchant', 'warlord', 'builder', 'strategist'] as const;
+
+/** One gold per game minute. The only resource bonus in the game, and only on this difficulty. */
+export const CRUEL_GOLD_PER_MINUTE = 1;
+
+export const CRUEL_BONUS_TEXT =
+  'Сложность меняет скорость решений, бережливость и срок первого набега. «Жестокий» дополнительно получает 1 золото за игровую минуту. «Лёгкий», «Нормальный» и «Сложный» играют без прибавки к запасам.';
 
 export const DEFAULT_SETUP: MatchSetup = {
   victory: 'conquest',
@@ -38,7 +59,7 @@ export function emptyStats(peakPop = 0): PlayerStats {
 export function normalizeSetup(partial?: Partial<MatchSetup> | null, ai = DEFAULT_SETUP.ai): MatchSetup {
   const base: MatchSetup = { ...DEFAULT_SETUP, ai };
   if (!partial) return base;
-  return {
+  const setup: MatchSetup = {
     victory: partial.victory ?? base.victory,
     timeLimit: finite(partial.timeLimit, base.timeLimit),
     map: partial.map ?? base.map,
@@ -48,6 +69,8 @@ export function normalizeSetup(partial?: Partial<MatchSetup> | null, ai = DEFAUL
     popTarget: finite(partial.popTarget, base.popTarget),
     surviveMinutes: finite(partial.surviveMinutes, base.surviveMinutes),
   };
+  if (partial.profiles) setup.profiles = normalizeProfiles(partial.profiles);
+  return setup;
 }
 
 function finite(value: number | undefined, fallback: number): number {
@@ -92,7 +115,132 @@ export function describeSetup(setup: MatchSetup): string {
         : setup.victory === 'survival'
           ? `, ${setup.surviveMinutes} мин`
           : '';
-  return `${victoryName(setup.victory)}${extra}. ${map}, ${start}, соседей ${setup.ai}${time}.`;
+  const faces =
+    setup.profiles && setup.ai > 0
+      ? ` ${setup.profiles
+          .slice(0, setup.ai)
+          .map((profile) => `${personalityName(profile.personality)} (${difficultyName(profile.difficulty).toLowerCase()})`)
+          .join(', ')}.`
+      : '';
+  return `${victoryName(setup.victory)}${extra}. ${map}, ${start}, соседей ${setup.ai}${time}.${faces}`;
+}
+
+export function defaultProfiles(): AiProfile[] {
+  return [
+    { difficulty: 'normal', personality: 'merchant' },
+    { difficulty: 'normal', personality: 'warlord' },
+    { difficulty: 'normal', personality: 'builder' },
+  ];
+}
+
+export function difficultyName(id: DifficultyId | undefined): string {
+  if (id === 'easy') return 'Лёгкий';
+  if (id === 'hard') return 'Сложный';
+  if (id === 'cruel') return 'Жестокий';
+  return 'Нормальный';
+}
+
+export function personalityName(id: PersonalityId | undefined): string {
+  if (id === 'merchant') return 'Купец';
+  if (id === 'warlord') return 'Воевода';
+  if (id === 'builder') return 'Зодчий';
+  return 'Стратег';
+}
+
+function isDifficulty(value: unknown): value is DifficultyId {
+  return value === 'easy' || value === 'normal' || value === 'hard' || value === 'cruel';
+}
+
+function isPersonality(value: unknown): value is PersonalityId {
+  return value === 'merchant' || value === 'warlord' || value === 'builder' || value === 'strategist';
+}
+
+export function normalizeProfiles(list?: AiProfile[] | null): AiProfile[] {
+  const base = defaultProfiles();
+  return [0, 1, 2].map((index) => {
+    const row = list?.[index];
+    return {
+      difficulty: isDifficulty(row?.difficulty) ? row.difficulty : base[index].difficulty,
+      personality: isPersonality(row?.personality) ? row.personality : base[index].personality,
+    };
+  });
+}
+
+/** Lobby rules reject new fields. The name is an existing 1–32 string, so AI profiles ride a 7-character suffix. */
+export function packLobbyName(name: string, profiles?: AiProfile[] | null): string {
+  const list = normalizeProfiles(profiles);
+  const digits =
+    list.map((profile) => String(DIFFICULTIES.indexOf(profile.difficulty))).join('') +
+    list.map((profile) => String(PERSONALITIES.indexOf(profile.personality))).join('');
+  const base = displayLobbyName(name).replace(/~/g, '').trim().slice(0, 25);
+  return `${base || 'Тракт'}~${digits}`;
+}
+
+export function displayLobbyName(name: string): string {
+  return name.replace(/~[0-3]{6}$/, '');
+}
+
+export function profilesFromLobbyName(name: string): AiProfile[] | null {
+  const found = name.match(/~([0-3]{6})$/);
+  if (!found) return null;
+  const digits = found[1];
+  return [0, 1, 2].map((index) => ({
+    difficulty: DIFFICULTIES[Number(digits[index])] ?? 'normal',
+    personality: PERSONALITIES[Number(digits[index + 3])] ?? 'strategist',
+  }));
+}
+
+export interface ResultCopy {
+  won: boolean;
+  title: string;
+  detail: string;
+}
+
+export function viewerWon(state: GameState, localPlayer: number, netMode: boolean): boolean {
+  if (!netMode) return state.outcome === 'victory';
+  if (state.winnerId === -2) return !!state.players[localPlayer]?.alive;
+  if (state.winnerId >= 0) return state.winnerId === localPlayer;
+  return !!state.players[localPlayer]?.alive;
+}
+
+function livingOf(state: GameState, playerId: number): number {
+  let count = 0;
+  for (const person of state.people) if (person.playerId === playerId && person.hp > 0) count += 1;
+  return count;
+}
+
+/** True only when the recorded ending really satisfied the victory condition. */
+export function conditionMet(state: GameState): boolean {
+  const setup = state.match;
+  if (!setup || state.outcome === 'playing') return false;
+  if (setup.victory === 'wealth') return state.players.some((player) => player.alive && player.gold >= setup.goldTarget);
+  if (setup.victory === 'bloom') {
+    return state.players.some((player) => {
+      if (!player.alive) return false;
+      const keep = state.buildings.find((building) => building.playerId === player.id && building.type === 'keep');
+      return (keep?.level ?? 0) >= 5 && livingOf(state, player.id) >= setup.popTarget;
+    });
+  }
+  if (setup.victory === 'survival') {
+    return state.tick >= setup.surviveMinutes * TICKS_PER_GAME_MINUTE && state.players.some((player) => player.alive);
+  }
+  const clock = setup.timeLimit > 0 && state.tick >= setup.timeLimit * TICKS_PER_GAME_MINUTE;
+  const lastKeep = state.players.filter((player) => player.alive).length <= 1 && state.winnerId >= 0;
+  if (clock) return lastKeep;
+  return lastKeep;
+}
+
+export function resultCopy(state: GameState, localPlayer: number, netMode: boolean): ResultCopy {
+  const won = viewerWon(state, localPlayer, netMode);
+  const winner = state.winnerId >= 0 ? state.players.find((player) => player.id === state.winnerId) : undefined;
+  const reason = victoryName(state.match?.victory ?? 'conquest');
+  if (!won) {
+    if (winner) return { won: false, title: 'Поражение', detail: `Поражение — победил ${winner.name}.` };
+    return { won: false, title: 'Поражение', detail: 'Поражение.' };
+  }
+  const named = winner ? ` Победил ${winner.name}.` : '';
+  if (conditionMet(state)) return { won: true, title: 'Победа', detail: `Условие «${reason}» выполнено.${named}` };
+  return { won: true, title: 'Победа', detail: winner ? `Победил ${winner.name}.` : 'Матч окончен.' };
 }
 
 export function foodTotal(food: Record<Food, number> | undefined): number {

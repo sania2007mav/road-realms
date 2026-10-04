@@ -38,7 +38,7 @@ export function hashState(state: GameState): string {
     const food = stats ? `${stats.food.apples},${stats.food.cheese},${stats.food.meat},${stats.food.bread}` : '0,0,0,0';
     const tally = stats ? `${stats.peakPop}|${stats.goldEarned}|${stats.buildings}|${stats.soldiers}|${stats.kills}|${stats.razed}|${food}` : '0';
     parts.push(
-      `P${player.id}|${player.name}|${player.alive ? 1 : 0}|${player.gold}|${num(player.popularity)}|${player.ration}|${player.tax}|${player.hunger ? 1 : 0}|${player.beerMood}|${player.migrate}|${stocks}|${tally}`,
+      `P${player.id}|${player.name}|${player.alive ? 1 : 0}|${player.gold}|${num(player.popularity)}|${player.ration}|${player.tax}|${player.hunger ? 1 : 0}|${player.beerMood}|${player.migrate}|${player.difficulty ?? 'normal'}|${player.personality ?? 'strategist'}|${stocks}|${tally}`,
     );
   }
   const buildings = [...state.buildings].sort((a, b) => a.id - b.id);

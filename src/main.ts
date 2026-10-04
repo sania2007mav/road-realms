@@ -25,10 +25,15 @@ import {
   playerKeep,
   emptyStats,
   describeSetup,
+  difficultyName,
+  personalityName,
   normalizeSetup,
+  packLobbyName,
   packSeed,
+  resultCopy,
   scoreOf,
   victoryName,
+  CRUEL_BONUS_TEXT,
   SCORE_TEXT,
   serialize,
   step,
@@ -37,17 +42,20 @@ import {
   usedCount,
   workerStatus,
   Terrain,
+  type AiProfile,
   type BuildingType,
   type Command,
+  type DifficultyId,
   type GameState,
   type MatchSetup,
+  type PersonalityId,
   type Ration,
   type Resource,
   type VictoryId,
   type Weapon,
 } from './sim';
 import { createBuilding } from './sim/entities';
-import { emptyStocks } from './sim/balance';
+import { emptyStocks, PLAYER_NAMES } from './sim/balance';
 import { isLineBuilding, wallLine } from './sim/siege';
 import { cycleGfx, gfxLabel, loadGfx } from './render/gfx';
 import { net } from './net/session';
@@ -220,6 +228,25 @@ function syncBuildScroll() {
 
 let setupDraft: MatchSetup = normalizeSetup({ ai: 3 });
 
+function readProfiles(): AiProfile[] {
+  const difficulty = (index: number): DifficultyId =>
+    (document.querySelector<HTMLSelectElement>(`#diff-${index}`)?.value as DifficultyId) || 'normal';
+  const personality = (index: number): PersonalityId =>
+    (document.querySelector<HTMLSelectElement>(`#pers-${index}`)?.value as PersonalityId) ||
+    (['merchant', 'warlord', 'builder'] as const)[index];
+  return [0, 1, 2].map((index) => ({ difficulty: difficulty(index), personality: personality(index) }));
+}
+
+function syncNeighbours() {
+  const ai = Number(document.querySelector<HTMLSelectElement>('#ai-count')?.value ?? '3');
+  for (let index = 0; index < 3; index++) {
+    const row = document.querySelector<HTMLElement>(`#neighbour-${index}`);
+    if (row) row.hidden = index >= ai;
+  }
+  const note = document.querySelector<HTMLElement>('#ai-note');
+  if (note) note.hidden = !(ai > 0);
+}
+
 function readSetup(): MatchSetup {
   const pick = <T extends string>(id: string, fallback: T): T =>
     (document.querySelector<HTMLSelectElement>(`#${id}`)?.value as T) || fallback;
@@ -236,6 +263,7 @@ function readSetup(): MatchSetup {
     goldTarget: num('gold-target', 2000),
     popTarget: num('pop-target', 20),
     surviveMinutes: num('survive-min', 20),
+    profiles: readProfiles(),
   });
   return setupDraft;
 }
@@ -446,6 +474,35 @@ function buildTitle() {
         </select>
       </label>
     </div>
+    <div id="neighbours" data-testid="neighbours">
+      <p id="ai-note" class="ai-note" data-testid="ai-note">${CRUEL_BONUS_TEXT}</p>
+      ${[0, 1, 2]
+        .map((index) => {
+          const profile = draft.profiles?.[index];
+          const difficulty = profile?.difficulty ?? 'normal';
+          const personality = profile?.personality ?? (['merchant', 'warlord', 'builder'] as const)[index];
+          return `<div class="neighbour-row" id="neighbour-${index}" data-testid="neighbour-${index}">
+            <span class="neighbour-name">${PLAYER_NAMES[index + 1]}</span>
+            <label>Сложность
+              <select id="diff-${index}" data-testid="diff-${index}">
+                ${option('easy', 'Лёгкий', difficulty === 'easy')}
+                ${option('normal', 'Нормальный', difficulty === 'normal')}
+                ${option('hard', 'Сложный', difficulty === 'hard')}
+                ${option('cruel', 'Жестокий', difficulty === 'cruel')}
+              </select>
+            </label>
+            <label>Характер
+              <select id="pers-${index}" data-testid="pers-${index}">
+                ${option('merchant', 'Купец', personality === 'merchant')}
+                ${option('warlord', 'Воевода', personality === 'warlord')}
+                ${option('builder', 'Зодчий', personality === 'builder')}
+                ${option('strategist', 'Стратег', personality === 'strategist')}
+              </select>
+            </label>
+          </div>`;
+        })
+        .join('')}
+    </div>
     <div class="actions">
       <button type="button" id="load-title" data-testid="load-game">Загрузить</button>
       <button type="button" id="start-title" data-testid="new-game">Одиночная игра</button>
@@ -461,8 +518,10 @@ function buildTitle() {
   document.querySelector<HTMLInputElement>('#seed')!.addEventListener('change', () => {
     if (!playing) bootPreview();
   });
+  syncNeighbours();
   title.querySelectorAll('select').forEach((select) => {
     select.addEventListener('change', () => {
+      if (select.id === 'ai-count') syncNeighbours();
       readSetup();
       const rules = document.querySelector<HTMLElement>('#lobby-rules');
       if (rules) rules.textContent = `Условия матча задаёт хост: ${describeSetup(setupDraft)}`;
@@ -726,7 +785,7 @@ function goalText(playerId: number): string {
 
 function paintGoals() {
   const setup = state.match;
-  if (!playing || !setup) {
+  if (!playing || !setup || state.outcome !== 'playing') {
     goalsEl.hidden = true;
     return;
   }
@@ -734,11 +793,12 @@ function paintGoals() {
   const limit = setup.timeLimit > 0 ? ` · лимит ${setup.timeLimit} мин` : '';
   const clock =
     setup.victory === 'survival' ? ` · ${Math.max(0, setup.surviveMinutes - Math.floor(state.tick / TICKS_PER_GAME_MINUTE))} мин` : '';
-  const rows = state.players
+    const rows = state.players
     .map((player) => {
       const name = player.id === localPlayer ? 'Вы' : player.name;
       const score = setup.timeLimit > 0 ? ` · ${scoreOf(state, player)}` : '';
-      return `<div class="goal-row"><span>${name}</span><b>${goalText(player.id)}${score}</b></div>`;
+      const face = player.isAi ? `<i>${personalityName(player.personality)} · ${difficultyName(player.difficulty)}</i>` : '';
+      return `<div class="goal-row"><span>${name}${face}</span><b>${goalText(player.id)}${score}</b></div>`;
     })
     .join('');
   goalsEl.innerHTML = `<div class="goal-title">${victoryName(setup.victory)}${limit}${clock}</div>${rows}`;
@@ -1161,7 +1221,7 @@ function keepUpgradeHtml(building: { level: number; upgrading: boolean }): strin
 }
 
 function syncPanel() {
-  if (!playing) {
+  if (!playing || state.outcome !== 'playing') {
     panel.hidden = true;
     return;
   }
@@ -1344,11 +1404,17 @@ function syncPanel() {
   };
 }
 
-function localWon(): boolean {
-  if (!netMode) return state.outcome === 'victory';
-  if (state.winnerId === -2) return !!state.players[localPlayer]?.alive;
-  if (state.winnerId >= 0) return state.winnerId === localPlayer;
-  return !!state.players[localPlayer]?.alive;
+function closeOverlays() {
+  goalsEl.hidden = true;
+  panel.hidden = true;
+  popbox.hidden = true;
+  peoplebox.hidden = true;
+  menu.hidden = true;
+  armyEl.hidden = true;
+  armyBody.hidden = true;
+  selectedId = null;
+  selectedPersonId = null;
+  panelSig = '';
 }
 
 function formatClock(ticks: number): string {
@@ -1401,35 +1467,69 @@ function paintResultsChart(canvas: HTMLCanvasElement) {
 
 function showEnd() {
   if (!endScreen.hidden) return;
-  const victory = localWon();
-  const setup = state.match;
-  const reason = setup ? victoryName(setup.victory) : 'Завоевание';
+  closeOverlays();
+  const copy = resultCopy(state, localPlayer, netMode);
   endScreen.hidden = false;
-  const rows = state.players
-    .map((player) => {
-      const food = player.stats?.food;
-      const foodText = food ? `яблоки ${food.apples}, сыр ${food.cheese}, мясо ${food.meat}, хлеб ${food.bread}` : '—';
-      const stats = player.stats;
-      return `<tr>
-        <td>${player.name}</td>
-        <td>${scoreOf(state, player)}</td>
-        <td>${stats?.peakPop ?? 0}</td>
-        <td>${foodText}</td>
-        <td>${stats?.goldEarned ?? 0}</td>
-        <td>${stats?.buildings ?? 0}</td>
-        <td>${stats?.soldiers ?? 0}</td>
-        <td>${stats?.kills ?? 0}</td>
-        <td>${stats?.razed ?? 0}</td>
-      </tr>`;
-    })
+  const cells = state.players.map((player) => {
+    const food = player.stats?.food;
+    const foodSum = food ? food.apples + food.cheese + food.meat + food.bread : 0;
+    const foodText = food ? `яблоки ${food.apples}, сыр ${food.cheese}, мясо ${food.meat}, хлеб ${food.bread}` : '—';
+    const stats = player.stats;
+    return {
+      name: player.name,
+      score: scoreOf(state, player),
+      pop: stats?.peakPop ?? 0,
+      foodSum,
+      foodText,
+      gold: stats?.goldEarned ?? 0,
+      buildings: stats?.buildings ?? 0,
+      soldiers: stats?.soldiers ?? 0,
+      kills: stats?.kills ?? 0,
+      razed: stats?.razed ?? 0,
+    };
+  });
+  const rows = cells
+    .map(
+      (row) => `<tr>
+        <td>${row.name}</td>
+        <td>${row.score}</td>
+        <td>${row.pop}</td>
+        <td title="${row.foodText}">${row.foodSum}</td>
+        <td>${row.gold}</td>
+        <td>${row.buildings}</td>
+        <td>${row.soldiers}</td>
+        <td>${row.kills}</td>
+        <td>${row.razed}</td>
+      </tr>`,
+    )
+    .join('');
+  const cards = cells
+    .map(
+      (row) => `<article class="results-player">
+        <h3>${row.name}</h3>
+        <p class="results-score">Счёт ${row.score}</p>
+        <dl>
+          <dt>Пик людей</dt><dd>${row.pop}</dd>
+          <dt>Еда</dt><dd>${row.foodText}</dd>
+          <dt>Золото</dt><dd>${row.gold}</dd>
+          <dt>Постройки</dt><dd>${row.buildings}</dd>
+          <dt>Воины</dt><dd>${row.soldiers}</dd>
+          <dt>Убито</dt><dd>${row.kills}</dd>
+          <dt>Разрушено</dt><dd>${row.razed}</dd>
+        </dl>
+      </article>`,
+    )
     .join('');
   endScreen.innerHTML = `<div class="card results-card">
-    <h1 data-testid="results-title">${victory ? 'Победа' : 'Поражение'}</h1>
-    <p>${victory ? `Условие «${reason}» выполнено.` : `Условие «${reason}» досталось другому посаду.`} Время: ${formatClock(state.tick)}.</p>
+    <h1 data-testid="results-title">${copy.title}</h1>
+    <p data-testid="results-detail">${copy.detail} Время: ${formatClock(state.tick)}.</p>
+    <div class="results-scroll">
     <table class="results-table">
-      <thead><tr><th>Посад</th><th>Счёт</th><th>Пик людей</th><th>Еда</th><th>Золото</th><th>Постройки</th><th>Воины</th><th>Убито</th><th>Разрушено</th></tr></thead>
+      <thead><tr><th>Посад</th><th>Счёт</th><th>Люди</th><th>Еда</th><th>Золото</th><th>Дома</th><th>Воины</th><th>Убито</th><th>Руины</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
+    </div>
+    <div class="results-cards">${cards}</div>
     <canvas id="results-chart" width="840" height="140"></canvas>
     <p class="chart-note">Сплошная линия — население, пунктир — золото.</p>
     <p class="score-formula">${SCORE_TEXT}</p>
@@ -1506,7 +1606,7 @@ function livingSelection() {
 }
 
 function syncArmy() {
-  armyEl.hidden = !playing;
+  armyEl.hidden = !playing || state.outcome !== 'playing';
   livingSelection();
   const list = state.soldiers.filter((s) => selectedSoldiers.has(s.id));
   armyBody.hidden = list.length === 0;
@@ -1836,6 +1936,67 @@ function frame(now: number) {
   requestAnimationFrame(frame);
 }
 
+function stageAiScene(kind: string) {
+  const foe = state.players.find((player) => player.isAi && player.personality === (kind === 'ai-walls' ? 'builder' : 'warlord')) ?? state.players[1];
+  const home = playerKeep(state, localPlayer);
+  const nest = foe ? playerKeep(state, foe.id) : undefined;
+  if (!home || !foe || !nest) return;
+  if (kind === 'ai-walls') {
+    nest.level = 3;
+    const put = (type: BuildingType, x: number, y: number) => createBuilding(state, foe.id, type, x, y, true);
+    const x0 = nest.x - 2;
+    const x1 = nest.x + 4;
+    const y0 = nest.y - 2;
+    const y1 = nest.y + 4;
+    const gateX = nest.x + 1;
+    for (let x = x0; x <= x1; x++) {
+      put(x === gateX ? 'gate' : 'palisade', x, y0);
+      put(x === gateX ? 'gate' : 'palisade', x, y1);
+    }
+    for (let y = y0 + 1; y < y1; y++) put(y === nest.y + 1 ? 'stairs' : 'palisade', x0, y);
+    for (let y = y0 + 1; y < y1; y++) put('palisade', x1, y);
+    const west = put('woodtower', x0 - 3, y0 - 1);
+    const east = put('stonetower', x1 + 1, y0 - 1);
+    put('brazier', gateX + 1, y1 + 1);
+    const man = (tower: { x: number; y: number }, ox: number, oy: number) => {
+      const archer = createSoldier(state, foe.id, tower.x + ox, tower.y + oy, 'bow');
+      archer.order = 'defend';
+    };
+    man(west, 0.75, 0.75);
+    man(east, 0.8, 0.85);
+    lookAtPoint(nest.x + 1.5, nest.y + 1.5);
+    camera.zoom = 1.05;
+    clampView();
+    return;
+  }
+  const granary = createBuilding(state, localPlayer, 'granary', home.x + 6, home.y + 1, true);
+  const farm = createBuilding(state, localPlayer, 'orchard', home.x + 6, home.y + 5, true);
+  const spot = buildingCenter(farm);
+  for (let i = 0; i < 6; i++) {
+    const col = i % 3;
+    const row = Math.floor(i / 3);
+    const soldier = createSoldier(state, foe.id, spot.x + 3.2 + col * 0.85, spot.y + 1.4 + row * 0.85, i < 4 ? 'club' : 'bow');
+    soldier.order = 'attack';
+    soldier.targetKind = 'building';
+    soldier.targetId = i < 4 ? farm.id : granary.id;
+    soldier.destX = spot.x;
+    soldier.destY = spot.y;
+  }
+  for (const mob of state.mobs) {
+    if (Math.hypot(mob.x - spot.x, mob.y - spot.y) < 9) {
+      mob.x += 24;
+      mob.y += 16;
+    }
+  }
+  const line = 'Воевода угрожает вам';
+  if (!state.log.includes(line)) state.log.push(line);
+  if (state.log.length > 8) state.log.shift();
+  markers.push({ kind: 'attack', x: spot.x, y: spot.y, born: performance.now() });
+  lookAtPoint(spot.x + 1.4, spot.y + 0.4);
+  camera.zoom = 1.2;
+  clampView();
+}
+
 function expose() {
   window.__game = {
     suggest(type: string) {
@@ -1906,6 +2067,11 @@ function expose() {
       selectedId = null;
       selectedPersonId = null;
       placing = null;
+      panel.hidden = true;
+      if (kind === 'ai-attack' || kind === 'ai-walls') {
+        stageAiScene(kind);
+        return;
+      }
       const keep = playerKeep(state, localPlayer);
       if (!keep) return;
       state.buildings = state.buildings.filter((building) => building.id === keep.id);
@@ -2016,6 +2182,8 @@ function expose() {
               beerMood: 0,
               migrate: 0,
               stats: emptyStats(0),
+              difficulty: 'hard',
+              personality: 'warlord',
             });
           }
           const ram = createSoldier(state, 1, gateX + 0.4, y1 + 3.2, 'ram');
@@ -2126,8 +2294,14 @@ function expose() {
     debugResults() {
       setSpeed(0);
       state.tick = 18 * 60 + 12;
+      const target = state.match?.goldTarget ?? 2000;
+      if (state.match?.victory === 'wealth') {
+        state.players.forEach((player, index) => {
+          player.gold = player.id === localPlayer ? target : Math.max(0, target - 400 - index * 120);
+        });
+      }
       state.players.forEach((player, index) => {
-        player.gold = 400 + index * 180;
+        if (state.match?.victory !== 'wealth') player.gold = 400 + index * 180;
         if (!player.stats) player.stats = emptyStats(5);
         player.stats.peakPop = 6 + index;
         player.stats.goldEarned = 80 + index * 30;
@@ -2498,7 +2672,7 @@ const netView = new NetView(document.querySelector<HTMLElement>('#net')!, docume
     rememberName();
     const setup = readSetup();
     const world = Number(document.querySelector<HTMLInputElement>('#seed')?.value ?? '1') >>> 0;
-    void net.create(name, maxPlayers, packSeed(world, setup)).catch((err) => netMessage(err, 'Не удалось создать лобби'));
+    void net.create(packLobbyName(name, setup.profiles), maxPlayers, packSeed(world, setup)).catch((err) => netMessage(err, 'Не удалось создать лобби'));
   },
   join: (id) => {
     rememberName();

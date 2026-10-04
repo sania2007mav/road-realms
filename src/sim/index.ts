@@ -29,18 +29,30 @@ export { consumeFood } from './economy';
 export type { MealResult } from './economy';
 export { createGame, planSpawns, terrainAt } from './world';
 export {
+  CRUEL_BONUS_TEXT,
   DEFAULT_SETUP,
   SCORE_TEXT,
+  conditionMet,
+  defaultProfiles,
   describeSetup,
+  difficultyName,
+  displayLobbyName,
   emptyStats,
   mapSize,
+  normalizeProfiles,
   normalizeSetup,
   openingBundle,
+  packLobbyName,
   packSeed,
+  personalityName,
+  profilesFromLobbyName,
+  resultCopy,
   scoreOf,
   unpackSeed,
   victoryName,
+  viewerWon,
 } from './match';
+export { planOneAi, reactionTicks } from './ai';
 export { createMob, createSoldier } from './entities';
 export { formationPoints } from './formation';
 export {
@@ -75,7 +87,10 @@ export type {
   Soldier,
   TaxId,
   Weapon,
+  AiProfile,
+  DifficultyId,
   MatchSetup,
+  PersonalityId,
   PlayerStats,
   VictoryId,
 } from './types';

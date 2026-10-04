@@ -97,6 +97,8 @@ export interface Player {
   beerMood: number;
   migrate: number;
   stats: PlayerStats;
+  difficulty: DifficultyId;
+  personality: PersonalityId;
 }
 
 export interface PlayerStats {
@@ -112,6 +114,13 @@ export interface PlayerStats {
 export type VictoryId = 'conquest' | 'wealth' | 'bloom' | 'survival';
 export type MapSizeId = 'small' | 'normal' | 'large';
 export type StartId = 'low' | 'normal' | 'high';
+export type DifficultyId = 'easy' | 'normal' | 'hard' | 'cruel';
+export type PersonalityId = 'merchant' | 'warlord' | 'builder' | 'strategist';
+
+export interface AiProfile {
+  difficulty: DifficultyId;
+  personality: PersonalityId;
+}
 
 export interface MatchSetup {
   victory: VictoryId;
@@ -123,6 +132,8 @@ export interface MatchSetup {
   goldTarget: number;
   popTarget: number;
   surviveMinutes: number;
+  /** Up to three AI neighbours. Omitted in the packed seed; lobbies carry it in the name. */
+  profiles?: AiProfile[];
 }
 
 export interface Sample {

@@ -4,6 +4,7 @@ import {
   deserialize,
   normalizeSetup,
   packSeed,
+  resultCopy,
   scoreOf,
   serialize,
   step,
@@ -194,6 +195,34 @@ describe('условия победы', () => {
     run(harsh, 45);
     expect(calm.players[0].stats.goldEarned).not.toBe(harsh.players[0].stats.goldEarned);
     expect(hashState(calm)).not.toBe(hashState(harsh));
+  });
+
+  it('называет победителя и не объявляет условие раньше времени', () => {
+    const state = createGame(9, { ai: 1, setup: { victory: 'wealth', goldTarget: 2000 } });
+    state.players[0].gold = 400;
+    state.players[1].gold = 180;
+    state.outcome = 'victory';
+    state.winnerId = 0;
+    const staged = resultCopy(state, 0, false);
+    expect(staged.title).toBe('Победа');
+    expect(staged.detail).not.toContain('выполнено');
+    expect(staged.detail).toContain(state.players[0].name);
+
+    state.players[0].gold = 2000;
+    state.players[1].gold = 400;
+    const won = resultCopy(state, 0, false);
+    expect(won.title).toBe('Победа');
+    expect(won.detail).toContain('Условие «Богатство» выполнено');
+    expect(won.detail).toContain(state.players[0].name);
+
+    state.players[0].gold = 40;
+    state.players[1].gold = 2500;
+    state.winnerId = 1;
+    state.outcome = 'defeat';
+    const lost = resultCopy(state, 0, false);
+    expect(lost.title).toBe('Поражение');
+    expect(lost.detail).toBe(`Поражение — победил ${state.players[1].name}.`);
+    expect(lost.detail).toContain('Ольха');
   });
 
   it('обходит все готовые наборы зерна', () => {
