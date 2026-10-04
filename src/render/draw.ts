@@ -2211,7 +2211,7 @@ function drawLiveAnims(ctx: CanvasRenderingContext2D, building: Building, time: 
       drawLantern(ctx, x, y, w, h, wall, time);
       break;
     case 'pitchditch':
-      if (building.buffer > 0) drawPitchFlame(ctx, x + 0.5, y + 0.5, time, 1.45);
+      if (building.buffer > 0) drawPitchFlame(ctx, x + 0.5, y + 0.5, time, 1.75);
       break;
     case 'brazier':
       if (building.complete) drawPitchFlame(ctx, x + 0.5, y + 0.42, time, 0.85);

@@ -875,9 +875,10 @@ test('кадры для витрины 1280×720', async ({ page, browser }) => 
     await page.goto('/road-realms/');
     await page.getByTestId('net-game').click();
     await expect(page.getByTestId('lobby-list')).toBeVisible();
+    await expect(page.locator('#net-error')).toHaveText('', { timeout: 20_000 });
     await page.getByTestId('lobby-max').selectOption('3');
     await page.getByTestId('lobby-name').fill(lobbyName);
-    await page.getByTestId('lobby-create').click();
+    await page.getByTestId('lobby-create').click({ timeout: 15_000 });
     await expect(page.getByTestId('lobby-room')).toBeVisible({ timeout: 20_000 });
     for (const [mate, label] of [
       [b, 'Путник'],
@@ -894,9 +895,9 @@ test('кадры для витрины 1280×720', async ({ page, browser }) => 
     await expect(page.getByTestId('lobby-room')).toContainText('3/3');
     await page.screenshot({ path: `${shots}/store_lobby.png` });
   } finally {
-    await page.getByTestId('lobby-leave').click().catch(() => {});
-    await b.getByTestId('lobby-leave').click().catch(() => {});
-    await c.getByTestId('lobby-leave').click().catch(() => {});
+    await page.getByTestId('lobby-leave').click({ timeout: 4_000 }).catch(() => {});
+    await b.getByTestId('lobby-leave').click({ timeout: 4_000 }).catch(() => {});
+    await c.getByTestId('lobby-leave').click({ timeout: 4_000 }).catch(() => {});
     await guest.close();
     await third.close();
   }

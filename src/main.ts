@@ -2940,7 +2940,7 @@ function expose() {
             person.cargo = null;
             person.task = { type: 'work', buildingId: keep.id, mode: 'labor', targetId: 0 };
           }
-          shoveHostiles(gateX, y1, 18);
+          shoveHostiles(gateX, y1, 22);
           for (const beast of state.oxen) {
             beast.x += 48;
             beast.y += 28;
@@ -2948,8 +2948,8 @@ function expose() {
             beast.destY = beast.y;
           }
           hushShowcase();
-          lookAtPoint(gateX + 0.7, y1 + 0.2);
-          camera.zoom = 0.88;
+          lookAtPoint(gateX + 2.2, y1 + 1.15);
+          camera.zoom = 1.55;
         } else {
           lookAtPoint(gateX + 0.5, keep.y + 1.5);
           camera.zoom = 1.12;
