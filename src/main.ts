@@ -646,7 +646,7 @@ function buildChrome() {
       <div class="readout" id="clock"></div>
       <div class="readout" id="fps">60 к/с</div>
       <button type="button" id="mute-btn" data-testid="mute-audio" aria-label="Без звука" aria-pressed="false"></button>
-      <button type="button" id="audio-open" data-testid="audio-open" aria-label="Настройки звука">Звук</button>
+      <button type="button" id="audio-open" data-testid="audio-open" aria-label="Настройки звука">♪</button>
       <div id="presence" data-testid="presence" hidden></div>
     </div>
     <div id="resources"></div>`;

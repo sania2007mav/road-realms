@@ -573,8 +573,8 @@ test('звук: панель настроек', async ({ page }) => {
   await page.getByTestId('audio-open').click();
   await expect(page.getByTestId('audio-settings')).toBeVisible();
   await page.getByTestId('audio-master').fill('40');
-  await page.getByTestId('mute-audio').click();
-  await expect(page.getByTestId('audio-muted')).toBeChecked();
+  await page.getByTestId('audio-muted').check();
+  await expect(page.getByTestId('mute-audio')).toHaveAttribute('aria-pressed', 'true');
   await page.screenshot({ path: `${shots}/audio_settings.png` });
   expect(errors).toEqual([]);
 });
