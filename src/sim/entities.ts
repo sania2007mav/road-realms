@@ -31,6 +31,7 @@ export function createBuilding(
     plague: 0,
     upgrading: false,
     seal: 0,
+    ruin: 0,
   };
   state.buildings.push(building);
   return building;

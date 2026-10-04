@@ -19,18 +19,32 @@ function fnv(text: string): string {
 /** Same string on every client that executed the same commands. Names are included so the lobby roster is part of the check. */
 export function hashState(state: GameState): string {
   const parts: string[] = [];
-  parts.push(`t${state.tick}`, `r${state.rng >>> 0}`, `n${state.nextId}`, `o${state.outcome}`, `s${state.seed >>> 0}`);
+  const match = state.match;
+  parts.push(
+    `t${state.tick}`,
+    `r${state.rng >>> 0}`,
+    `n${state.nextId}`,
+    `o${state.outcome}`,
+    `s${state.seed >>> 0}`,
+    `w${state.winnerId ?? -1}`,
+    match
+      ? `K${match.victory}|${match.timeLimit}|${match.map}|${match.start}|${match.ai}|${match.goldTarget}|${match.popTarget}|${match.surviveMinutes}`
+      : 'K',
+  );
   const players = [...state.players].sort((a, b) => a.id - b.id);
   for (const player of players) {
     const stocks = RESOURCES.map((res) => num(player.stocks[res] ?? 0)).join(',');
+    const stats = player.stats;
+    const food = stats ? `${stats.food.apples},${stats.food.cheese},${stats.food.meat},${stats.food.bread}` : '0,0,0,0';
+    const tally = stats ? `${stats.peakPop}|${stats.goldEarned}|${stats.buildings}|${stats.soldiers}|${stats.kills}|${stats.razed}|${food}` : '0';
     parts.push(
-      `P${player.id}|${player.name}|${player.alive ? 1 : 0}|${player.gold}|${num(player.popularity)}|${player.ration}|${player.tax}|${player.hunger ? 1 : 0}|${player.beerMood}|${player.migrate}|${stocks}`,
+      `P${player.id}|${player.name}|${player.alive ? 1 : 0}|${player.gold}|${num(player.popularity)}|${player.ration}|${player.tax}|${player.hunger ? 1 : 0}|${player.beerMood}|${player.migrate}|${stocks}|${tally}`,
     );
   }
   const buildings = [...state.buildings].sort((a, b) => a.id - b.id);
   for (const building of buildings) {
     parts.push(
-      `B${building.id}|${building.playerId}|${building.type}|${building.x}|${building.y}|${building.complete ? 1 : 0}|${num(building.buildProgress)}|${building.hp}|${building.level}|${building.buffer}|${building.bufferRes ?? ''}|${building.input}|${building.inputRes ?? ''}|${num(building.work)}|${building.plague}|${building.upgrading ? 1 : 0}|${building.seal ?? 0}|${building.workerIds.join('.')}`,
+      `B${building.id}|${building.playerId}|${building.type}|${building.x}|${building.y}|${building.complete ? 1 : 0}|${num(building.buildProgress)}|${building.hp}|${building.level}|${building.buffer}|${building.bufferRes ?? ''}|${building.input}|${building.inputRes ?? ''}|${num(building.work)}|${building.plague}|${building.upgrading ? 1 : 0}|${building.seal ?? 0}|${building.ruin ?? 0}|${building.workerIds.join('.')}`,
     );
   }
   const people = [...state.people].sort((a, b) => a.id - b.id);
@@ -59,6 +73,9 @@ export function hashState(state: GameState): string {
   const clouds = [...(state.clouds ?? [])].sort((a, b) => a.id - b.id);
   for (const cloud of clouds) {
     parts.push(`C${cloud.id}|${cloud.playerId}|${num(cloud.x)}|${num(cloud.y)}|${cloud.ticks}|${num(cloud.radius)}`);
+  }
+  for (const sample of state.samples ?? []) {
+    parts.push(`G${sample.t}|${sample.pop.join(',')}|${sample.gold.join(',')}`);
   }
   const mobs = [...state.mobs].sort((a, b) => a.id - b.id);
   for (const mob of mobs) {

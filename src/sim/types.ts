@@ -96,6 +96,39 @@ export interface Player {
   hunger: boolean;
   beerMood: number;
   migrate: number;
+  stats: PlayerStats;
+}
+
+export interface PlayerStats {
+  peakPop: number;
+  food: Record<Food, number>;
+  goldEarned: number;
+  buildings: number;
+  soldiers: number;
+  kills: number;
+  razed: number;
+}
+
+export type VictoryId = 'conquest' | 'wealth' | 'bloom' | 'survival';
+export type MapSizeId = 'small' | 'normal' | 'large';
+export type StartId = 'low' | 'normal' | 'high';
+
+export interface MatchSetup {
+  victory: VictoryId;
+  /** Game minutes. 0 means the match waits for the victory condition. */
+  timeLimit: number;
+  map: MapSizeId;
+  start: StartId;
+  ai: number;
+  goldTarget: number;
+  popTarget: number;
+  surviveMinutes: number;
+}
+
+export interface Sample {
+  t: number;
+  pop: number[];
+  gold: number[];
 }
 
 export interface Building {
@@ -119,6 +152,8 @@ export interface Building {
   upgrading: boolean;
   /** 1 when a fort wall has cut this building off from the keep. */
   seal: number;
+  /** 1 after the owner's keep falls and the building is left as rubble. */
+  ruin: number;
 }
 
 export interface Person {
@@ -221,6 +256,10 @@ export interface GameState {
   oxen: Ox[];
   mobs: Mob[];
   clouds: Cloud[];
+  match: MatchSetup;
+  samples: Sample[];
+  /** -1 while the match is open, -2 when every survivor wins, otherwise the winning player id. */
+  winnerId: number;
   outcome: 'playing' | 'victory' | 'defeat';
   message: string;
   log: string[];

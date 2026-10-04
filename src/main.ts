@@ -23,6 +23,13 @@ import {
   KEEP_UPGRADE_COST,
   KEEP_UPGRADE_TICKS,
   playerKeep,
+  emptyStats,
+  describeSetup,
+  normalizeSetup,
+  packSeed,
+  scoreOf,
+  victoryName,
+  SCORE_TEXT,
   serialize,
   step,
   suggestedTile,
@@ -33,8 +40,10 @@ import {
   type BuildingType,
   type Command,
   type GameState,
+  type MatchSetup,
   type Ration,
   type Resource,
+  type VictoryId,
   type Weapon,
 } from './sim';
 import { createBuilding } from './sim/entities';
@@ -110,6 +119,7 @@ const armyCount = document.querySelector<HTMLElement>('#army-count')!;
 const armyHint = document.querySelector<HTMLElement>('#army-hint')!;
 const armyBox = document.querySelector<HTMLButtonElement>('#army-box')!;
 const armyAttack = document.querySelector<HTMLButtonElement>('#army-attack')!;
+const goalsEl = document.querySelector<HTMLElement>('#goals')!;
 
 let state: GameState = createGame(20261003, { ai: 3 });
 let playing = false;
@@ -135,6 +145,8 @@ let queue: Command[] = [];
 
 function pushCmd(command: Command) {
   command.playerId = localPlayer;
+  const me = state.players[localPlayer];
+  if (me && !me.alive) return;
   if (netMode) net.submit(command);
   else queue.push(command);
 }
@@ -206,10 +218,32 @@ function syncBuildScroll() {
   next.hidden = !overflow;
 }
 
+let setupDraft: MatchSetup = normalizeSetup({ ai: 3 });
+
+function readSetup(): MatchSetup {
+  const pick = <T extends string>(id: string, fallback: T): T =>
+    (document.querySelector<HTMLSelectElement>(`#${id}`)?.value as T) || fallback;
+  const num = (id: string, fallback: number) => {
+    const value = Number(document.querySelector<HTMLSelectElement>(`#${id}`)?.value);
+    return Number.isFinite(value) ? value : fallback;
+  };
+  setupDraft = normalizeSetup({
+    victory: pick<VictoryId>('victory', 'conquest'),
+    timeLimit: num('time-limit', 0),
+    map: pick('map-size', 'normal'),
+    start: pick('start-res', 'normal'),
+    ai: num('ai-count', 3),
+    goldTarget: num('gold-target', 2000),
+    popTarget: num('pop-target', 20),
+    surviveMinutes: num('survive-min', 20),
+  });
+  return setupDraft;
+}
+
 function bootPreview() {
   const seed = Number((document.querySelector<HTMLInputElement>('#seed')?.value ?? '20261003')) || 1;
-  const ai = Number(document.querySelector<HTMLSelectElement>('#ai-count')?.value ?? '3');
-  state = createGame(seed, { ai: Number.isFinite(ai) ? ai : 3 });
+  const setup = readSetup();
+  state = createGame(seed, { ai: setup.ai, setup });
   baked = bakeTerrain(state);
   lookAtTile(state.mapW / 2, state.roadY);
   camera.zoom = 0.55;
@@ -223,8 +257,8 @@ function startGame() {
   netMode = false;
   localPlayer = 0;
   const seed = Number((document.querySelector<HTMLInputElement>('#seed')?.value ?? '20261003')) || 1;
-  const ai = Number(document.querySelector<HTMLSelectElement>('#ai-count')?.value ?? '3');
-  state = createGame(seed >>> 0, { ai: ai === 2 ? 2 : 3 });
+  const setup = readSetup();
+  state = createGame(seed >>> 0, { ai: setup.ai, setup });
   baked = bakeTerrain(state);
   const keep = playerKeep(state, localPlayer);
   if (keep) {
@@ -337,20 +371,81 @@ function rememberName() {
   if (input) input.value = value;
 }
 
+function option(value: string, label: string, selected: boolean): string {
+  return `<option value="${value}"${selected ? ' selected' : ''}>${label}</option>`;
+}
+
 function buildTitle() {
+  const draft = setupDraft;
   title.hidden = false;
-  title.innerHTML = `<div class="card">
+  title.innerHTML = `<div class="card menu-card">
     <h1>Дорожные края</h1>
     <p class="lede">Открытая стратегия вдоль большого тракта. Люди — редкость: их ровно столько, сколько влезает в жильё, и каждый занят только одним делом.</p>
     <label for="player-name">Ваше имя</label>
     <input id="player-name" data-testid="player-name" maxlength="20" />
     <label for="seed">Зерно мира</label>
     <input id="seed" data-testid="seed" type="number" value="20261003" />
-    <label for="ai-count">Соседи по тракту</label>
-    <select id="ai-count" data-testid="ai-count">
-      <option value="2">Два поселения</option>
-      <option value="3" selected>Три поселения</option>
-    </select>
+    <div class="setup-grid">
+      <label for="victory">Условие победы
+        <select id="victory" data-testid="victory">
+          ${option('conquest', 'Завоевание', draft.victory === 'conquest')}
+          ${option('wealth', 'Богатство', draft.victory === 'wealth')}
+          ${option('bloom', 'Расцвет', draft.victory === 'bloom')}
+          ${option('survival', 'Выживание', draft.victory === 'survival')}
+        </select>
+      </label>
+      <label for="time-limit">Лимит времени
+        <select id="time-limit" data-testid="time-limit">
+          ${option('0', 'Без лимита', draft.timeLimit === 0)}
+          ${option('15', '15 минут', draft.timeLimit === 15)}
+          ${option('30', '30 минут', draft.timeLimit === 30)}
+          ${option('45', '45 минут', draft.timeLimit === 45)}
+        </select>
+      </label>
+      <label for="map-size">Размер карты
+        <select id="map-size" data-testid="map-size">
+          ${option('small', 'Малая', draft.map === 'small')}
+          ${option('normal', 'Обычная', draft.map === 'normal')}
+          ${option('large', 'Большая', draft.map === 'large')}
+        </select>
+      </label>
+      <label for="start-res">Начальные запасы
+        <select id="start-res" data-testid="start-res">
+          ${option('low', 'Скудные', draft.start === 'low')}
+          ${option('normal', 'Обычные', draft.start === 'normal')}
+          ${option('high', 'Богатые', draft.start === 'high')}
+        </select>
+      </label>
+      <label for="ai-count">Соседи по тракту
+        <select id="ai-count" data-testid="ai-count">
+          ${option('0', 'Без соседей', draft.ai === 0)}
+          ${option('1', 'Один сосед', draft.ai === 1)}
+          ${option('2', 'Два соседа', draft.ai === 2)}
+          ${option('3', 'Три соседа', draft.ai === 3)}
+        </select>
+      </label>
+      <label for="gold-target">Золото для «Богатства»
+        <select id="gold-target" data-testid="gold-target">
+          ${option('1000', '1000', draft.goldTarget === 1000)}
+          ${option('2000', '2000', draft.goldTarget === 2000)}
+          ${option('4000', '4000', draft.goldTarget === 4000)}
+        </select>
+      </label>
+      <label for="pop-target">Население для «Расцвета»
+        <select id="pop-target" data-testid="pop-target">
+          ${option('12', '12', draft.popTarget === 12)}
+          ${option('20', '20', draft.popTarget === 20)}
+          ${option('30', '30', draft.popTarget === 30)}
+        </select>
+      </label>
+      <label for="survive-min">Минуты «Выживания»
+        <select id="survive-min" data-testid="survive-min">
+          ${option('10', '10', draft.surviveMinutes === 10)}
+          ${option('20', '20', draft.surviveMinutes === 20)}
+          ${option('30', '30', draft.surviveMinutes === 30)}
+        </select>
+      </label>
+    </div>
     <div class="actions">
       <button type="button" id="load-title" data-testid="load-game">Загрузить</button>
       <button type="button" id="start-title" data-testid="new-game">Одиночная игра</button>
@@ -365,6 +460,14 @@ function buildTitle() {
   nameInput.addEventListener('change', () => rememberName());
   document.querySelector<HTMLInputElement>('#seed')!.addEventListener('change', () => {
     if (!playing) bootPreview();
+  });
+  title.querySelectorAll('select').forEach((select) => {
+    select.addEventListener('change', () => {
+      readSetup();
+      const rules = document.querySelector<HTMLElement>('#lobby-rules');
+      if (rules) rules.textContent = `Условия матча задаёт хост: ${describeSetup(setupDraft)}`;
+      if (!playing) bootPreview();
+    });
   });
   document.querySelector<HTMLButtonElement>('#start-title')!.onclick = () => {
     rememberName();
@@ -608,6 +711,39 @@ function renderMenu() {
   };
 }
 
+function goalText(playerId: number): string {
+  const setup = state.match;
+  const player = state.players[playerId];
+  if (!player || !setup) return '';
+  if (!player.alive) return 'пал';
+  const keep = playerKeep(state, playerId);
+  const pop = state.people.filter((person) => person.playerId === playerId && person.hp > 0).length;
+  if (setup.victory === 'wealth') return `${player.gold} / ${setup.goldTarget} золота`;
+  if (setup.victory === 'bloom') return `ур. ${keep?.level ?? 0}/5 · люди ${pop}/${setup.popTarget}`;
+  if (setup.victory === 'survival') return 'держится';
+  return 'главное здание стоит';
+}
+
+function paintGoals() {
+  const setup = state.match;
+  if (!playing || !setup) {
+    goalsEl.hidden = true;
+    return;
+  }
+  goalsEl.hidden = false;
+  const limit = setup.timeLimit > 0 ? ` · лимит ${setup.timeLimit} мин` : '';
+  const clock =
+    setup.victory === 'survival' ? ` · ${Math.max(0, setup.surviveMinutes - Math.floor(state.tick / TICKS_PER_GAME_MINUTE))} мин` : '';
+  const rows = state.players
+    .map((player) => {
+      const name = player.id === localPlayer ? 'Вы' : player.name;
+      const score = setup.timeLimit > 0 ? ` · ${scoreOf(state, player)}` : '';
+      return `<div class="goal-row"><span>${name}</span><b>${goalText(player.id)}${score}</b></div>`;
+    })
+    .join('');
+  goalsEl.innerHTML = `<div class="goal-title">${victoryName(setup.victory)}${limit}${clock}</div>${rows}`;
+}
+
 function syncHud() {
   const player = state.players[localPlayer];
   if (!player) return;
@@ -655,8 +791,10 @@ function syncHud() {
   const ration = document.querySelector<HTMLSelectElement>('#ration');
   if (ration && document.activeElement !== ration) ration.value = player.ration;
   updateHint();
-  const danger = dangerText();
-  const waiting =
+  paintGoals();
+  const spectating = netMode && player && !player.alive && state.outcome === 'playing';
+  const danger = spectating ? '' : dangerText();
+  const waiting = !spectating &&
     !danger &&
     idle === 0 &&
     state.buildings.some(
@@ -665,12 +803,14 @@ function syncHud() {
         b.hp > 0 &&
         (!b.complete || b.upgrading || (b.complete && BUILDINGS[b.type].workers > b.workerIds.length)),
     );
-  banner.hidden = !danger && !waiting;
-  banner.textContent = danger
-    ? danger
-    : waiting
-      ? 'Нет свободных людей. Снимите кого-нибудь с работы или дождитесь переселенцев — иначе стройка и новые места будут стоять пустыми.'
-      : '';
+  banner.hidden = !spectating && !danger && !waiting;
+  banner.textContent = spectating
+    ? 'Вы наблюдаете'
+    : danger
+      ? danger
+      : waiting
+        ? 'Нет свободных людей. Снимите кого-нибудь с работы или дождитесь переселенцев — иначе стройка и новые места будут стоять пустыми.'
+        : '';
 
   if (!popbox.hidden) {
     const report = currentTarget(state, localPlayer);
@@ -1204,24 +1344,123 @@ function syncPanel() {
   };
 }
 
+function localWon(): boolean {
+  if (!netMode) return state.outcome === 'victory';
+  if (state.winnerId === -2) return !!state.players[localPlayer]?.alive;
+  if (state.winnerId >= 0) return state.winnerId === localPlayer;
+  return !!state.players[localPlayer]?.alive;
+}
+
+function formatClock(ticks: number): string {
+  const mins = Math.floor(ticks / TICKS_PER_GAME_MINUTE);
+  const secs = ticks % TICKS_PER_GAME_MINUTE;
+  return `${mins} мин ${secs} с`;
+}
+
+function paintResultsChart(canvas: HTMLCanvasElement) {
+  const ctx2 = canvas.getContext('2d');
+  if (!ctx2) return;
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx2.clearRect(0, 0, w, h);
+  ctx2.fillStyle = '#1c1612';
+  ctx2.fillRect(0, 0, w, h);
+  const samples = state.samples ?? [];
+  if (samples.length < 2) return;
+  const maxPop = Math.max(1, ...samples.flatMap((sample) => sample.pop));
+  const maxGold = Math.max(1, ...samples.flatMap((sample) => sample.gold));
+  const draw = (values: number[], max: number, color: string, dashed: boolean) => {
+    ctx2.beginPath();
+    ctx2.strokeStyle = color;
+    ctx2.lineWidth = 2;
+    ctx2.setLineDash(dashed ? [5, 4] : []);
+    values.forEach((value, index) => {
+      const x = (index / (values.length - 1)) * (w - 16) + 8;
+      const y = h - 8 - (value / max) * (h - 20);
+      if (index === 0) ctx2.moveTo(x, y);
+      else ctx2.lineTo(x, y);
+    });
+    ctx2.stroke();
+  };
+  state.players.forEach((player, index) => {
+    draw(
+      samples.map((sample) => sample.pop[index] ?? 0),
+      maxPop,
+      player.color,
+      false,
+    );
+    draw(
+      samples.map((sample) => sample.gold[index] ?? 0),
+      maxGold,
+      player.color,
+      true,
+    );
+  });
+  ctx2.setLineDash([]);
+}
+
 function showEnd() {
   if (!endScreen.hidden) return;
-  const victory = netMode ? !!state.players[localPlayer]?.alive : state.outcome === 'victory';
+  const victory = localWon();
+  const setup = state.match;
+  const reason = setup ? victoryName(setup.victory) : 'Завоевание';
   endScreen.hidden = false;
-  endScreen.innerHTML = `<div class="card">
-    <h1>${victory ? 'Тракт ваш' : 'Поселение пало'}</h1>
-    <p>${victory ? 'Главные здания соседей разрушены.' : 'Ваше главное здание уничтожено.'}</p>
-    <div class="actions"><button type="button" id="again" data-testid="again">Ещё раз</button></div>
+  const rows = state.players
+    .map((player) => {
+      const food = player.stats?.food;
+      const foodText = food ? `яблоки ${food.apples}, сыр ${food.cheese}, мясо ${food.meat}, хлеб ${food.bread}` : '—';
+      const stats = player.stats;
+      return `<tr>
+        <td>${player.name}</td>
+        <td>${scoreOf(state, player)}</td>
+        <td>${stats?.peakPop ?? 0}</td>
+        <td>${foodText}</td>
+        <td>${stats?.goldEarned ?? 0}</td>
+        <td>${stats?.buildings ?? 0}</td>
+        <td>${stats?.soldiers ?? 0}</td>
+        <td>${stats?.kills ?? 0}</td>
+        <td>${stats?.razed ?? 0}</td>
+      </tr>`;
+    })
+    .join('');
+  endScreen.innerHTML = `<div class="card results-card">
+    <h1 data-testid="results-title">${victory ? 'Победа' : 'Поражение'}</h1>
+    <p>${victory ? `Условие «${reason}» выполнено.` : `Условие «${reason}» досталось другому посаду.`} Время: ${formatClock(state.tick)}.</p>
+    <table class="results-table">
+      <thead><tr><th>Посад</th><th>Счёт</th><th>Пик людей</th><th>Еда</th><th>Золото</th><th>Постройки</th><th>Воины</th><th>Убито</th><th>Разрушено</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <canvas id="results-chart" width="840" height="140"></canvas>
+    <p class="chart-note">Сплошная линия — население, пунктир — золото.</p>
+    <p class="score-formula">${SCORE_TEXT}</p>
+    <div class="actions">
+      <button type="button" id="again" data-testid="again">Реванш</button>
+      <button type="button" id="to-menu" data-testid="to-menu">В меню</button>
+    </div>
   </div>`;
+  const chart = document.querySelector<HTMLCanvasElement>('#results-chart');
+  if (chart) paintResultsChart(chart);
   document.querySelector<HTMLButtonElement>('#again')!.onclick = () => {
-    playing = false;
+    endScreen.hidden = true;
     if (netMode) {
+      playing = false;
       netMode = false;
       localPlayer = 0;
+      void net.leave().catch(() => {});
+      openNet();
+      return;
     }
+    startGame();
+  };
+  document.querySelector<HTMLButtonElement>('#to-menu')!.onclick = () => {
+    playing = false;
+    netMode = false;
+    localPlayer = 0;
+    void net.leave().catch(() => {});
     netView.hide();
     netView.wait(null, null);
     endScreen.hidden = true;
+    goalsEl.hidden = true;
     buildTitle();
     bootPreview();
   };
@@ -1592,6 +1831,7 @@ function frame(now: number) {
     hintEl.hidden = true;
     tipEl.hidden = true;
     armyEl.hidden = true;
+    goalsEl.hidden = true;
   }
   requestAnimationFrame(frame);
 }
@@ -1775,6 +2015,7 @@ function expose() {
               hunger: false,
               beerMood: 0,
               migrate: 0,
+              stats: emptyStats(0),
             });
           }
           const ram = createSoldier(state, 1, gateX + 0.4, y1 + 3.2, 'ram');
@@ -1866,6 +2107,46 @@ function expose() {
     },
     cleanupNet() {
       return net.destroyMatch();
+    },
+    debugBoard() {
+      setSpeed(0);
+      state.players.forEach((player, index) => {
+        player.gold = 180 + index * 220;
+        if (player.stats) {
+          player.stats.goldEarned = index * 40;
+          player.stats.peakPop = 5 + index;
+        }
+        const keep = playerKeep(state, player.id);
+        if (keep && index > 0) keep.level = Math.min(5, 1 + index);
+      });
+      const line = 'Сосед «Ковыль» достиг 4 уровня';
+      if (!state.log.includes(line)) state.log.push(line);
+      if (state.log.length > 8) state.log.shift();
+    },
+    debugResults() {
+      setSpeed(0);
+      state.tick = 18 * 60 + 12;
+      state.players.forEach((player, index) => {
+        player.gold = 400 + index * 180;
+        if (!player.stats) player.stats = emptyStats(5);
+        player.stats.peakPop = 6 + index;
+        player.stats.goldEarned = 80 + index * 30;
+        player.stats.buildings = 3 + index;
+        player.stats.soldiers = index;
+        player.stats.kills = index * 2;
+        player.stats.razed = index === 0 ? 1 : 0;
+        player.stats.food.apples = 12 + index;
+        player.stats.food.cheese = index;
+        player.stats.food.meat = index;
+        player.stats.food.bread = index * 2;
+      });
+      state.samples = [0, 6, 12, 18].map((minute, stepIndex) => ({
+        t: minute * 60,
+        pop: state.players.map((_, index) => 5 + stepIndex + index),
+        gold: state.players.map((_, index) => 100 + stepIndex * 40 + index * 20),
+      }));
+      state.winnerId = localPlayer;
+      state.outcome = 'victory';
     },
   };
 }
@@ -2111,6 +2392,8 @@ declare global {
       mp: () => { hash: string; turn: number; tick: number; local: number; names: string[] };
       cleanupNet: () => Promise<void>;
       debugScene: (kind: string) => void;
+      debugBoard: () => void;
+      debugResults: () => void;
     };
   }
 }
@@ -2190,7 +2473,7 @@ function openNet() {
   rememberName();
   title.hidden = true;
   playing = false;
-  netView.showList();
+  netView.showList(describeSetup(readSetup()));
   void net.listenList().catch((err) => netMessage(err, 'Не удалось открыть список'));
   const invite = new URLSearchParams(location.search).get('lobby');
   if (invite && !inviteHandled) {
@@ -2213,7 +2496,9 @@ function netMessage(err: unknown, fallback: string) {
 const netView = new NetView(document.querySelector<HTMLElement>('#net')!, document.querySelector<HTMLElement>('#syncbox')!, {
   create: (name, maxPlayers) => {
     rememberName();
-    void net.create(name, maxPlayers).catch((err) => netMessage(err, 'Не удалось создать лобби'));
+    const setup = readSetup();
+    const world = Number(document.querySelector<HTMLInputElement>('#seed')?.value ?? '1') >>> 0;
+    void net.create(name, maxPlayers, packSeed(world, setup)).catch((err) => netMessage(err, 'Не удалось создать лобби'));
   },
   join: (id) => {
     rememberName();

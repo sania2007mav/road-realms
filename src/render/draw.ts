@@ -602,11 +602,19 @@ export function renderWorld(
   }
 
   for (const building of state.buildings) {
-    if (building.hp <= 0 && building.type !== 'keep') continue;
+    const ruined = (building.ruin ?? 0) > 0;
+    if (building.hp <= 0 && building.type !== 'keep' && !ruined) continue;
     const def = BUILDINGS[building.type];
     if (!seen(camera, viewW, viewH, building.x + def.w / 2, building.y + def.h / 2, 120)) continue;
     const selected = selectedId === building.id;
     const wall = wallHeight(building);
+    if (ruined) {
+      sprites.push({
+        depth: anchorDepth(building.x, building.y, def.w, def.h),
+        draw: () => drawRuin(ctx, building),
+      });
+      continue;
+    }
     if (building.type === 'orchard') {
       sprites.push({
         depth: building.x + building.y - 0.5,
@@ -1058,6 +1066,19 @@ function drawPlague(ctx: CanvasRenderingContext2D, building: Building, wall: num
   ctx.fillStyle = '#9be07a';
   ctx.font = 'bold 11px sans-serif';
   ctx.fillText('чума', p.x - 12, p.y - wall);
+}
+
+function drawRuin(ctx: CanvasRenderingContext2D, building: Building) {
+  const def = BUILDINGS[building.type];
+  poly(ctx, diamond(building.x, building.y, def.w, def.h), '#3a322c');
+  const left = tileToIso(building.x + def.w * 0.32, building.y + def.h * 0.38);
+  const right = tileToIso(building.x + def.w * 0.62, building.y + def.h * 0.55);
+  ctx.fillStyle = '#6d5c4c';
+  ctx.fillRect(left.x - 3, left.y - 16, 5, 18);
+  ctx.fillStyle = '#2a241f';
+  ctx.fillRect(right.x - 6, right.y - 7, 14, 6);
+  ctx.fillStyle = '#8a7b6a';
+  ctx.fillRect(right.x + 4, right.y - 18, 4, 12);
 }
 
 function drawBuilding(ctx: CanvasRenderingContext2D, building: Building, time: number) {

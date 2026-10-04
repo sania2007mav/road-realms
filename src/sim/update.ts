@@ -17,6 +17,7 @@ import {
   POP_EVERY,
   SOLDIER_SPEED,
   TAX_EVERY,
+  TICKS_PER_GAME_MINUTE,
   TRAIN_COST,
   PRICES,
   RESOURCE_NAME,
@@ -26,7 +27,8 @@ import {
   taxGold,
 } from './balance';
 import { consumeFood, totalFood } from './economy';
-import { createOx, createPerson, createSoldier } from './entities';
+import { createMob, createOx, createPerson, createSoldier } from './entities';
+import { emptyStats, normalizeSetup, scoreOf } from './match';
 import { rngNext } from './rng';
 import type {
   Building,
@@ -328,6 +330,7 @@ export function applyCommand(state: GameState, command: Command): boolean {
       plague: 0,
       upgrading: false,
       seal: 0,
+      ruin: 0,
     };
     state.buildings.push(building);
     state.message = `Строим: ${BUILDINGS[command.building].name}`;
@@ -442,6 +445,7 @@ export function applyCommand(state: GameState, command: Command): boolean {
     }
     player.stocks[command.resource] -= qty;
     player.gold += price * qty;
+    if (player.stats) player.stats.goldEarned += price * qty;
     state.message = `Продано: ${qty}`;
     return true;
   }
@@ -467,6 +471,7 @@ export function applyCommand(state: GameState, command: Command): boolean {
     pay(player.stocks, cost);
     const center = buildingCenter(yard);
     createSoldier(state, command.playerId, center.x, center.y + 1, command.weapon);
+    if (player.stats) player.stats.soldiers += 1;
     state.people = state.people.filter((p) => p.id !== idle.id);
     const trained: Record<string, string> = {
       club: 'Обучен ополченец',
@@ -765,10 +770,16 @@ function updateBuilder(state: GameState, person: Person) {
     building.upgrading = false;
     building.maxHp += 90;
     building.hp = building.maxHp;
-    pushLog(state, `${state.players[building.playerId].name}: главное здание улучшено`);
+    const owner = state.players[building.playerId];
+    if (owner?.isAi) {
+      const quoted = owner.name.match(/«([^»]+)»/);
+      pushLog(state, `Сосед «${quoted ? quoted[1] : owner.name}» достиг ${building.level} уровня`);
+    } else pushLog(state, `${owner?.name ?? 'Посад'}: главное здание улучшено`);
   } else {
     building.complete = true;
     building.hp = building.maxHp;
+    const owner = state.players[building.playerId];
+    if (owner?.stats) owner.stats.buildings += 1;
     pushLog(state, `Готово: ${BUILDINGS[building.type].name}`);
   }
   person.task = { type: 'idle' };
@@ -833,7 +844,12 @@ function chooseDropoff(state: GameState, playerId: number, res: Resource, x: num
 function giveCargo(state: GameState, playerId: number, buildingId: number, res: Resource, qty: number) {
   const building = buildingById(state, buildingId);
   if (!building || isStorage(building.type)) {
-    state.players[playerId].stocks[res] += qty;
+    const player = state.players[playerId];
+    player.stocks[res] += qty;
+    if (player.stats && (FOODS as readonly string[]).includes(res)) {
+      const food = res as 'apples' | 'cheese' | 'meat' | 'bread';
+      player.stats.food[food] += qty;
+    }
     return;
   }
   building.input += qty;
@@ -1308,12 +1324,18 @@ function nearestEnemyKeep(state: GameState, playerId: number, x: number, y: numb
 }
 
 function destroyKeep(state: GameState, keep: Building) {
-  if (keep.hp <= 0) return;
-  keep.hp = 0;
-  keep.complete = false;
   const player = state.players[keep.playerId];
   if (!player || !player.alive) return;
+  keep.hp = 0;
+  keep.complete = false;
+  keep.ruin = 1;
   player.alive = false;
+  for (const building of state.buildings) {
+    if (building.playerId !== player.id || building.id === keep.id) continue;
+    building.ruin = 1;
+    building.hp = 0;
+    building.complete = false;
+  }
   for (const person of state.people) if (person.playerId === player.id) person.hp = 0;
   for (const soldier of state.soldiers) if (soldier.playerId === player.id) soldier.hp = 0;
   pushLog(state, `${player.name} пал`);
@@ -1496,7 +1518,9 @@ function strikeBuilding(state: GameState, soldier: Soldier, building: Building) 
   }
   if (state.tick % 12 !== 0) return;
   const bonus = fortDamage(soldier.weapon, building.type);
+  const before = building.hp;
   building.hp -= bonus < 0 ? soldier.dmg : bonus;
+  if (before > 0 && building.hp <= 0) noteRaze(state, soldier.playerId);
   if (building.hp <= 0 && building.type === 'keep') destroyKeep(state, building);
   else if (building.hp <= 0 && building.type === 'moat') pushLog(state, 'Ров засыпан');
 }
@@ -1609,7 +1633,9 @@ function updateSoldier(state: GameState, soldier: Soldier) {
     }
     if (Math.hypot(center.x - soldier.x, center.y - soldier.y) < 1.3) {
       if (state.tick % 12 === 0) {
+        const before = keep.hp;
         keep.hp -= soldier.dmg;
+        if (before > 0 && keep.hp <= 0) noteRaze(state, soldier.playerId);
         if (keep.hp <= 0) destroyKeep(state, keep);
       }
     } else walkSoldier(state, soldier, center.x, center.y, SOLDIER_SPEED);
@@ -1664,6 +1690,7 @@ function strikeMob(state: GameState, soldier: Soldier, mob: Mob) {
   if (mob.hp <= 0) {
     mob.alive = false;
     mob.respawn = state.tick + 800;
+    if (mob.kind !== 'deer') noteKill(state, soldier.playerId);
   }
 }
 
@@ -1677,6 +1704,7 @@ function strikeSoldier(state: GameState, soldier: Soldier, other: Soldier) {
   if (state.tick % 12 !== 0) return;
   const dealt = onOwnTower(state, other) ? Math.max(1, Math.floor(soldier.dmg * 0.5)) : soldier.dmg;
   other.hp -= dealt;
+  if (other.hp <= 0) noteKill(state, soldier.playerId);
 }
 
 function updateEconomy(state: GameState) {
@@ -1690,7 +1718,9 @@ function updateEconomy(state: GameState) {
       player.hunger = meal.hunger;
     }
     if (state.tick > 0 && state.tick % TAX_EVERY === 0) {
-      player.gold += taxGold(people, player.tax);
+      const gained = taxGold(people, player.tax);
+      player.gold += gained;
+      if (player.stats) player.stats.goldEarned += gained;
     }
     if (state.tick > 0 && state.tick % POP_EVERY === 0) {
       const target = popularityTarget({
@@ -1781,25 +1811,140 @@ function evict(state: GameState, playerId: number) {
   state.people = state.people.filter((p) => p.id !== victim.id);
 }
 
+function noteKill(state: GameState, playerId: number) {
+  const stats = state.players[playerId]?.stats;
+  if (stats) stats.kills += 1;
+}
+
+function noteRaze(state: GameState, playerId: number) {
+  const stats = state.players[playerId]?.stats;
+  if (stats) stats.razed += 1;
+}
+
+function livingPeople(state: GameState, playerId: number): number {
+  let count = 0;
+  for (const person of state.people) if (person.playerId === playerId && person.hp > 0) count += 1;
+  return count;
+}
+
+function keepLevel(state: GameState, playerId: number): number {
+  const keep = state.buildings.find((building) => building.playerId === playerId && building.type === 'keep');
+  return keep?.level ?? 0;
+}
+
+function conclude(state: GameState, winnerId: number, outcome: 'victory' | 'defeat') {
+  state.winnerId = winnerId;
+  state.outcome = outcome;
+}
+
 function finishOutcome(state: GameState) {
-  const humans = state.players.filter((p) => !p.isAi);
-  if (humans.length > 1) {
-    const alive = state.players.filter((p) => p.alive);
-    if (alive.length <= 1) state.outcome = 'victory';
+  const setup = state.match ?? normalizeSetup();
+  const humans = state.players.filter((player) => !player.isAi);
+  const multi = humans.length > 1;
+  if (setup.victory === 'wealth') {
+    const winner = state.players.find((player) => player.alive && player.gold >= setup.goldTarget);
+    if (winner) {
+      conclude(state, winner.id, multi || winner.id === 0 ? 'victory' : 'defeat');
+      return;
+    }
+  }
+  if (setup.victory === 'bloom') {
+    const winner = state.players.find(
+      (player) => player.alive && keepLevel(state, player.id) >= 5 && livingPeople(state, player.id) >= setup.popTarget,
+    );
+    if (winner) {
+      conclude(state, winner.id, multi || winner.id === 0 ? 'victory' : 'defeat');
+      return;
+    }
+  }
+  if (setup.victory === 'conquest') {
+    if (multi) {
+      const alive = state.players.filter((player) => player.alive);
+      if (alive.length <= 1) conclude(state, alive[0]?.id ?? -1, 'victory');
+    } else {
+      const human = state.players[0];
+      if (!human || !human.alive) conclude(state, -1, 'defeat');
+      else if (state.players.length > 1 && state.players.every((player) => player.id === 0 || !player.alive)) conclude(state, 0, 'victory');
+    }
+  } else if (!multi) {
+    const human = state.players[0];
+    if (!human || !human.alive) conclude(state, -1, 'defeat');
+  } else if (state.players.every((player) => !player.alive)) {
+    conclude(state, -1, 'defeat');
+  }
+  if (state.outcome !== 'playing') return;
+  const surviveAt = setup.victory === 'survival' ? setup.surviveMinutes * TICKS_PER_GAME_MINUTE : 0;
+  const scoreAt = setup.timeLimit > 0 ? setup.timeLimit * TICKS_PER_GAME_MINUTE : 0;
+  const due = state.tick + 1;
+  const hitSurvive = surviveAt > 0 && due >= surviveAt && (scoreAt <= 0 || surviveAt <= scoreAt);
+  const hitScore = scoreAt > 0 && due >= scoreAt && !hitSurvive;
+  if (!hitSurvive && !hitScore) return;
+  if (hitSurvive) {
+    if (!multi) {
+      const alive = !!state.players[0]?.alive;
+      conclude(state, alive ? 0 : -1, alive ? 'victory' : 'defeat');
+    } else {
+      const alive = state.players.some((player) => player.alive && !player.isAi);
+      conclude(state, alive ? -2 : -1, alive ? 'victory' : 'defeat');
+    }
     return;
   }
-  const human = state.players[0];
-  if (!human || !human.alive) {
-    state.outcome = 'defeat';
-    return;
+  let best = -1;
+  let bestScore = -1;
+  for (const player of state.players) {
+    const value = scoreOf(state, player);
+    if (best < 0 || value > bestScore || (value === bestScore && player.id < best)) {
+      best = player.id;
+      bestScore = value;
+    }
   }
-  if (state.players.length > 1 && state.players.every((p) => p.id === 0 || !p.alive)) state.outcome = 'victory';
+  if (!multi) conclude(state, best, best === 0 ? 'victory' : 'defeat');
+  else conclude(state, best, 'victory');
+}
+
+function spawnWaves(state: GameState) {
+  const setup = state.match;
+  if (!setup || setup.victory !== 'survival') return;
+  if (state.tick <= 0 || state.tick % 120 !== 0) return;
+  const count = Math.min(8, Math.floor(state.tick / 120));
+  for (const player of state.players) {
+    if (!player.alive) continue;
+    const keep = playerKeep(state, player.id);
+    if (!keep || keep.hp <= 0) continue;
+    const center = buildingCenter(keep);
+    for (let i = 0; i < count; i++) {
+      const angle = takeRng(state) * Math.PI * 2;
+      const dist = 8 + takeRng(state) * 4;
+      createMob(state, 'bandit', center.x + Math.cos(angle) * dist, center.y + Math.sin(angle) * dist);
+    }
+  }
+  pushLog(state, `Волна ${count}: бандиты подступают`);
+}
+
+function recordSamples(state: GameState) {
+  for (const player of state.players) {
+    if (!player.stats) player.stats = emptyStats(0);
+    const pop = livingPeople(state, player.id);
+    if (pop > player.stats.peakPop) player.stats.peakPop = pop;
+  }
+  if (!state.samples) state.samples = [];
+  const last = state.samples[state.samples.length - 1];
+  if (state.tick % TICKS_PER_GAME_MINUTE !== 0 && state.outcome === 'playing') return;
+  if (last && last.t === state.tick) return;
+  state.samples.push({
+    t: state.tick,
+    pop: state.players.map((player) => livingPeople(state, player.id)),
+    gold: state.players.map((player) => player.gold),
+  });
 }
 
 export function step(state: GameState, commands: Command[] = [], opts?: { shelter?: boolean }): void {
   if (state.outcome !== 'playing') return;
+  if (!state.match) state.match = normalizeSetup(null, state.players.filter((player) => player.isAi).length);
+  if (state.winnerId == null) state.winnerId = -1;
   for (const command of commands) applyCommand(state, command);
   planAi(state);
+  spawnWaves(state);
   updatePeople(state);
   updateOxen(state);
   updateCombat(state);
@@ -1810,6 +1955,7 @@ export function step(state: GameState, commands: Command[] = [], opts?: { shelte
   // Single-player onboarding only. Multiplayer never sets this, so every client still shares one economy.
   if (!opts?.shelter) updateEconomy(state);
   finishOutcome(state);
+  recordSamples(state);
   state.tick += 1;
 }
 
@@ -1831,6 +1977,9 @@ export function serialize(state: GameState): string {
     oxen: state.oxen,
     mobs: state.mobs,
     clouds: state.clouds ?? [],
+    match: state.match,
+    samples: state.samples ?? [],
+    winnerId: state.winnerId ?? -1,
     outcome: state.outcome,
     message: state.message,
     log: state.log,
@@ -1844,6 +1993,19 @@ export function deserialize(raw: string): GameState {
   const clouds = data.clouds ?? [];
   for (const building of data.buildings) {
     if (building.seal == null) building.seal = 0;
+    if (building.ruin == null) building.ruin = 0;
   }
-  return { ...data, terrain, clouds };
+  const ai = data.players.filter((player) => player.isAi).length;
+  for (const player of data.players) {
+    if (!player.stats) player.stats = emptyStats(0);
+    if (!player.stats.food) player.stats.food = { apples: 0, cheese: 0, meat: 0, bread: 0 };
+  }
+  return {
+    ...data,
+    terrain,
+    clouds,
+    match: data.match ?? normalizeSetup(null, ai),
+    samples: data.samples ?? [],
+    winnerId: data.winnerId ?? (data.outcome === 'playing' ? -1 : 0),
+  };
 }

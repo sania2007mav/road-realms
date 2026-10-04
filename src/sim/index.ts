@@ -28,6 +28,19 @@ export {
 export { consumeFood } from './economy';
 export type { MealResult } from './economy';
 export { createGame, planSpawns, terrainAt } from './world';
+export {
+  DEFAULT_SETUP,
+  SCORE_TEXT,
+  describeSetup,
+  emptyStats,
+  mapSize,
+  normalizeSetup,
+  openingBundle,
+  packSeed,
+  scoreOf,
+  unpackSeed,
+  victoryName,
+} from './match';
 export { createMob, createSoldier } from './entities';
 export { formationPoints } from './formation';
 export {
@@ -62,5 +75,8 @@ export type {
   Soldier,
   TaxId,
   Weapon,
+  MatchSetup,
+  PlayerStats,
+  VictoryId,
 } from './types';
 export { FOODS, RESOURCES, Terrain } from './types';

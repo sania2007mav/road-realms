@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyCommand, createGame, playerKeep, step, suggestedTile } from '../src/sim';
+import { applyCommand, createGame, emptyStats, playerKeep, step, suggestedTile } from '../src/sim';
 import { emptyStocks } from '../src/sim/balance';
 import { createBuilding, createPerson, createSoldier } from '../src/sim/entities';
 import { hashState } from '../src/sim/hash';
@@ -26,6 +26,7 @@ function addFoe(state: GameState): number {
     hunger: false,
     beerMood: 0,
     migrate: 0,
+    stats: emptyStats(0),
   });
   return id;
 }

@@ -22,6 +22,7 @@ import {
   type Unsubscribe,
 } from 'firebase/database';
 import { firebaseConfig } from '../firebase';
+import { describeSetup, unpackSeed } from '../sim/match';
 import { createGame } from '../sim/world';
 import { hashState } from '../sim/hash';
 import { step, type Command, type GameState } from '../sim';
@@ -81,6 +82,7 @@ export interface RoomView {
   hostUid: string;
   maxPlayers: number;
   seed: number;
+  rules: string;
   me: string;
   invite: string;
   seats: { seat: number; uid: string; name: string; ready: boolean; host: boolean }[];
@@ -236,7 +238,7 @@ export class NetSession {
     this.unsubs.push(unsub);
   }
 
-  async create(name: string, maxPlayers: 2 | 3 | 4): Promise<void> {
+  async create(name: string, maxPlayers: 2 | 3 | 4, seed?: number): Promise<void> {
     await this.signIn();
     const clean = clampText(name, 32);
     if (clean.length < 1) throw new Error('Введите название');
@@ -248,7 +250,7 @@ export class NetSession {
       name: clean,
       maxPlayers,
       status: 'open',
-      seed: randomSeed(),
+      seed: (seed == null ? randomSeed() : seed) >>> 0,
       createdAt: serverTimestamp(),
       players: { [this.uid]: { name: this.playerName(), seat: 0, joinedAt: serverTimestamp() } },
       seats: { 0: this.uid },
@@ -442,7 +444,19 @@ export class NetSession {
     const url = new URL(location.href);
     url.searchParams.set('lobby', id);
     const canStart = this.uid === lobby.hostUid && rows.length >= 2 && rows.every((row) => row.ready);
-    return { id, name: String(lobby.name || ''), hostUid: lobby.hostUid, maxPlayers: lobby.maxPlayers, seed: lobby.seed, me: this.uid, invite: url.toString(), seats: rows, canStart };
+    const decoded = unpackSeed((lobby.seed ?? 0) >>> 0);
+    return {
+      id,
+      name: String(lobby.name || ''),
+      hostUid: lobby.hostUid,
+      maxPlayers: lobby.maxPlayers,
+      seed: decoded.worldSeed,
+      rules: describeSetup(decoded.setup),
+      me: this.uid,
+      invite: url.toString(),
+      seats: rows,
+      canStart,
+    };
   }
 
   private begin(id: string, lobby: LobbyData) {
@@ -452,7 +466,10 @@ export class NetSession {
       this.hooks.onError('Вас нет среди игроков');
       return;
     }
-    const state = createGame(lobby.seed >>> 0, { humans: this.roster.length });
+    const decoded = unpackSeed(lobby.seed >>> 0);
+    const humans = this.roster.length;
+    const ai = Math.max(0, Math.min(4 - humans, decoded.setup.ai));
+    const state = createGame(decoded.worldSeed, { humans, ai, setup: { ...decoded.setup, ai } });
     for (const seat of this.roster) {
       const player = state.players[seat.playerId];
       if (player) player.name = seat.name;

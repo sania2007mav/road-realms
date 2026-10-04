@@ -38,7 +38,7 @@ export class NetView {
     this.root.hidden = true;
   }
 
-  showList() {
+  showList(rules?: string) {
     this.show();
     this.listBuilt = true;
     this.root.replaceChildren();
@@ -46,7 +46,10 @@ export class NetView {
     const title = el('h1');
     title.textContent = 'Сетевая игра';
     const note = el('p');
-    note.textContent = 'Открытые лобби. В комнате от двух до четырёх игроков.';
+    note.id = 'lobby-rules';
+    note.textContent = rules
+      ? `Открытые лобби. В комнате от двух до четырёх игроков. Условия матча задаёт хост: ${rules}`
+      : 'Открытые лобби. В комнате от двух до четырёх игроков.';
     const list = el('div');
     list.id = 'lobby-list';
     list.dataset.testid = 'lobby-list';
@@ -128,7 +131,7 @@ export class NetView {
     const title = el('h1');
     title.textContent = room.name;
     const meta = el('p');
-    meta.textContent = `Игроки ${room.seats.length}/${room.maxPlayers}. Зерно ${room.seed}.`;
+    meta.textContent = `Игроки ${room.seats.length}/${room.maxPlayers}. Зерно ${room.seed}. ${room.rules}`;
     const seats = el('div');
     seats.id = 'lobby-seats';
     for (const seat of room.seats) {

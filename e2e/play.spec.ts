@@ -474,6 +474,30 @@ test('оборона: стены, осада и меню', async ({ page }) => {
   await page.screenshot({ path: `${shots}/art_defence_menu.png` });
 });
 
+test('цели: настройка, панель и итог', async ({ page }) => {
+  mkdirSync(shots, { recursive: true });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/road-realms/');
+  await expect(page.getByTestId('victory')).toBeVisible();
+  await expect(page.getByTestId('victory')).toHaveValue('conquest');
+  await page.screenshot({ path: `${shots}/goal_setup.png` });
+  await page.getByTestId('victory').selectOption('wealth');
+  await page.getByTestId('know-game').click();
+  await page.getByTestId('new-game').click();
+  await page.evaluate(() => window.__game!.debugBoard());
+  await expect(page.getByTestId('goals')).toContainText('Богатство');
+  await expect(page.getByText('Сосед «Ковыль» достиг 4 уровня')).toBeVisible();
+  await page.screenshot({ path: `${shots}/goal_panel.png` });
+  await page.evaluate(() => window.__game!.debugResults());
+  await expect(page.getByTestId('results-title')).toHaveText('Победа');
+  await expect(page.getByTestId('again')).toHaveText('Реванш');
+  await expect(page.getByTestId('to-menu')).toHaveText('В меню');
+  await expect(page.getByTestId('results-title')).toBeVisible();
+  await page.screenshot({ path: `${shots}/goal_results.png` });
+  await page.getByTestId('to-menu').click();
+  await expect(page.getByRole('heading', { name: 'Дорожные края' })).toBeVisible();
+});
+
 declare global {
   interface Window {
     __game?: {
@@ -502,6 +526,8 @@ declare global {
       mp: () => { hash: string; turn: number; tick: number; local: number; names: string[] };
       cleanupNet: () => Promise<void>;
       debugScene: (kind: string) => void;
+      debugBoard: () => void;
+      debugResults: () => void;
     };
   }
 }
