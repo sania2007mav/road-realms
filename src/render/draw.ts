@@ -73,8 +73,7 @@ function rgb(r: number, g: number, b: number) {
   return `rgb(${r},${g},${b})`;
 }
 
-function smoothNoise(seed: number, x: number, y: number): number {
-  const cell = 12;
+function smoothNoise(seed: number, x: number, y: number, cell = 12): number {
   const x0 = Math.floor(x / cell);
   const y0 = Math.floor(y / cell);
   const fx = x / cell - x0;
@@ -148,7 +147,14 @@ function groundColor(state: GameState, x: number, y: number): string {
     b = mix(b, 78, t);
   }
   const sandy = terrain === Terrain.Land || terrain === Terrain.Desert;
-  const wobble = Math.round((dune - 0.5) * (sandy ? 0 : 6));
+  let wobble: number;
+  if (sandy) {
+    const coarse = smoothNoise(state.seed, x, y, 7);
+    const fine = smoothNoise(state.seed + 91, x, y, 3);
+    wobble = Math.round((coarse - 0.5) * 5 + (fine - 0.5) * 3);
+  } else {
+    wobble = Math.round((dune - 0.5) * 6);
+  }
   return rgb(r + wobble, g + Math.round(wobble * 0.85), b + Math.round(wobble * 0.45));
 }
 
@@ -600,8 +606,8 @@ function paintSandVeil(ctx: CanvasRenderingContext2D, state: GameState, x0: numb
         const dx = ((n % 21) - 10) * 1.05;
         const dy = (((n >>> 8) % 11) - 5) * 0.8;
         const light = (n & 8) === 0;
-        ctx.fillStyle = light ? 'rgba(255,246,226,0.09)' : 'rgba(146,118,78,0.07)';
-        const size = 0.55 + (n % 3) * 0.28;
+        ctx.fillStyle = light ? 'rgba(255,246,226,0.18)' : 'rgba(120,96,62,0.14)';
+        const size = 1.15 + (n % 3) * 0.4;
         ctx.fillRect(origin.x + dx, origin.y + dy, size, size);
       }
     }
@@ -846,8 +852,9 @@ export function renderWorld(
                 : soldier.weapon === 'engineer'
                   ? 'pick'
                   : 'club';
-          drawFigure(ctx, soldier.x, soldier.y, color, moving(soldier), time, tool, null, false);
-          if (soldier.weapon === 'bow') drawBow(ctx, soldier.x, soldier.y);
+          const lift = standLift(state, soldier.x, soldier.y);
+          drawFigure(ctx, soldier.x, soldier.y, color, moving(soldier), time, tool, null, false, lift);
+          if (soldier.weapon === 'bow') drawBow(ctx, soldier.x, soldier.y, lift);
         }
         if (picked) drawHpBar(ctx, soldier.x, soldier.y, soldier.maxHp > 0 ? soldier.hp / soldier.maxHp : 0);
       },
@@ -2204,38 +2211,43 @@ function drawLiveAnims(ctx: CanvasRenderingContext2D, building: Building, time: 
       drawLantern(ctx, x, y, w, h, wall, time);
       break;
     case 'pitchditch':
-      if (building.buffer > 0) drawPitchFlame(ctx, x + 0.5, y + 0.5, time);
+      if (building.buffer > 0) drawPitchFlame(ctx, x + 0.5, y + 0.5, time, 1.45);
       break;
     case 'brazier':
-      if (building.complete) drawPitchFlame(ctx, x + 0.5, y + 0.45, time);
+      if (building.complete) drawPitchFlame(ctx, x + 0.5, y + 0.42, time, 0.85);
       break;
     default:
       break;
   }
 }
 
-function drawPitchFlame(ctx: CanvasRenderingContext2D, x: number, y: number, time: number) {
-  const p = tileToIso(x, y);
+function drawPitchFlame(ctx: CanvasRenderingContext2D, x: number, y: number, time: number, scale = 1) {
   const flicker = 0.75 + 0.25 * Math.sin(time / 90 + x * 4);
+  const tongues = scale > 1 ? [-0.55, 0.15, 0.7] : [0];
   ctx.save();
-  ctx.globalAlpha = 0.35 * flicker;
-  ctx.fillStyle = '#e07030';
-  ctx.beginPath();
-  ctx.ellipse(p.x, p.y - 8, 10, 6, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.globalAlpha = 0.9;
-  ctx.fillStyle = '#f2d15a';
-  ctx.beginPath();
-  ctx.moveTo(p.x, p.y - 16 * flicker);
-  ctx.lineTo(p.x + 4, p.y - 4);
-  ctx.lineTo(p.x - 4, p.y - 4);
-  ctx.fill();
-  ctx.fillStyle = '#e15b45';
-  ctx.beginPath();
-  ctx.moveTo(p.x, p.y - 11 * flicker);
-  ctx.lineTo(p.x + 2.2, p.y - 4);
-  ctx.lineTo(p.x - 2.2, p.y - 4);
-  ctx.fill();
+  for (const shift of tongues) {
+    const tip = tileToIso(x + shift * 0.28, y + Math.abs(shift) * 0.08);
+    ctx.globalAlpha = 0.32 * flicker;
+    ctx.fillStyle = '#e07030';
+    ctx.beginPath();
+    ctx.moveTo(tip.x, tip.y - 14 * scale * flicker);
+    ctx.lineTo(tip.x + 7 * scale, tip.y - 2);
+    ctx.lineTo(tip.x - 7 * scale, tip.y - 2);
+    ctx.fill();
+    ctx.globalAlpha = 0.92;
+    ctx.fillStyle = '#f2d15a';
+    ctx.beginPath();
+    ctx.moveTo(tip.x, tip.y - 16 * scale * flicker);
+    ctx.lineTo(tip.x + 3.4 * scale, tip.y - 3);
+    ctx.lineTo(tip.x - 3.4 * scale, tip.y - 3);
+    ctx.fill();
+    ctx.fillStyle = '#e15b45';
+    ctx.beginPath();
+    ctx.moveTo(tip.x, tip.y - 11 * scale * flicker);
+    ctx.lineTo(tip.x + 2 * scale, tip.y - 3);
+    ctx.lineTo(tip.x - 2 * scale, tip.y - 3);
+    ctx.fill();
+  }
   ctx.restore();
 }
 
@@ -2254,8 +2266,22 @@ function drawPlagueCloud(ctx: CanvasRenderingContext2D, x: number, y: number, ra
   ctx.restore();
 }
 
-function drawBow(ctx: CanvasRenderingContext2D, x: number, y: number) {
+function standLift(state: GameState, x: number, y: number): number {
+  let lift = 0;
+  for (const building of state.buildings) {
+    if (building.hp <= 0 || !building.complete) continue;
+    if (building.type !== 'woodtower' && building.type !== 'stonetower') continue;
+    const def = BUILDINGS[building.type];
+    const inside = x >= building.x && x <= building.x + def.w && y >= building.y && y <= building.y + def.h;
+    if (!inside) continue;
+    lift = Math.max(lift, wallHeight(building) * 0.72);
+  }
+  return lift;
+}
+
+function drawBow(ctx: CanvasRenderingContext2D, x: number, y: number, lift = 0) {
   const p = tileToIso(x, y);
+  p.y -= lift;
   ctx.strokeStyle = '#c4a574';
   ctx.lineWidth = 1.6;
   ctx.beginPath();
@@ -2593,15 +2619,16 @@ function drawFigure(
   tool: 'axe' | 'pick' | 'apple' | 'spear' | 'club' | 'sword' | null,
   cargo: Resource | null,
   ring: boolean,
+  lift = 0,
 ) {
   const base = tileToIso(tx, ty);
   const swing = walk ? Math.sin(time / 90 + tx * 3) : 0;
   const bob = walk ? Math.sin(time / 90 + ty) * 1.4 : 0;
   const x = base.x;
-  const y = base.y + bob;
+  const y = base.y + bob - lift;
   ctx.fillStyle = 'rgba(20,14,10,0.28)';
   ctx.beginPath();
-  ctx.ellipse(base.x + 1, base.y + 2, 7, 3, 0, 0, Math.PI * 2);
+  ctx.ellipse(base.x + 1, base.y + 2 - lift, 7, 3, 0, 0, Math.PI * 2);
   ctx.fill();
   if (ring) {
     ctx.strokeStyle = '#fff4d2';

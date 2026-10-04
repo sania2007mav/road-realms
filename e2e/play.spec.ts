@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 
 const shots = '/opt/cursor/artifacts/screenshots';
@@ -822,29 +823,83 @@ test('заставка, об игре и установка', async ({ page }) =
   expect(privacy).toContain('localStorage');
 });
 
-test('кадры для витрины 1280×720', async ({ page }) => {
+test('кадры для витрины 1280×720', async ({ page, browser }) => {
+  test.setTimeout(180_000);
   mkdirSync(shots, { recursive: true });
-  await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+  await page.addInitScript(() => {
+    localStorage.setItem('dorozhnye-kraya-tutorial', '1');
+    localStorage.setItem('dorozhnye-kraya-name', 'Хозяин');
+  });
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto('/road-realms/');
   await page.getByTestId('new-game').click();
+  const quiet = async () => {
+    await page.waitForTimeout(500);
+    await expect(page.getByTestId('hint')).toBeHidden();
+    await expect(page.locator('#banner')).toBeHidden();
+    await expect(page.locator('#log')).toHaveText('');
+    await expect(page.locator('#clock')).toContainText('18');
+  };
   await page.evaluate(() => window.__game!.debugScene('settlement'));
-  await page.waitForTimeout(400);
+  await quiet();
   await page.screenshot({ path: `${shots}/store_settlement.png` });
   await page.evaluate(() => window.__game!.debugScene('siege'));
-  await page.waitForTimeout(400);
+  await quiet();
   await page.screenshot({ path: `${shots}/store_siege.png` });
 
   await page.goto('/road-realms/');
   await page.getByTestId('campaign-open').click();
-  await expect(page.getByTestId('campaign-map')).toBeVisible();
+  await page.getByTestId('campaign-node-1').click();
+  await page.getByTestId('scenario-start').click();
+  await expect(page.getByTestId('goal-title')).toHaveText('Корм для тракта');
+  await page.evaluate(() => window.__game!.debugScene('settlement'));
+  await quiet();
+  await expect(page.getByTestId('goal-title')).toHaveText('Корм для тракта');
+  await expect(page.getByTestId('goals')).toContainText('Прокормите 10 человек');
   await page.screenshot({ path: `${shots}/store_campaign.png` });
 
-  await page.goto('/road-realms/');
-  await page.getByTestId('net-game').click();
-  await expect(page.getByTestId('lobby-list')).toBeVisible();
-  await page.waitForTimeout(1200);
-  await page.screenshot({ path: `${shots}/store_lobby.png` });
+  const lobbyName = `Витрина ${Date.now().toString(36)}`.slice(0, 32);
+  const guest = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const third = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  await guest.addInitScript(() => {
+    localStorage.setItem('dorozhnye-kraya-name', 'Путник');
+    localStorage.setItem('dorozhnye-kraya-tutorial', '1');
+  });
+  await third.addInitScript(() => {
+    localStorage.setItem('dorozhnye-kraya-name', 'Караван');
+    localStorage.setItem('dorozhnye-kraya-tutorial', '1');
+  });
+  const b = await guest.newPage();
+  const c = await third.newPage();
+  try {
+    await page.goto('/road-realms/');
+    await page.getByTestId('net-game').click();
+    await expect(page.getByTestId('lobby-list')).toBeVisible();
+    await page.getByTestId('lobby-max').selectOption('3');
+    await page.getByTestId('lobby-name').fill(lobbyName);
+    await page.getByTestId('lobby-create').click();
+    await expect(page.getByTestId('lobby-room')).toBeVisible({ timeout: 20_000 });
+    for (const [mate, label] of [
+      [b, 'Путник'],
+      [c, 'Караван'],
+    ] as const) {
+      await mate.goto('/road-realms/');
+      await mate.getByTestId('net-game').click();
+      const row = mate.locator('.lobby-row', { hasText: lobbyName });
+      await expect(row).toBeVisible({ timeout: 20_000 });
+      await row.getByTestId('lobby-join').click();
+      await expect(page.getByTestId('lobby-room')).toContainText(label, { timeout: 20_000 });
+    }
+    await expect(page.getByTestId('lobby-room')).toContainText('Хозяин');
+    await expect(page.getByTestId('lobby-room')).toContainText('3/3');
+    await page.screenshot({ path: `${shots}/store_lobby.png` });
+  } finally {
+    await page.getByTestId('lobby-leave').click().catch(() => {});
+    await b.getByTestId('lobby-leave').click().catch(() => {});
+    await c.getByTestId('lobby-leave').click().catch(() => {});
+    await guest.close();
+    await third.close();
+  }
 
   await page.goto('/road-realms/');
   await page.getByTestId('help-open').click();
@@ -854,9 +909,36 @@ test('кадры для витрины 1280×720', async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 640 });
   await page.goto('/road-realms/');
   await page.getByTestId('new-game').click();
+  await page.evaluate(() => window.__game!.debugScene('settlement'));
   await expect(page.getByTestId('phone-goal')).toBeVisible();
+  await expect(page.getByTestId('hint')).toBeHidden();
+  await expect(page.locator('#log')).toHaveText('');
   await page.screenshot({ path: `${shots}/store_phone_raw.png` });
+  execFileSync('python3', ['-c', letterboxPhone(`${shots}/store_phone_raw.png`, `${shots}/store_phone.png`)]);
 });
+
+function letterboxPhone(raw: string, out: string): string {
+  return `
+from PIL import Image, ImageDraw, ImageFont
+raw = Image.open(${JSON.stringify(raw)}).convert('RGB')
+canvas = Image.new('RGB', (1280, 720), (36, 28, 22))
+height = 640
+scale = height / raw.height
+width = max(1, int(raw.width * scale))
+phone = raw.resize((width, height), Image.Resampling.LANCZOS)
+x = (1280 - width) // 2
+y = (720 - height) // 2
+canvas.paste(phone, (x, y))
+draw = ImageDraw.Draw(canvas)
+draw.rectangle([x - 4, y - 4, x + width + 3, y + height + 3], outline=(196, 160, 90), width=3)
+try:
+    font = ImageFont.truetype('/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf', 32)
+except OSError:
+    font = ImageFont.load_default()
+draw.text((56, 320), 'Телефон', fill=(232, 214, 176), font=font)
+canvas.save(${JSON.stringify(out)})
+`;
+}
 
 declare global {
   interface Window {

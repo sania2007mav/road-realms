@@ -55,7 +55,7 @@ import {
   type VictoryId,
   type Weapon,
 } from './sim';
-import { createBuilding } from './sim/entities';
+import { createBuilding, createOx, createPerson } from './sim/entities';
 import { emptyStocks, PLAYER_NAMES } from './sim/balance';
 import { isLineBuilding, wallLine } from './sim/siege';
 import { cycleGfx, gfxLabel, loadGfx, setGfx } from './render/gfx';
@@ -2672,6 +2672,38 @@ function stageAiScene(kind: string) {
   clampView();
 }
 
+function hushShowcase() {
+  guideOn = false;
+  tutorial.hidden = true;
+  hintEl.hidden = true;
+  banner.hidden = true;
+  state.log = [];
+  logSig = '\0';
+  state.message = '';
+  if (state.tick < 18 * TICKS_PER_GAME_MINUTE) state.tick = 18 * TICKS_PER_GAME_MINUTE;
+  selectedId = null;
+  selectedPersonId = null;
+  panel.hidden = true;
+  panelSig = '';
+}
+
+function paveRoad(x: number, y: number) {
+  if (x < 0 || y < 0 || x >= state.mapW || y >= state.mapH) return;
+  if (!state.roads || state.roads.length !== state.mapW * state.mapH) state.roads = new Uint8Array(state.mapW * state.mapH);
+  state.roads[y * state.mapW + x] = 1;
+}
+
+function shoveHostiles(x: number, y: number, radius: number) {
+  for (const mob of state.mobs) {
+    if (!mob.alive) continue;
+    if (Math.hypot(mob.x - x, mob.y - y) >= radius) continue;
+    mob.x += 36;
+    mob.y += 22;
+    mob.destX = mob.x;
+    mob.destY = mob.y;
+  }
+}
+
 function expose() {
   window.__game = {
     suggest(type: string) {
@@ -2841,21 +2873,27 @@ function expose() {
           put(y === keep.y + 1 ? 'stairs' : 'palisade', x0, y);
           put('palisade', x1, y);
         }
-        const west = put('woodtower', x0 - 3, y0 - 1);
-        const east = put('stonetower', x1 + 1, y0 - 1);
-        put('brazier', gateX + 1, y1 + 1);
+        const south = kind === 'siege';
+        const west = put('woodtower', x0 - 2, south ? y1 - 1 : y0 - 1);
+        const east = put('stonetower', x1 + 1, south ? y1 - 1 : y0 - 1);
+        put('brazier', south ? gateX - 1 : gateX + 1, y1 + 1);
         const ditch = put('pitchditch', gateX, y1 + 1);
-        if (kind === 'siege') {
+        const extra = south ? put('pitchditch', gateX + 1, y1 + 1) : null;
+        if (south) {
           ditch.buffer = 1;
           ditch.work = 80;
+          if (extra) {
+            extra.buffer = 1;
+            extra.work = 80;
+          }
         }
         const man = (tower: { x: number; y: number }, ox: number, oy: number) => {
           const archer = createSoldier(state, localPlayer, tower.x + ox, tower.y + oy, 'bow');
           archer.order = 'defend';
         };
-        man(west, 0.75, 0.75);
-        man(east, 0.8, 0.85);
-        if (kind === 'siege') {
+        man(west, 0.95, 0.85);
+        man(east, 1.05, 0.9);
+        if (south) {
           if (!state.players[1]) {
             state.players.push({
               id: 1,
@@ -2879,47 +2917,100 @@ function expose() {
               personality: 'warlord',
             });
           }
-          const ram = createSoldier(state, 1, gateX + 0.4, y1 + 3.2, 'ram');
+          const gate = state.buildings.find((building) => building.type === 'gate' && building.y === y1);
+          const ram = createSoldier(state, 1, gateX + 0.25, y1 + 2.15, 'ram');
           ram.order = 'attack';
-          const catapult = createSoldier(state, 1, gateX + 2.2, y1 + 5.4, 'catapult');
+          ram.targetKind = 'building';
+          ram.targetId = gate?.id ?? keep.id;
+          ram.destX = gateX + 0.5;
+          ram.destY = y1 + 0.8;
+          const catapult = createSoldier(state, 1, gateX + 2.2, y1 + 3.25, 'catapult');
           catapult.order = 'attack';
+          catapult.targetKind = 'building';
+          catapult.targetId = gate?.id ?? keep.id;
+          const stocks = state.players[localPlayer].stocks;
+          stocks.apples = Math.max(stocks.apples, 64);
+          stocks.wood = Math.max(stocks.wood, 40);
+          for (const person of state.people) {
+            if (person.playerId !== localPlayer || person.hp <= 0) continue;
+            person.x = keep.x + 1.15 + (person.id % 3) * 0.4;
+            person.y = keep.y + 1.35;
+            person.destX = person.x;
+            person.destY = person.y;
+            person.cargo = null;
+            person.task = { type: 'work', buildingId: keep.id, mode: 'labor', targetId: 0 };
+          }
+          shoveHostiles(gateX, y1, 18);
+          for (const beast of state.oxen) {
+            beast.x += 48;
+            beast.y += 28;
+            beast.destX = beast.x;
+            beast.destY = beast.y;
+          }
+          hushShowcase();
+          lookAtPoint(gateX + 0.7, y1 + 0.2);
+          camera.zoom = 0.88;
+        } else {
+          lookAtPoint(gateX + 0.5, keep.y + 1.5);
+          camera.zoom = 1.12;
         }
-        lookAtPoint(gateX + 0.5, keep.y + 1.5);
-        camera.zoom = kind === 'siege' ? 1.05 : 1.12;
       } else {
         keep.level = 3;
-        put('granary', keep.x + 4, keep.y);
-        put('stockpile', keep.x + 8, keep.y + 1);
+        const granary = put('granary', keep.x + 4, keep.y);
+        const stock = put('stockpile', keep.x + 8, keep.y + 1);
         put('shack', keep.x - 3, keep.y + 1);
         put('cabin', keep.x - 3, keep.y + 4);
         put('house', keep.x + 4, keep.y + 4);
-        put('woodcutter', keep.x + 7, keep.y + 4);
-        put('orchard', keep.x - 6, keep.y - 4);
-        put('wheat', keep.x + 4, keep.y - 4);
-        put('mill', keep.x + 8, keep.y - 3);
-        put('bakery', keep.x + 11, keep.y - 2);
-        put('dairy', keep.x - 4, keep.y + 7);
-        put('tavern', keep.x + 1, keep.y + 7);
+        const woodcutter = put('woodcutter', keep.x + 7, keep.y + 4);
+        const orchard = put('orchard', keep.x - 6, keep.y - 4);
+        const wheat = put('wheat', keep.x + 4, keep.y - 4);
+        const bakery = put('bakery', keep.x + 11, keep.y - 2);
         put('khrush', keep.x + 8, keep.y + 8);
-        const sites = state.buildings.filter((building) =>
-          ['woodcutter', 'orchard', 'wheat', 'mill', 'bakery'].includes(building.type),
-        );
-        const cargos: (Resource | null)[] = ['apples', 'wood', null, 'bread', null];
-        state.people
-          .filter((person) => person.playerId === localPlayer)
-          .forEach((person, index) => {
-            const site = sites[index % sites.length];
-            if (!site) return;
-            const def = BUILDINGS[site.type];
-            person.x = site.x + def.w * 0.4;
-            person.y = site.y + def.h + 0.15;
-            person.task = { type: 'work', buildingId: site.id, mode: 'labor', targetId: 0 };
-            person.cargo = cargos[index] ?? null;
-            person.destX = person.x;
-            person.destY = person.y;
-          });
-        lookAtPoint(keep.x + 3, keep.y + 2);
-        camera.zoom = 1.15;
+        for (let i = -2; i <= 9; i++) paveRoad(keep.x + i, keep.y + 3);
+        for (let i = 1; i <= 3; i++) paveRoad(keep.x + 1, keep.y + 3 - i);
+        for (let i = 1; i <= 2; i++) paveRoad(keep.x - 4, keep.y + 3 - i);
+        const hands = state.people.filter((person) => person.playerId === localPlayer && person.hp > 0);
+        const post = (
+          person: (typeof hands)[number] | undefined,
+          building: ReturnType<typeof put>,
+          x: number,
+          y: number,
+          cargo: Resource | null,
+          join: boolean,
+        ) => {
+          const worker = person ?? createPerson(state, localPlayer, x, y, building.id);
+          worker.x = x;
+          worker.y = y;
+          worker.destX = x;
+          worker.destY = y;
+          worker.cargo = cargo;
+          worker.task = { type: 'work', buildingId: building.id, mode: 'labor', targetId: 0 };
+          if (join && !building.workerIds.includes(worker.id)) building.workerIds.push(worker.id);
+          return worker;
+        };
+        const defOf = (building: ReturnType<typeof put>) => BUILDINGS[building.type];
+        post(hands[0], orchard, orchard.x + defOf(orchard).w * 0.45, orchard.y + defOf(orchard).h + 0.2, 'apples', true);
+        post(hands[1], wheat, wheat.x + 0.8, wheat.y + defOf(wheat).h + 0.15, 'bread', true);
+        post(hands[2], woodcutter, woodcutter.x + 0.7, woodcutter.y + defOf(woodcutter).h + 0.2, 'wood', true);
+        post(hands[3], bakery, bakery.x + 1.1, bakery.y + defOf(bakery).h + 0.25, 'bread', true);
+        post(hands[4], granary, keep.x + 2.4, keep.y + 3.35, 'apples', false);
+        const porter = createPerson(state, localPlayer, keep.x + 5.6, keep.y + 3.15, 4);
+        porter.cargo = 'wood';
+        porter.task = { type: 'work', buildingId: stock.id, mode: 'labor', targetId: 0 };
+        porter.destX = porter.x;
+        porter.destY = porter.y;
+        const ox = createOx(state, localPlayer, stock.id, keep.x + 0.4, keep.y + 3.45);
+        ox.cargo = 'stone';
+        ox.cargoQty = 4;
+        const stocks = state.players[localPlayer].stocks;
+        stocks.apples = Math.max(stocks.apples, 48);
+        stocks.wood = Math.max(stocks.wood, 36);
+        stocks.bread = Math.max(stocks.bread, 12);
+        stocks.stone = Math.max(stocks.stone, 22);
+        shoveHostiles(keep.x, keep.y, 22);
+        hushShowcase();
+        lookAtPoint(keep.x + 2.2, keep.y + 1.4);
+        camera.zoom = 0.9;
       }
       clampView();
     },
