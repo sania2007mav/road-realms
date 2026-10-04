@@ -210,13 +210,52 @@ button.active, button[aria-pressed="true"] {
 
 .setup-grid select { min-height: 36px; padding: 4px 8px; }
 
-.menu-card, .results-card {
-  width: min(720px, calc(100% - 24px));
+label[hidden] { display: none; }
+
+.menu-card {
+  display: flex;
+  flex-direction: column;
+  width: min(640px, calc(100% - 24px));
+  max-height: calc(100% - 16px);
+  overflow: hidden;
+}
+
+.menu-scroll {
+  overflow: auto;
+  min-height: 0;
+  padding-right: 2px;
+}
+
+.menu-foot { flex: none; padding-top: 10px; }
+
+button.start-main {
+  width: 100%;
+  min-height: 56px;
+  margin-bottom: 8px;
+  font-size: 22px;
+  font-weight: 700;
+  background: #6a4a1b;
+  border-color: var(--gold);
+}
+
+details.advanced {
+  margin: 12px 0 2px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+details.advanced summary {
+  cursor: pointer;
+  color: var(--gold);
+  font-size: 16px;
+  margin-bottom: 6px;
+}
+
+.results-card {
+  width: min(920px, calc(100% - 24px));
   max-height: calc(100% - 16px);
   overflow: auto;
 }
-
-.results-card { width: min(920px, calc(100% - 24px)); }
 
 .results-scroll { overflow-x: auto; max-width: 100%; }
 

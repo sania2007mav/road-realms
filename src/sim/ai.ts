@@ -132,7 +132,7 @@ function upgradeKeep(state: GameState, player: Player): Command | null {
   if (!cost || !afford(player.stocks, cost)) return null;
   const victory = state.match?.victory;
   const eager = victory === 'bloom' || player.personality === 'builder' || player.difficulty === 'cruel' || player.difficulty === 'hard';
-  if (!eager && (player.stocks.wood ?? 0) < (cost.wood ?? 0) + 12) return null;
+  if (!eager && (player.stocks.wood ?? 0) < (cost.wood ?? 0) + 2) return null;
   return { kind: 'upgrade', playerId: player.id, buildingId: keep.id };
 }
 
@@ -232,18 +232,21 @@ function economyCommand(state: GameState, player: Player): Command | null {
   const tax = chooseTax(state, player);
   if (tax) return tax;
 
-  const rooms = housing(state, player);
-  if (rooms) return rooms;
-
-  if (player.difficulty !== 'easy' && (player.stocks.stone ?? 0) < 18 && countOf(state, id, 'quarry') === 0) {
+  if ((player.stocks.stone ?? 0) < 16 && countOf(state, id, 'quarry') === 0) {
     const quarry = place(state, id, 'quarry');
     if (quarry) return quarry;
   }
 
   const keep = upgradeKeep(state, player);
+  const levelNow = playerKeep(state, id)?.level ?? 1;
+  if (keep && levelNow < 2) return keep;
+
+  const rooms = housing(state, player);
+  if (rooms) return rooms;
+
   if (keep && (victory === 'bloom' || player.personality === 'builder')) return keep;
 
-  if (foodTypesIn(player.stocks) < 2) {
+  if (foodTypesIn(player.stocks) < 2 && countOf(state, id, 'hunter') === 0) {
     const hunter = place(state, id, 'hunter');
     if (hunter) return hunter;
   }
@@ -362,14 +365,16 @@ function repairWall(state: GameState, player: Player): boolean {
 }
 
 function groupSize(player: Player): number {
-  if (player.personality === 'warlord') return player.difficulty === 'cruel' || player.difficulty === 'hard' ? 4 : 5;
-  if (player.personality === 'merchant') return 8;
-  return 6;
+  if (player.personality === 'warlord') {
+    if (player.difficulty === 'hard' || player.difficulty === 'cruel') return 4;
+    return 3;
+  }
+  return Math.max(3, trainCap(player) - 1);
 }
 
 function attackTick(player: Player): number {
   const base =
-    player.personality === 'warlord' ? 900 : player.personality === 'strategist' ? 1500 : player.personality === 'builder' ? 2200 : 2600;
+    player.personality === 'warlord' ? 780 : player.personality === 'strategist' ? 1200 : player.personality === 'builder' ? 1500 : 1400;
   const scale = player.difficulty === 'easy' ? 1.8 : player.difficulty === 'hard' ? 0.7 : player.difficulty === 'cruel' ? 0.4 : 1;
   return Math.floor(base * scale);
 }
@@ -411,13 +416,23 @@ function trainCap(player: Player): number {
   return 5;
 }
 
+function freeHand(state: GameState, player: Player): Command | null {
+  const order: BuildingType[] = ['hunter', 'dairy', 'wheat', 'hop', 'market', 'mine', 'pitch', 'mill', 'bakery', 'brewery'];
+  for (const type of order) {
+    const building = state.buildings.find((site) => site.playerId === player.id && site.type === type && site.hp > 0 && site.workerIds.length > 0);
+    if (!building) continue;
+    return { kind: 'assign', playerId: player.id, buildingId: building.id, delta: -1 };
+  }
+  return null;
+}
+
 function trainCommand(state: GameState, player: Player, victim: number): Command | null {
   const barracks = state.buildings.find((building) => building.playerId === player.id && building.type === 'barracks' && building.complete && building.hp > 0);
   if (!barracks) {
     if (player.personality === 'merchant' && state.match?.victory !== 'conquest') return null;
     return place(state, player.id, 'barracks');
   }
-  if (idleCount(state, player.id) < 1) return null;
+  if (idleCount(state, player.id) < 1) return freeHand(state, player);
   if (soldiersOf(state, player.id).length >= trainCap(player)) return null;
   const weapon = desiredWeapon(state, player, victim);
   if (!afford(player.stocks, TRAIN_COST[weapon])) {
@@ -548,6 +563,15 @@ export function planOneAi(state: GameState, player: Player): Command | null {
   const urgent = emergency(state, player);
   if (urgent === 'spent') return null;
   if (urgent) return urgent;
+  const pressing = state.match?.victory === 'conquest' || player.personality === 'warlord';
+  const fed = state.buildings.some(
+    (building) => building.playerId === player.id && building.type === 'orchard' && building.complete && building.hp > 0 && building.workerIds.length > 0,
+  );
+  if (pressing && fed) {
+    const early = militaryCommand(state, player);
+    if (early?.kind === 'train' || (early?.kind === 'assign' && early.delta < 0) || (early?.kind === 'place' && early.building === 'barracks')) return early;
+    if (early?.kind === 'army' && soldiersOf(state, player.id).length >= groupSize(player)) return early;
+  }
   const economy = economyCommand(state, player);
   if (economy) return economy;
   const war = militaryCommand(state, player);

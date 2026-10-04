@@ -23,6 +23,7 @@ import {
   KEEP_UPGRADE_COST,
   KEEP_UPGRADE_TICKS,
   playerKeep,
+  planOneAi,
   emptyStats,
   describeSetup,
   difficultyName,
@@ -247,6 +248,18 @@ function syncNeighbours() {
   if (note) note.hidden = !(ai > 0);
 }
 
+function syncSetupFields() {
+  const victory = document.querySelector<HTMLSelectElement>('#victory')?.value ?? 'conquest';
+  const show = (id: string, on: boolean) => {
+    const field = document.querySelector<HTMLElement>(`#${id}`);
+    if (field) field.hidden = !on;
+  };
+  show('field-gold', victory === 'wealth');
+  show('field-pop', victory === 'bloom');
+  show('field-survive', victory === 'survival');
+  syncNeighbours();
+}
+
 function readSetup(): MatchSetup {
   const pick = <T extends string>(id: string, fallback: T): T =>
     (document.querySelector<HTMLSelectElement>(`#${id}`)?.value as T) || fallback;
@@ -407,12 +420,11 @@ function buildTitle() {
   const draft = setupDraft;
   title.hidden = false;
   title.innerHTML = `<div class="card menu-card">
+    <div class="menu-scroll">
     <h1>Дорожные края</h1>
     <p class="lede">Открытая стратегия вдоль большого тракта. Люди — редкость: их ровно столько, сколько влезает в жильё, и каждый занят только одним делом.</p>
     <label for="player-name">Ваше имя</label>
     <input id="player-name" data-testid="player-name" maxlength="20" />
-    <label for="seed">Зерно мира</label>
-    <input id="seed" data-testid="seed" type="number" value="20261003" />
     <div class="setup-grid">
       <label for="victory">Условие победы
         <select id="victory" data-testid="victory">
@@ -420,28 +432,6 @@ function buildTitle() {
           ${option('wealth', 'Богатство', draft.victory === 'wealth')}
           ${option('bloom', 'Расцвет', draft.victory === 'bloom')}
           ${option('survival', 'Выживание', draft.victory === 'survival')}
-        </select>
-      </label>
-      <label for="time-limit">Лимит времени
-        <select id="time-limit" data-testid="time-limit">
-          ${option('0', 'Без лимита', draft.timeLimit === 0)}
-          ${option('15', '15 минут', draft.timeLimit === 15)}
-          ${option('30', '30 минут', draft.timeLimit === 30)}
-          ${option('45', '45 минут', draft.timeLimit === 45)}
-        </select>
-      </label>
-      <label for="map-size">Размер карты
-        <select id="map-size" data-testid="map-size">
-          ${option('small', 'Малая', draft.map === 'small')}
-          ${option('normal', 'Обычная', draft.map === 'normal')}
-          ${option('large', 'Большая', draft.map === 'large')}
-        </select>
-      </label>
-      <label for="start-res">Начальные запасы
-        <select id="start-res" data-testid="start-res">
-          ${option('low', 'Скудные', draft.start === 'low')}
-          ${option('normal', 'Обычные', draft.start === 'normal')}
-          ${option('high', 'Богатые', draft.start === 'high')}
         </select>
       </label>
       <label for="ai-count">Соседи по тракту
@@ -452,21 +442,21 @@ function buildTitle() {
           ${option('3', 'Три соседа', draft.ai === 3)}
         </select>
       </label>
-      <label for="gold-target">Золото для «Богатства»
+      <label id="field-gold" for="gold-target">Золото для «Богатства»
         <select id="gold-target" data-testid="gold-target">
           ${option('1000', '1000', draft.goldTarget === 1000)}
           ${option('2000', '2000', draft.goldTarget === 2000)}
           ${option('4000', '4000', draft.goldTarget === 4000)}
         </select>
       </label>
-      <label for="pop-target">Население для «Расцвета»
+      <label id="field-pop" for="pop-target">Население для «Расцвета»
         <select id="pop-target" data-testid="pop-target">
           ${option('12', '12', draft.popTarget === 12)}
           ${option('20', '20', draft.popTarget === 20)}
           ${option('30', '30', draft.popTarget === 30)}
         </select>
       </label>
-      <label for="survive-min">Минуты «Выживания»
+      <label id="field-survive" for="survive-min">Минуты «Выживания»
         <select id="survive-min" data-testid="survive-min">
           ${option('10', '10', draft.surviveMinutes === 10)}
           ${option('20', '20', draft.surviveMinutes === 20)}
@@ -474,42 +464,72 @@ function buildTitle() {
         </select>
       </label>
     </div>
-    <div id="neighbours" data-testid="neighbours">
-      <p id="ai-note" class="ai-note" data-testid="ai-note">${CRUEL_BONUS_TEXT}</p>
-      ${[0, 1, 2]
-        .map((index) => {
-          const profile = draft.profiles?.[index];
-          const difficulty = profile?.difficulty ?? 'normal';
-          const personality = profile?.personality ?? (['merchant', 'warlord', 'builder'] as const)[index];
-          return `<div class="neighbour-row" id="neighbour-${index}" data-testid="neighbour-${index}">
-            <span class="neighbour-name">${PLAYER_NAMES[index + 1]}</span>
-            <label>Сложность
-              <select id="diff-${index}" data-testid="diff-${index}">
-                ${option('easy', 'Лёгкий', difficulty === 'easy')}
-                ${option('normal', 'Нормальный', difficulty === 'normal')}
-                ${option('hard', 'Сложный', difficulty === 'hard')}
-                ${option('cruel', 'Жестокий', difficulty === 'cruel')}
-              </select>
-            </label>
-            <label>Характер
-              <select id="pers-${index}" data-testid="pers-${index}">
-                ${option('merchant', 'Купец', personality === 'merchant')}
-                ${option('warlord', 'Воевода', personality === 'warlord')}
-                ${option('builder', 'Зодчий', personality === 'builder')}
-                ${option('strategist', 'Стратег', personality === 'strategist')}
-              </select>
-            </label>
-          </div>`;
-        })
-        .join('')}
+    <details id="advanced" class="advanced" data-testid="advanced">
+      <summary>Дополнительно</summary>
+      <label for="seed">Зерно мира</label>
+      <input id="seed" data-testid="seed" type="number" value="20261003" />
+      <div class="setup-grid">
+        <label for="time-limit">Лимит времени
+          <select id="time-limit" data-testid="time-limit">
+            ${option('0', 'Без лимита', draft.timeLimit === 0)}
+            ${option('15', '15 минут', draft.timeLimit === 15)}
+            ${option('30', '30 минут', draft.timeLimit === 30)}
+            ${option('45', '45 минут', draft.timeLimit === 45)}
+          </select>
+        </label>
+        <label for="map-size">Размер карты
+          <select id="map-size" data-testid="map-size">
+            ${option('small', 'Малая', draft.map === 'small')}
+            ${option('normal', 'Обычная', draft.map === 'normal')}
+            ${option('large', 'Большая', draft.map === 'large')}
+          </select>
+        </label>
+        <label for="start-res">Начальные запасы
+          <select id="start-res" data-testid="start-res">
+            ${option('low', 'Скудные', draft.start === 'low')}
+            ${option('normal', 'Обычные', draft.start === 'normal')}
+            ${option('high', 'Богатые', draft.start === 'high')}
+          </select>
+        </label>
+      </div>
+      <div id="neighbours" data-testid="neighbours">
+        <p id="ai-note" class="ai-note" data-testid="ai-note">${CRUEL_BONUS_TEXT}</p>
+        ${[0, 1, 2]
+          .map((index) => {
+            const profile = draft.profiles?.[index];
+            const difficulty = profile?.difficulty ?? 'normal';
+            const personality = profile?.personality ?? (['merchant', 'warlord', 'builder'] as const)[index];
+            return `<div class="neighbour-row" id="neighbour-${index}" data-testid="neighbour-${index}">
+              <span class="neighbour-name">${PLAYER_NAMES[index + 1]}</span>
+              <label>Сложность
+                <select id="diff-${index}" data-testid="diff-${index}">
+                  ${option('easy', 'Лёгкий', difficulty === 'easy')}
+                  ${option('normal', 'Нормальный', difficulty === 'normal')}
+                  ${option('hard', 'Сложный', difficulty === 'hard')}
+                  ${option('cruel', 'Жестокий', difficulty === 'cruel')}
+                </select>
+              </label>
+              <label>Характер
+                <select id="pers-${index}" data-testid="pers-${index}">
+                  ${option('merchant', 'Купец', personality === 'merchant')}
+                  ${option('warlord', 'Воевода', personality === 'warlord')}
+                  ${option('builder', 'Зодчий', personality === 'builder')}
+                  ${option('strategist', 'Стратег', personality === 'strategist')}
+                </select>
+              </label>
+            </div>`;
+          })
+          .join('')}
+      </div>
+    </details>
     </div>
-    <div class="actions">
-      <button type="button" id="load-title" data-testid="load-game">Загрузить</button>
-      <button type="button" id="start-title" data-testid="new-game">Одиночная игра</button>
-    </div>
-    <div class="actions">
-      <button type="button" id="know-game" data-testid="know-game">Я умею играть</button>
-      <button type="button" id="net-title" data-testid="net-game">Сетевая игра</button>
+    <div class="menu-foot">
+      <button type="button" id="start-title" class="start-main" data-testid="new-game">Начать</button>
+      <div class="actions">
+        <button type="button" id="load-title" data-testid="load-game">Загрузить</button>
+        <button type="button" id="know-game" data-testid="know-game">Я умею играть</button>
+        <button type="button" id="net-title" data-testid="net-game">Сетевая игра</button>
+      </div>
     </div>
   </div>`;
   const nameInput = document.querySelector<HTMLInputElement>('#player-name')!;
@@ -518,10 +538,10 @@ function buildTitle() {
   document.querySelector<HTMLInputElement>('#seed')!.addEventListener('change', () => {
     if (!playing) bootPreview();
   });
-  syncNeighbours();
+  syncSetupFields();
   title.querySelectorAll('select').forEach((select) => {
     select.addEventListener('change', () => {
-      if (select.id === 'ai-count') syncNeighbours();
+      if (select.id === 'ai-count' || select.id === 'victory') syncSetupFields();
       readSetup();
       const rules = document.querySelector<HTMLElement>('#lobby-rules');
       if (rules) rules.textContent = `Условия матча задаёт хост: ${describeSetup(setupDraft)}`;
@@ -2071,6 +2091,24 @@ function expose() {
       selectedPersonId = null;
       placing = null;
       panel.hidden = true;
+      if (kind === 'mid') {
+        guideOn = false;
+        const player = state.players[localPlayer];
+        player.difficulty = 'normal';
+        player.personality = 'builder';
+        const horizon = 16 * TICKS_PER_GAME_MINUTE;
+        while (state.tick < horizon && state.outcome === 'playing') {
+          const command = state.tick % 40 === 0 ? planOneAi(state, player) : null;
+          step(state, command ? [command] : []);
+        }
+        const home = playerKeep(state, localPlayer);
+        if (home) {
+          lookAtPoint(home.x + 3, home.y + 2);
+          camera.zoom = 0.72;
+          clampView();
+        }
+        return;
+      }
       if (kind === 'ai-attack' || kind === 'ai-walls') {
         stageAiScene(kind);
         return;

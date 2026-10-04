@@ -480,7 +480,20 @@ test('цели: настройка, панель и итог', async ({ page }) 
   await page.goto('/road-realms/');
   await expect(page.getByTestId('victory')).toBeVisible();
   await expect(page.getByTestId('victory')).toHaveValue('conquest');
+  await expect(page.getByTestId('new-game')).toHaveText('Начать');
+  await expect(page.getByTestId('gold-target')).toBeHidden();
+  await expect(page.getByTestId('pop-target')).toBeHidden();
+  await expect(page.getByTestId('survive-min')).toBeHidden();
   await page.screenshot({ path: `${shots}/goal_setup.png` });
+  await page.screenshot({ path: `${shots}/setup_short.png` });
+  await page.getByTestId('victory').selectOption('wealth');
+  await expect(page.getByTestId('gold-target')).toBeVisible();
+  await expect(page.getByTestId('pop-target')).toBeHidden();
+  await page.getByTestId('victory').selectOption('bloom');
+  await expect(page.getByTestId('pop-target')).toBeVisible();
+  await expect(page.getByTestId('gold-target')).toBeHidden();
+  await page.getByTestId('victory').selectOption('survival');
+  await expect(page.getByTestId('survive-min')).toBeVisible();
   await page.getByTestId('victory').selectOption('wealth');
   await page.getByTestId('know-game').click();
   await page.getByTestId('new-game').click();
@@ -514,6 +527,9 @@ test('ии: сложность, войско и стены', async ({ page }) =>
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
   await page.goto('/road-realms/');
+  await expect(page.getByTestId('advanced')).toBeVisible();
+  await expect(page.getByTestId('neighbours')).toBeHidden();
+  await page.getByTestId('advanced').locator('summary').click();
   await expect(page.getByTestId('neighbours')).toBeVisible();
   await expect(page.getByTestId('diff-0')).toBeVisible();
   await expect(page.getByTestId('pers-0')).toHaveValue('merchant');
@@ -535,6 +551,9 @@ test('ии: сложность, войско и стены', async ({ page }) =>
           requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
         }),
     );
+  await page.evaluate(() => window.__game!.debugScene('mid'));
+  await frame();
+  await page.screenshot({ path: `${shots}/balance_settlement.png` });
   await page.evaluate(() => window.__game!.debugScene('ai-attack'));
   await frame();
   await page.screenshot({ path: `${shots}/ai_attack.png` });

@@ -13,6 +13,7 @@ import {
   PLAGUE_CHANCE,
   PLAGUE_TICKS,
   POP_EVERY,
+  BOW_SKIRMISH,
   SOLDIER_SPEED,
   TAX_EVERY,
   TICKS_PER_GAME_MINUTE,
@@ -1106,7 +1107,7 @@ function updateWorker(state: GameState, person: Person) {
   if (building.type === 'hunter') {
     const deer = nearestDeer(state, center.x, center.y, 12);
     if (!deer) return;
-    deer.hp -= 4;
+    deer.hp -= 2;
     if (deer.hp <= 0) {
       deer.alive = false;
       deer.respawn = state.tick + 320;
@@ -1464,6 +1465,11 @@ function resolveTarget(state: GameState, soldier: Soldier): Threat | null {
 
 function updateDirected(state: GameState, soldier: Soldier) {
   ensureSoldier(soldier);
+  const biting = nearestMob(state, soldier.x, soldier.y, 1.05, false);
+  if (biting && soldier.order !== 'hold') {
+    strikeMob(state, soldier, biting);
+    return;
+  }
   if (soldier.order === 'hold') {
     const foe = nearestThreat(state, soldier.anchorX, soldier.anchorY, 2.6, soldier.playerId);
     if (foe) {
@@ -1614,6 +1620,24 @@ function strikeMob(state: GameState, soldier: Soldier, mob: Mob) {
 function strikeSoldier(state: GameState, soldier: Soldier, other: Soldier) {
   const d = Math.hypot(other.x - soldier.x, other.y - soldier.y);
   const range = soldier.weapon === 'bow' ? bowRange(state, soldier) : 0.7;
+  const melee = other.weapon === 'club' || other.weapon === 'sword' || other.weapon === 'ladder' || other.weapon === 'engineer';
+  const skirmish =
+    soldier.weapon === 'bow' &&
+    melee &&
+    d > BOW_SKIRMISH &&
+    d <= range &&
+    (soldier.order === 'attack' || soldier.order === 'attackmove' || soldier.order === 'raid');
+  if (skirmish) {
+    const dx = soldier.x - other.x;
+    const dy = soldier.y - other.y;
+    const len = Math.hypot(dx, dy) || 1;
+    walkSoldier(state, soldier, soldier.x + (dx / len) * 2, soldier.y + (dy / len) * 2, SOLDIER_SPEED * 2);
+    if (state.tick % 12 !== 0) return;
+    const dealt = onOwnTower(state, other) ? Math.max(1, Math.floor(soldier.dmg * 0.5)) : soldier.dmg;
+    other.hp -= dealt;
+    if (other.hp <= 0) noteKill(state, soldier.playerId);
+    return;
+  }
   if (d > range) {
     walkSoldier(state, soldier, other.x, other.y, SOLDIER_SPEED);
     return;

@@ -122,8 +122,10 @@ export function createGame(
     stampRect(terrain, mapW, mapH, spawn.x - 12, spawn.y + dir * 2, 4, 4, Terrain.Limestone, roadY);
     if (index % 2 === 0) {
       stampRect(terrain, mapW, mapH, spawn.x + 14, spawn.y + dir * 3, 3, 3, Terrain.Iron, roadY);
+      stampRect(terrain, mapW, mapH, spawn.x + 14, spawn.y + dir * 8, 4, 3, Terrain.Swamp, roadY);
     } else {
       stampRect(terrain, mapW, mapH, spawn.x + 14, spawn.y + dir * 3, 4, 3, Terrain.Swamp, roadY);
+      stampRect(terrain, mapW, mapH, spawn.x + 14, spawn.y + dir * 8, 3, 3, Terrain.Iron, roadY);
     }
   });
 

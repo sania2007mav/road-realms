@@ -7,8 +7,8 @@ export const MIN_SPAWN_DISTANCE = 40;
 export const TICKS_PER_SECOND = 20;
 export const TICKS_PER_GAME_MINUTE = 60;
 export const PERSON_SPEED = 0.12;
-export const OX_SPEED = 0.05;
-export const SOLDIER_SPEED = 0.11;
+export const OX_SPEED = 0.08;
+export const SOLDIER_SPEED = 0.2;
 export const TAX_EVERY = 40;
 export const CONSUME_EVERY = 50;
 export const POP_EVERY = 4;
@@ -84,6 +84,15 @@ export function taxDef(id: TaxId): TaxDef {
 
 export function taxGold(people: number, tax: TaxId): number {
   return Math.max(0, people) * taxDef(tax).gold;
+}
+
+export function costGold(cost: Partial<Record<Resource, number>> | undefined, mode: 'buy' | 'sell'): number {
+  if (!cost) return 0;
+  let gold = 0;
+  for (const key of Object.keys(cost) as Resource[]) {
+    gold += (cost[key] ?? 0) * PRICES[key][mode];
+  }
+  return gold;
 }
 
 export function popularityTarget(input: {
@@ -165,7 +174,7 @@ export const PRICES: Record<Resource, { buy: number; sell: number }> = {
   cheese: { buy: 8, sell: 3 },
   meat: { buy: 10, sell: 4 },
   bread: { buy: 10, sell: 4 },
-  wheat: { buy: 4, sell: 1 },
+  wheat: { buy: 5, sell: 1 },
   flour: { buy: 7, sell: 2 },
   hops: { buy: 5, sell: 1 },
   beer: { buy: 12, sell: 4 },
@@ -216,7 +225,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     keepLevel: 1,
     category: 'housing',
     buildTicks: 0,
-    hp: 520,
+    hp: 360,
     terrain: null,
     nearTerrain: null,
     nearRadius: 0,
@@ -414,11 +423,12 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     nearRadius: 2,
     nearHint: 'Нужен лес рядом',
     needsDeer: false,
-    cycle: 45,
+    cycle: 18,
     output: 'wood',
-    outputQty: 1,
+    outputQty: 5,
     input: null,
     hauler: 'person',
+    carry: 5,
   }),
   orchard: def({
     type: 'orchard',
@@ -438,12 +448,12 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     nearRadius: 0,
     nearHint: '',
     needsDeer: false,
-    cycle: 18,
+    cycle: 24,
     output: 'apples',
-    outputQty: 36,
+    outputQty: 12,
     input: null,
     hauler: 'person',
-    carry: 36,
+    carry: 12,
   }),
   dairy: def({
     type: 'dairy',
@@ -463,11 +473,12 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     nearRadius: 0,
     nearHint: '',
     needsDeer: false,
-    cycle: 80,
+    cycle: 24,
     output: 'cheese',
-    outputQty: 1,
+    outputQty: 22,
     input: null,
     hauler: 'person',
+    carry: 22,
   }),
   hunter: def({
     type: 'hunter',
@@ -487,11 +498,12 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     nearRadius: 0,
     nearHint: '',
     needsDeer: true,
-    cycle: 100,
+    cycle: 36,
     output: 'meat',
-    outputQty: 1,
+    outputQty: 4,
     input: null,
     hauler: 'person',
+    carry: 4,
   }),
   wheat: def({
     type: 'wheat',
@@ -511,11 +523,12 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     nearRadius: 0,
     nearHint: '',
     needsDeer: false,
-    cycle: 55,
+    cycle: 10,
     output: 'wheat',
-    outputQty: 1,
+    outputQty: 24,
     input: null,
     hauler: 'person',
+    carry: 24,
   }),
   mill: def({
     type: 'mill',
@@ -535,11 +548,12 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     nearRadius: 0,
     nearHint: '',
     needsDeer: false,
-    cycle: 50,
+    cycle: 8,
     output: 'flour',
-    outputQty: 1,
+    outputQty: 24,
     input: 'wheat',
     hauler: 'person',
+    carry: 24,
   }),
   bakery: def({
     type: 'bakery',
@@ -559,11 +573,12 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     nearRadius: 0,
     nearHint: '',
     needsDeer: false,
-    cycle: 50,
+    cycle: 8,
     output: 'bread',
-    outputQty: 1,
+    outputQty: 24,
     input: 'flour',
     hauler: 'person',
+    carry: 24,
   }),
   hop: def({
     type: 'hop',
@@ -583,11 +598,12 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     nearRadius: 0,
     nearHint: '',
     needsDeer: false,
-    cycle: 60,
+    cycle: 20,
     output: 'hops',
-    outputQty: 1,
+    outputQty: 6,
     input: null,
     hauler: 'person',
+    carry: 6,
   }),
   brewery: def({
     type: 'brewery',
@@ -607,11 +623,12 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     nearRadius: 0,
     nearHint: '',
     needsDeer: false,
-    cycle: 70,
+    cycle: 16,
     output: 'beer',
-    outputQty: 1,
+    outputQty: 6,
     input: 'hops',
     hauler: 'person',
+    carry: 6,
   }),
   tavern: def({
     type: 'tavern',
@@ -655,9 +672,9 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     nearRadius: 0,
     nearHint: '',
     needsDeer: false,
-    cycle: 70,
+    cycle: 30,
     output: 'stone',
-    outputQty: 1,
+    outputQty: 6,
     input: null,
     hauler: 'ox',
   }),
@@ -679,9 +696,9 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     nearRadius: 0,
     nearHint: '',
     needsDeer: false,
-    cycle: 100,
+    cycle: 36,
     output: 'iron',
-    outputQty: 1,
+    outputQty: 6,
     input: null,
     hauler: 'ox',
   }),
@@ -703,11 +720,12 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     nearRadius: 0,
     nearHint: '',
     needsDeer: false,
-    cycle: 80,
+    cycle: 40,
     output: 'pitch',
-    outputQty: 1,
+    outputQty: 2,
     input: null,
     hauler: 'person',
+    carry: 2,
   }),
   market: def({
     type: 'market',
@@ -739,12 +757,12 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     desc: 'Один человек и оружие становятся солдатом.',
     w: 3,
     h: 2,
-    cost: { wood: 14, stone: 10 },
+    cost: { wood: 8 },
     workers: 0,
     housing: 0,
-    keepLevel: 3,
+    keepLevel: 1,
     category: 'military',
-    buildTicks: 200,
+    buildTicks: 140,
     hp: 180,
     terrain: null,
     nearTerrain: null,
@@ -1101,9 +1119,9 @@ export const START_PEOPLE = 5;
 
 export const BUFFER_CAP = 6;
 export const OX_BUFFER_CAP = 12;
-export const OX_CARRY = 4;
+export const OX_CARRY = 6;
 export const PLAGUE_CHANCE = 0.05;
-export const PLAGUE_TICKS = 420;
+export const PLAGUE_TICKS = 160;
 
 export const CLUB_COST: Partial<Record<Resource, number>> = { wood: 2 };
 export const SWORD_COST: Partial<Record<Resource, number>> = { iron: 2 };
@@ -1118,7 +1136,9 @@ export const TRAIN_COST: Record<Weapon, Partial<Record<Resource, number>>> = {
   catapult: { wood: 18, stone: 10, iron: 4 },
 };
 
-export const BOW_RANGE = 4.2;
+export const BOW_RANGE = 5.4;
+/** Attacking archers back away from infantry while they are farther than this. Closer than this, infantry catches them. */
+export const BOW_SKIRMISH = 3.4;
 export const TOWER_RANGE = 7.4;
 export const PITCH_BURN = 120;
 export const CLOUD_TICKS = 160;

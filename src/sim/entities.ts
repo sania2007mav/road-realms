@@ -61,12 +61,12 @@ export function createPerson(state: GameState, playerId: number, x: number, y: n
 
 const SOLDIER_STATS: Record<Weapon, { hp: number; dmg: number }> = {
   club: { hp: 30, dmg: 5 },
-  sword: { hp: 48, dmg: 8 },
-  bow: { hp: 22, dmg: 4 },
+  sword: { hp: 46, dmg: 9 },
+  bow: { hp: 20, dmg: 8 },
   engineer: { hp: 24, dmg: 2 },
   ladder: { hp: 26, dmg: 3 },
-  ram: { hp: 80, dmg: 6 },
-  catapult: { hp: 50, dmg: 4 },
+  ram: { hp: 100, dmg: 3 },
+  catapult: { hp: 40, dmg: 2 },
 };
 
 export function createSoldier(state: GameState, playerId: number, x: number, y: number, weapon: Weapon): Soldier {
