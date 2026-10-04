@@ -1944,41 +1944,44 @@ function stageAiScene(kind: string) {
   if (kind === 'ai-walls') {
     nest.level = 3;
     const put = (type: BuildingType, x: number, y: number) => createBuilding(state, foe.id, type, x, y, true);
-    const x0 = nest.x - 2;
-    const x1 = nest.x + 4;
-    const y0 = nest.y - 2;
-    const y1 = nest.y + 4;
+    const x0 = nest.x - 3;
+    const x1 = nest.x + 6;
+    const y0 = nest.y - 3;
+    const y1 = nest.y + 6;
     const gateX = nest.x + 1;
     for (let x = x0; x <= x1; x++) {
       put(x === gateX ? 'gate' : 'palisade', x, y0);
       put(x === gateX ? 'gate' : 'palisade', x, y1);
     }
-    for (let y = y0 + 1; y < y1; y++) put(y === nest.y + 1 ? 'stairs' : 'palisade', x0, y);
+    for (let y = y0 + 1; y < y1; y++) put('palisade', x0, y);
     for (let y = y0 + 1; y < y1; y++) put('palisade', x1, y);
-    const west = put('woodtower', x0 - 3, y0 - 1);
-    const east = put('stonetower', x1 + 1, y0 - 1);
-    put('brazier', gateX + 1, y1 + 1);
+    put('stairs', nest.x + 1, y1 - 1);
+    const west = put('woodtower', x0 - 2, y0 - 1);
+    const east = put('stonetower', x1 + 1, y1 - 1);
+    put('brazier', gateX + 2, y1 + 1);
     const man = (tower: { x: number; y: number }, ox: number, oy: number) => {
       const archer = createSoldier(state, foe.id, tower.x + ox, tower.y + oy, 'bow');
       archer.order = 'defend';
     };
     man(west, 0.75, 0.75);
     man(east, 0.8, 0.85);
-    lookAtPoint(nest.x + 1.5, nest.y + 1.5);
-    camera.zoom = 1.05;
+    lookAtPoint(nest.x + 1.6, nest.y + 2.2);
+    camera.zoom = 0.92;
     clampView();
     return;
   }
-  const granary = createBuilding(state, localPlayer, 'granary', home.x + 6, home.y + 1, true);
-  const farm = createBuilding(state, localPlayer, 'orchard', home.x + 6, home.y + 5, true);
+  const granary = createBuilding(state, localPlayer, 'granary', home.x + 5, home.y, true);
+  const farm = createBuilding(state, localPlayer, 'orchard', home.x + 5, home.y + 4, true);
   const spot = buildingCenter(farm);
+  const frontX = spot.x + 5.2;
+  const frontY = spot.y + 1.6;
   for (let i = 0; i < 6; i++) {
     const col = i % 3;
     const row = Math.floor(i / 3);
-    const soldier = createSoldier(state, foe.id, spot.x + 3.2 + col * 0.85, spot.y + 1.4 + row * 0.85, i < 4 ? 'club' : 'bow');
+    const soldier = createSoldier(state, foe.id, frontX + col * 0.95, frontY + row * 0.95, i < 4 ? 'club' : 'bow');
     soldier.order = 'attack';
     soldier.targetKind = 'building';
-    soldier.targetId = i < 4 ? farm.id : granary.id;
+    soldier.targetId = granary.id;
     soldier.destX = spot.x;
     soldier.destY = spot.y;
   }
@@ -1992,8 +1995,8 @@ function stageAiScene(kind: string) {
   if (!state.log.includes(line)) state.log.push(line);
   if (state.log.length > 8) state.log.shift();
   markers.push({ kind: 'attack', x: spot.x, y: spot.y, born: performance.now() });
-  lookAtPoint(spot.x + 1.4, spot.y + 0.4);
-  camera.zoom = 1.2;
+  lookAtPoint((spot.x + frontX) / 2, (spot.y + frontY) / 2);
+  camera.zoom = 1.08;
   clampView();
 }
 
