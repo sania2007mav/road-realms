@@ -1,0 +1,25 @@
+{
+  "name": "road-realms",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "balance": "vite-node scripts/balance.ts",
+    "test:e2e": "playwright test",
+    "build:yandex": "tsc --noEmit && vite build --base ./ --outDir dist-yandex && node scripts/zip-yandex.mjs"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
+    "@playwright/test": "^1.55.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.5",
+    "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "firebase": "^12.19.0"
+  }
+}
