@@ -643,8 +643,11 @@ test('справка, сохранения, песок, дорога и кадр
   await page.evaluate(() => {
     document.getElementById('app')?.classList.add('frame-bare');
     window.__game!.setGfxMode('high');
-    window.__game!.focusTerrain('desert');
+    window.__game!.focusTerrain('desert', 1.15);
   });
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: `${shots}/sand_normal.png` });
+  await page.evaluate(() => window.__game!.focusTerrain('desert', 2.6));
   await page.waitForTimeout(300);
   await page.screenshot({ path: `${shots}/sand_closeup.png` });
   await page.evaluate(() => window.__game!.setGfxMode('simple'));
@@ -734,6 +737,21 @@ test('телефон: портрет 360×640, 390×844 и альбом', async 
   await page.goto('/road-realms/');
   await page.getByTestId('new-game').click();
   await expect(page.getByTestId('phone-goal')).toBeVisible();
+  await page.evaluate(() => {
+    const log = document.querySelector('#log');
+    if (!log) return;
+    for (let i = 0; i < 3; i++) {
+      const line = document.createElement('button');
+      line.className = 'log-line';
+      line.type = 'button';
+      line.textContent = 'Тракт пролегает через весь край. Поставьте амбар и склад.';
+      log.append(line);
+    }
+  });
+  const shownLogs = await page.locator('#log .log-line').evaluateAll((nodes) =>
+    nodes.filter((node) => getComputedStyle(node).display !== 'none').length,
+  );
+  expect(shownLogs).toBe(1);
   await expect(page.locator('#buildbar')).toBeVisible();
   await expect(page.locator('#panel')).toBeHidden();
   await expect(page.locator('#speeds')).toBeHidden();
@@ -775,6 +793,71 @@ test('телефон: портрет 360×640, 390×844 и альбом', async 
   await page.screenshot({ path: `${shots}/phone_landscape.png` });
 });
 
+test('заставка, об игре и установка', async ({ page }) => {
+  mkdirSync(shots, { recursive: true });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+  await page.goto('/road-realms/');
+  await expect(page.getByTestId('boot')).toBeHidden();
+  await expect(page.getByTestId('version')).toHaveText(/^v1\.0\.0 · /);
+  await page.screenshot({ path: `${shots}/title_version.png` });
+  await page.getByTestId('about-open').click();
+  await expect(page.getByTestId('about')).toContainText('ИП Мельничук');
+  await expect(page.getByTestId('about')).toContainText('кодом');
+  await page.screenshot({ path: `${shots}/about.png` });
+  await page.getByTestId('about-close').click();
+  await page.evaluate(() => window.__game!.offerInstall());
+  await expect(page.getByTestId('install-banner')).toContainText('Установить');
+  await page.screenshot({ path: `${shots}/install_prompt.png` });
+  const manifest = await page.evaluate(async () => {
+    const response = await fetch('/road-realms/manifest.webmanifest');
+    return response.json() as Promise<{ name: string; short_name: string; display: string; icons: { sizes: string; purpose?: string }[] }>;
+  });
+  expect(manifest.name).toBe('Дорожные края');
+  expect(manifest.short_name.length).toBeGreaterThan(0);
+  expect(manifest.display).toBe('standalone');
+  expect(manifest.icons.map((icon) => icon.sizes).sort()).toEqual(['192x192', '512x512', '512x512']);
+  const privacy = await page.evaluate(async () => (await fetch('/road-realms/privacy.html')).text());
+  expect(privacy).toContain('анонимно');
+  expect(privacy).toContain('localStorage');
+});
+
+test('кадры для витрины 1280×720', async ({ page }) => {
+  mkdirSync(shots, { recursive: true });
+  await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('/road-realms/');
+  await page.getByTestId('new-game').click();
+  await page.evaluate(() => window.__game!.debugScene('settlement'));
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: `${shots}/store_settlement.png` });
+  await page.evaluate(() => window.__game!.debugScene('siege'));
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: `${shots}/store_siege.png` });
+
+  await page.goto('/road-realms/');
+  await page.getByTestId('campaign-open').click();
+  await expect(page.getByTestId('campaign-map')).toBeVisible();
+  await page.screenshot({ path: `${shots}/store_campaign.png` });
+
+  await page.goto('/road-realms/');
+  await page.getByTestId('net-game').click();
+  await expect(page.getByTestId('lobby-list')).toBeVisible();
+  await page.waitForTimeout(1200);
+  await page.screenshot({ path: `${shots}/store_lobby.png` });
+
+  await page.goto('/road-realms/');
+  await page.getByTestId('help-open').click();
+  await expect(page.getByTestId('help-book')).toBeVisible();
+  await page.screenshot({ path: `${shots}/store_encyclopedia.png` });
+
+  await page.setViewportSize({ width: 360, height: 640 });
+  await page.goto('/road-realms/');
+  await page.getByTestId('new-game').click();
+  await expect(page.getByTestId('phone-goal')).toBeVisible();
+  await page.screenshot({ path: `${shots}/store_phone_raw.png` });
+});
+
 declare global {
   interface Window {
     __game?: {
@@ -808,7 +891,8 @@ declare global {
       playCampaignScript: () => { outcome: string; tick: number } | null;
       measureFps: (ms: number) => Promise<number>;
       setChunks: (on: boolean) => void;
-      focusTerrain: (kind: string) => void;
+      focusTerrain: (kind: string, zoom?: number) => void;
+      offerInstall: () => void;
       setGfxMode: (mode: 'high' | 'simple') => void;
       stageRoad: () => void;
     };

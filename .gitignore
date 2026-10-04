@@ -1,5 +1,7 @@
 node_modules
 dist
+dist-yandex
+road-realms-yandex.zip
 test-results
 playwright-report
 blob-report

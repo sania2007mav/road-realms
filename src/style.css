@@ -859,7 +859,7 @@ button.guide-pulse {
     top: 106px;
     left: 6px;
     right: auto;
-    max-width: 46vw;
+    max-width: 42vw;
     margin: 0;
     padding: 2px 8px;
     font-size: 11px;
@@ -875,14 +875,30 @@ button.guide-pulse {
     top: 106px;
     right: 6px;
     left: auto;
-    width: min(168px, 46vw);
-    max-height: 20px;
+    width: min(140px, 40vw);
+    max-height: 22px;
     margin: 0;
     font-size: 11px;
     z-index: 5;
     overflow: hidden;
+    text-shadow: none;
   }
-  .log-line { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; width: 100%; }
+  #log .log-line:not(:last-child) { display: none !important; }
+  #log .log-line:last-child {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 11px;
+    line-height: 1.2;
+    text-shadow: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   #toast {
     position: fixed;
     left: 50%;
@@ -1047,3 +1063,77 @@ button.guide-pulse {
   #tabs button { min-height: 26px; padding: 0 8px; }
   #buttons button, #map-toggle, #army-box { min-height: 36px; }
 }
+
+.brand { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
+.brand h1 { margin: 0; font-size: 36px; }
+.mark { width: 64px; height: 64px; border-radius: 14px; flex: none; display: block; }
+.version { margin: 2px 0 0; color: var(--gold); font-size: 14px; font-variant-numeric: tabular-nums; }
+.fineprint { margin: 10px 0 0; font-size: 13px; color: var(--muted); }
+.fineprint a, #about a { color: var(--gold); }
+
+#boot {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: #241c16;
+  text-align: center;
+}
+.boot-title {
+  margin: 0;
+  font-family: Georgia, "Iowan Old Style", Palatino, serif;
+  font-size: 36px;
+}
+#boot-bar {
+  width: min(280px, 70vw);
+  height: 8px;
+  border-radius: 999px;
+  background: #3a3028;
+  overflow: hidden;
+}
+#boot-bar > i {
+  display: block;
+  width: 12%;
+  height: 100%;
+  background: var(--gold);
+  transition: width 180ms ease;
+}
+
+#about, #crash {
+  position: absolute;
+  inset: 0;
+  z-index: 22;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(28, 22, 18, 0.78);
+}
+#crash-detail { color: var(--muted); overflow-wrap: anywhere; }
+
+#update-banner, #install-banner {
+  position: absolute;
+  z-index: 28;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--gold);
+  border-radius: 16px;
+  padding: 10px 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+}
+#update-banner p, #install-banner p { margin: 0; flex: 1 1 180px; }
+
+#app.frame-bare #boot,
+#app.frame-bare #about,
+#app.frame-bare #crash,
+#app.frame-bare #update-banner,
+#app.frame-bare #install-banner { display: none !important; }

@@ -584,78 +584,27 @@ function paintTileDetail(ctx: CanvasRenderingContext2D, state: GameState, x: num
   blitSprite(ctx, groundStamp(terrain, variant), origin.x, origin.y);
 }
 
-const sandVeils = new Map<number, HTMLCanvasElement>();
-
-function sandVeilCanvas(): HTMLCanvasElement {
-  const key = gfxHigh() ? 1 : 0;
-  const cached = sandVeils.get(key);
-  if (cached) return cached;
-  const size = 192;
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const g = canvas.getContext('2d');
-  const ready = canvas;
-  if (!g) {
-    sandVeils.set(key, ready);
-    return ready;
-  }
-  const blot = (x: number, y: number, rad: number, color: string) => {
-    for (const ox of [-size, 0, size]) {
-      for (const oy of [-size, 0, size]) {
-        g.fillStyle = color;
-        g.beginPath();
-        g.arc(x + ox, y + oy, rad, 0, Math.PI * 2);
-        g.fill();
-      }
-    }
-  };
-  const blobs = gfxHigh() ? 22 : 14;
-  for (let i = 0; i < blobs; i++) {
-    const x = hash2(1200, i, key) % size;
-    const y = hash2(1200, i, key + 5) % size;
-    const light = i % 3 !== 0;
-    const alpha = (light ? 0.05 : 0.04) + (i % 4) * 0.01;
-    blot(x, y, 20 + (hash2(1200, i, 9) % 28), light ? `rgba(255,248,230,${alpha})` : `rgba(168,142,102,${alpha})`);
-  }
-  const specks = gfxHigh() ? 36 : 14;
-  for (let i = 0; i < specks; i++) {
-    const x = hash2(1500, i, key + 1) % size;
-    const y = hash2(1500, i, key + 4) % size;
-    const light = i % 2 === 0;
-    blot(x, y, 1.2 + (i % 3) * 0.45, light ? 'rgba(255,250,236,0.14)' : 'rgba(150,124,86,0.09)');
-  }
-  sandVeils.set(key, ready);
-  return ready;
-}
-
-function paintSandVeil(ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number) {
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const [x, y] of [
-    [x0, y0],
-    [x1, y0],
-    [x0, y1],
-    [x1, y1],
-  ]) {
-    for (const point of diamond(x, y, 1, 1)) {
-      if (point.x < minX) minX = point.x;
-      if (point.y < minY) minY = point.y;
-      if (point.x > maxX) maxX = point.x;
-      if (point.y > maxY) maxY = point.y;
-    }
-  }
-  if (!Number.isFinite(minX)) return;
-  const veil = sandVeilCanvas();
-  const period = veil.width;
+function paintSandVeil(ctx: CanvasRenderingContext2D, state: GameState, x0: number, y0: number, x1: number, y1: number) {
+  const count = gfxHigh() ? 4 : 2;
   ctx.save();
   ctx.globalCompositeOperation = 'source-atop';
-  const xStart = Math.floor((minX - period) / period) * period;
-  const yStart = Math.floor((minY - period) / period) * period;
-  for (let y = yStart; y < maxY + period; y += period) {
-    for (let x = xStart; x < maxX + period; x += period) ctx.drawImage(veil, x, y);
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const index = y * state.mapW + x;
+      if ((state.roads?.[index] ?? 0) === 1) continue;
+      const terrain = terrainAt(state, x, y);
+      if (terrain !== Terrain.Desert && terrain !== Terrain.Land) continue;
+      const origin = tileToIso(x + 0.5, y + 0.5);
+      for (let i = 0; i < count; i++) {
+        const n = hash2(state.seed, x * 19 + i * 5 + (gfxHigh() ? 1 : 0), y * 23 + 7);
+        const dx = ((n % 21) - 10) * 1.05;
+        const dy = (((n >>> 8) % 11) - 5) * 0.8;
+        const light = (n & 8) === 0;
+        ctx.fillStyle = light ? 'rgba(255,246,226,0.09)' : 'rgba(146,118,78,0.07)';
+        const size = 0.55 + (n % 3) * 0.28;
+        ctx.fillRect(origin.x + dx, origin.y + dy, size, size);
+      }
+    }
   }
   ctx.restore();
 }
@@ -664,7 +613,7 @@ function paintGround(ctx: CanvasRenderingContext2D, state: GameState, x0: number
   for (let y = y0; y < y1; y++) {
     for (let x = x0; x < x1; x++) paintSandBase(ctx, state, x, y);
   }
-  paintSandVeil(ctx, x0, y0, x1, y1);
+  paintSandVeil(ctx, state, x0, y0, x1, y1);
   for (let y = y0; y < y1; y++) {
     for (let x = x0; x < x1; x++) paintTileDetail(ctx, state, x, y);
   }

@@ -21,7 +21,7 @@ import {
   update,
   type Unsubscribe,
 } from 'firebase/database';
-import { firebaseConfig } from '../firebase';
+import { OFFLINE_NOTE, enableAppCheck, firebaseConfig, friendlyNetError } from '../firebase';
 import { describeSetup, displayLobbyName, normalizeSetup, profilesFromLobbyName, unpackSeed } from '../sim/match';
 import { createGame } from '../sim/world';
 import { hashState } from '../sim/hash';
@@ -106,6 +106,7 @@ export interface NetHooks {
 }
 
 const app = initializeApp(firebaseConfig);
+void enableAppCheck(app);
 const auth = getAuth(app);
 const db = getDatabase(app, firebaseConfig.databaseURL);
 
@@ -159,9 +160,20 @@ function randomSeed(): number {
 }
 
 async function ensureUser(): Promise<User> {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) throw new Error(OFFLINE_NOTE);
   if (auth.currentUser) return auth.currentUser;
-  const cred = await signInAnonymously(auth);
-  return cred.user;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const cred = await Promise.race([
+      signInAnonymously(auth),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(OFFLINE_NOTE)), 12_000);
+      }),
+    ]);
+    return cred.user;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export class NetSession {
@@ -233,7 +245,7 @@ export class NetSession {
         rows.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : 1));
         this.hooks.onList(rows);
       },
-      (err) => this.hooks.onError(err.message),
+      (err) => this.hooks.onError(friendlyNetError(err, OFFLINE_NOTE)),
     );
     this.unsubs.push(unsub);
   }
@@ -521,7 +533,7 @@ export class NetSession {
     void onDisconnect(mine)
       .set({ online: false, at: serverTimestamp() })
       .then(() => set(mine, { online: true, at: serverTimestamp() }))
-      .catch((err) => this.hooks.onError(err instanceof Error ? err.message : 'Не удалось отметить присутствие'));
+      .catch((err) => this.hooks.onError(friendlyNetError(err, 'Не удалось отметить присутствие')));
     this.unsubs.push(
       onValue(ref(db, `matches/${id}/presence`), (snap) => {
         const value = (snap.val() || {}) as Record<string, { online?: boolean; at?: number }>;
@@ -579,7 +591,7 @@ export class NetSession {
         if (cmd.kind === 'drop') this.drops.push(cmd as { kind: 'drop'; playerId: number; uid: string; fromTurn: number });
         else this.bucket.push(cmd as Command);
       }
-      this.hooks.onError(err instanceof Error ? err.message : 'Не удалось отправить ход');
+      this.hooks.onError(friendlyNetError(err, 'Не удалось отправить ход'));
     });
   }
 

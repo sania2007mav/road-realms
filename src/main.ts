@@ -68,6 +68,8 @@ import { loadUiSettings, saveUiSettings, settingsHtml, type UiSettings } from '.
 import { clearSlots, migrateLegacy, newestSlot, readHeader, readSlot, sessionMeta, writeSlot, type SlotId } from './save/slots';
 import { CAMPAIGN_KEY } from './campaign/progress';
 import { createAudio } from './audio/bus';
+import { friendlyNetError } from './firebase';
+import { acceptInstall, acceptUpdate, bootRelease, versionLabel } from './release';
 import type { AudioSettings } from './audio/settings';
 import { botCommand } from './campaign/bot';
 import { advanceCampaign } from './campaign/run';
@@ -580,6 +582,11 @@ function continueGame() {
 }
 
 function closeOverlay(): boolean {
+  const about = document.querySelector<HTMLElement>('#about');
+  if (about && !about.hidden) {
+    about.hidden = true;
+    return true;
+  }
   const help = document.querySelector<HTMLElement>('#help-book');
   if (help && !help.hidden) {
     help.hidden = true;
@@ -669,7 +676,19 @@ function buildTitle() {
   title.hidden = false;
   title.innerHTML = `<div class="card menu-card">
     <div class="menu-scroll">
-    <h1>Дорожные края</h1>
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 64 64" aria-hidden="true">
+        <rect width="64" height="64" fill="#d4c294"/>
+        <rect y="40" width="64" height="8" fill="#7a5634"/>
+        <rect x="24" y="18" width="16" height="24" fill="#e8d6b4" stroke="#a88c68"/>
+        <polygon points="20,20 32,8 44,20" fill="#783030"/>
+        <path d="M32 10 V2 H44 L32 10" fill="#c44030"/>
+      </svg>
+      <div>
+        <h1>Дорожные края</h1>
+        <p class="version" data-testid="version">${versionLabel()}</p>
+      </div>
+    </div>
     <p class="lede">Открытая стратегия вдоль большого тракта. Люди — редкость: их ровно столько, сколько влезает в жильё, и каждый занят только одним делом.</p>
     <label for="player-name">Ваше имя</label>
     <input id="player-name" data-testid="player-name" maxlength="20" />
@@ -781,7 +800,9 @@ function buildTitle() {
         <button type="button" id="settings-title" data-testid="settings-open">Настройки</button>
         <button type="button" id="know-game" data-testid="know-game">Я умею играть</button>
         <button type="button" id="net-title" data-testid="net-game">Сетевая игра</button>
+        <button type="button" id="about-title" data-testid="about-open">Об игре</button>
       </div>
+      <p class="fineprint"><a href="privacy.html">Политика конфиденциальности</a></p>
     </div>
   </div>`;
   const nameInput = document.querySelector<HTMLInputElement>('#player-name')!;
@@ -816,6 +837,22 @@ function buildTitle() {
   syncKnowButton();
   document.querySelector<HTMLButtonElement>('#net-title')!.onclick = () => openNet();
   document.querySelector<HTMLButtonElement>('#campaign-title')!.onclick = () => showCampaignMap();
+  document.querySelector<HTMLButtonElement>('#about-title')!.onclick = () => openAbout();
+}
+
+function openAbout() {
+  const about = document.querySelector<HTMLElement>('#about')!;
+  about.hidden = false;
+  about.innerHTML = `<div class="card">
+    <h2>Об игре</h2>
+    <p>Дорожные края. ${versionLabel()}.</p>
+    <p>ИП Мельничук. Весь рисунок и весь звук собраны кодом в браузере: чужих картинок и записей нет.</p>
+    <p><a href="privacy.html">Политика конфиденциальности</a></p>
+    <div class="actions"><button type="button" id="about-close" data-testid="about-close">Закрыть</button></div>
+  </div>`;
+  document.querySelector<HTMLButtonElement>('#about-close')!.onclick = () => {
+    about.hidden = true;
+  };
 }
 
 function showCampaignMap() {
@@ -1182,6 +1219,7 @@ function renderMenu() {
       <button type="button" id="gfx-btn" data-testid="gfx-toggle">${gfxLabel()}</button>
     </div>
     <p>Мышь: тянуть карту, колесо — масштаб, край экрана листает карту. На телефоне: два пальца двигают и меняют масштаб, долгое нажатие открывает постройку. Клавиши: WASD, Z X C V B N — вкладки построек, пробел — пауза, 1–3 — скорость, Esc закрывает панели, H — подсказки.</p>
+    <p class="version">${versionLabel()}</p>
     <div class="actions"><button type="button" id="close-menu">Закрыть</button></div>
   </div>`;
   if (compact) parkEcon(true);
@@ -2966,7 +3004,7 @@ function expose() {
     setChunks(on: boolean) {
       setTerrainChunks(on);
     },
-    focusTerrain(kind: string) {
+    focusTerrain(kind: string, zoom?: number) {
       const want = kind === 'road' ? Terrain.Road : Terrain.Desert;
       let best: { x: number; y: number } | null = null;
       let bestScore = -Infinity;
@@ -2999,9 +3037,12 @@ function expose() {
       panelSig = '';
       hideMenu();
       lookAtPoint(best.x, best.y);
-      camera.zoom = 2.55;
+      camera.zoom = typeof zoom === 'number' ? zoom : 2.55;
       clampView();
       setSpeed(0);
+    },
+    offerInstall() {
+      showInstallOffer();
     },
     setGfxMode(mode: 'high' | 'simple') {
       setGfx(mode);
@@ -3387,7 +3428,8 @@ declare global {
       playCampaignScript: () => { outcome: string; tick: number } | null;
       measureFps: (ms: number) => Promise<number>;
       setChunks: (on: boolean) => void;
-      focusTerrain: (kind: string) => void;
+      focusTerrain: (kind: string, zoom?: number) => void;
+      offerInstall: () => void;
       setGfxMode: (mode: 'high' | 'simple') => void;
       stageRoad: () => void;
     };
@@ -3475,7 +3517,7 @@ function openNet() {
   const invite = new URLSearchParams(location.search).get('lobby');
   if (invite && !inviteHandled) {
     inviteHandled = true;
-    void net.join(invite).catch((err) => netView.error(err instanceof Error ? err.message : 'Не удалось войти'));
+    void net.join(invite).catch((err) => netMessage(err, 'Не удалось войти'));
   }
 }
 
@@ -3487,7 +3529,7 @@ function closeNet() {
 }
 
 function netMessage(err: unknown, fallback: string) {
-  netView.error(err instanceof Error ? err.message : fallback);
+  netView.error(friendlyNetError(err, fallback));
 }
 
 const netView = new NetView(document.querySelector<HTMLElement>('#net')!, document.querySelector<HTMLElement>('#syncbox')!, {
@@ -3535,6 +3577,60 @@ net.hooks = {
   onError: (message) => netView.error(message),
   onEnded: () => {},
 };
+
+function showInstallOffer() {
+  const banner = document.querySelector<HTMLElement>('#install-banner');
+  if (banner) banner.hidden = false;
+}
+
+function showCrash(detail: string) {
+  const box = document.querySelector<HTMLElement>('#crash');
+  if (!box || !box.hidden) return;
+  if (playing && !netMode) void writeSlot('auto', state, saveMeta('auto')).catch(() => {});
+  const node = document.querySelector<HTMLElement>('#crash-detail');
+  if (node) node.textContent = detail.slice(0, 280);
+  box.hidden = false;
+}
+
+document.querySelector<HTMLButtonElement>('#install-apply')!.onclick = () => {
+  void acceptInstall().finally(() => {
+    const banner = document.querySelector<HTMLElement>('#install-banner');
+    if (banner) banner.hidden = true;
+  });
+};
+document.querySelector<HTMLButtonElement>('#install-dismiss')!.onclick = () => {
+  const banner = document.querySelector<HTMLElement>('#install-banner');
+  if (banner) banner.hidden = true;
+};
+document.querySelector<HTMLButtonElement>('#update-apply')!.onclick = () => acceptUpdate();
+document.querySelector<HTMLButtonElement>('#crash-recover')!.onclick = () => {
+  document.querySelector<HTMLElement>('#crash')!.hidden = true;
+  continueGame();
+};
+document.querySelector<HTMLButtonElement>('#crash-menu')!.onclick = () => {
+  document.querySelector<HTMLElement>('#crash')!.hidden = true;
+  playing = false;
+  netMode = false;
+  buildTitle();
+  bootPreview();
+};
+window.addEventListener('error', (event) => {
+  if (/ResizeObserver/.test(event.message || '')) return;
+  showCrash(event.message || 'Ошибка');
+});
+window.addEventListener('unhandledrejection', (event) => {
+  const reason = event.reason;
+  const message = reason instanceof Error ? reason.message : String(reason ?? '');
+  if (!message || /ResizeObserver/.test(message)) return;
+  showCrash(message);
+});
+bootRelease({
+  onUpdate: () => {
+    const banner = document.querySelector<HTMLElement>('#update-banner');
+    if (banner) banner.hidden = false;
+  },
+  onInstall: showInstallOffer,
+});
 
 resize();
 applyUi();

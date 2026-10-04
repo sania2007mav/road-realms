@@ -4,11 +4,31 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
     <title>Дорожные края</title>
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta name="description" content="Дорожные края — браузерная стратегия вдоль большого тракта. Люди живут в жилье, каждая работа занимает человека. Одиночная игра, кампания и сеть." />
+    <meta name="theme-color" content="#1c1612" />
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="ru_RU" />
+    <meta property="og:site_name" content="Дорожные края" />
+    <meta property="og:title" content="Дорожные края" />
+    <meta property="og:description" content="Стратегия вдоль большого тракта: люди, жильё, дороги и соседи. Можно играть одному, пройти кампанию или сесть за сетевой стол." />
+    <meta property="og:url" content="https://sania2007mav.github.io/road-realms/" />
+    <meta property="og:image" content="https://sania2007mav.github.io/road-realms/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Дорожные края" />
+    <meta name="twitter:description" content="Стратегия вдоль большого тракта: люди, жильё, дороги и соседи." />
+    <meta name="twitter:image" content="https://sania2007mav.github.io/road-realms/og.png" />
+    <link rel="icon" href="%BASE_URL%favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="%BASE_URL%apple-touch-icon.png" />
+    <link rel="manifest" href="%BASE_URL%manifest.webmanifest" />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
     <div id="app">
+      <div id="boot" data-testid="boot">
+        <p class="boot-title">Дорожные края</p>
+        <div id="boot-bar" aria-hidden="true"><i></i></div>
+        <p>Загрузка</p>
+      </div>
       <canvas id="world"></canvas>
       <header id="topbar"></header>
       <aside id="goals" data-testid="goals" hidden></aside>
@@ -43,6 +63,27 @@
       <section id="net" hidden></section>
       <section id="syncbox" hidden></section>
       <section id="title"></section>
+      <section id="about" data-testid="about" hidden></section>
+      <section id="crash" data-testid="crash" hidden>
+        <div class="card">
+          <h2>Что-то пошло не так</h2>
+          <p>Партия на этом устройстве сохранена, если автосохранение успело записаться. Сеть для этого не нужна.</p>
+          <p id="crash-detail"></p>
+          <div class="actions">
+            <button type="button" id="crash-recover" data-testid="crash-recover">Продолжить с сохранения</button>
+            <button type="button" id="crash-menu" data-testid="crash-menu">На заставку</button>
+          </div>
+        </div>
+      </section>
+      <section id="update-banner" data-testid="update-banner" hidden>
+        <p>Доступна новая версия</p>
+        <button type="button" id="update-apply" data-testid="update-apply">Обновить</button>
+      </section>
+      <section id="install-banner" data-testid="install-banner" hidden>
+        <p>Установить «Дорожные края» на это устройство</p>
+        <button type="button" id="install-apply" data-testid="install-apply">Установить</button>
+        <button type="button" id="install-dismiss" data-testid="install-dismiss">Не сейчас</button>
+      </section>
       <section id="tutorial" hidden></section>
       <section id="end" hidden></section>
       <section id="menu" hidden></section>
