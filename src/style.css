@@ -778,12 +778,272 @@ button.guide-pulse {
 }
 
 @media (max-width: 420px), (max-height: 420px) {
-  #topbar { top: 4px; left: 4px; gap: 4px; }
-  .readout, #status button { padding: 4px 8px; font-size: 12px; }
-  #dock { left: 4px; right: 4px; bottom: 4px; gap: 4px; }
-  #mapwrap { width: 84px; height: 56px; }
-  #econ { display: none; }
-  #log { max-height: 32px; }
-  #panel { bottom: 108px; max-height: 32vh; }
   .menu-card, #title .card { max-height: calc(100vh - 16px); }
+}
+
+#res-toggle, #map-toggle { display: none; }
+
+#app.frame-bare #topbar,
+#app.frame-bare #dock,
+#app.frame-bare #panel,
+#app.frame-bare #goals,
+#app.frame-bare #army,
+#app.frame-bare #banner,
+#app.frame-bare #hint,
+#app.frame-bare #tutorial,
+#app.frame-bare #tip,
+#app.frame-bare #menu,
+#app.frame-bare #toast,
+#app.frame-bare #popbox,
+#app.frame-bare #peoplebox,
+#app.frame-bare #log,
+#app.frame-bare #phone-goal {
+  display: none !important;
+}
+
+@media (max-width: 840px), (max-height: 500px) {
+  #topbar {
+    top: 2px;
+    left: 4px;
+    right: 4px;
+    max-width: none;
+    gap: 2px;
+  }
+  #status { flex-wrap: nowrap; width: 100%; overflow: hidden; gap: 4px; }
+  #status .readout, #status button, #open-menu {
+    min-height: 36px;
+    padding: 2px 8px;
+    font-size: 13px;
+  }
+  #fps, #mute-btn, #audio-open, #presence { display: none !important; }
+  #resources {
+    flex-wrap: nowrap;
+    width: 100%;
+    overflow-x: auto;
+    padding-bottom: 0;
+    gap: 4px;
+  }
+  .res { min-height: 28px; padding: 2px 8px; font-size: 12px; }
+  #hint, #tutorial {
+    position: fixed;
+    left: 6px;
+    right: 6px;
+    top: 74px;
+    bottom: auto;
+    width: auto;
+    max-width: none;
+    margin: 0;
+    z-index: 5;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    line-height: 1.25;
+    max-height: 28px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  #tutorial { max-height: none; white-space: normal; padding: 0; background: transparent; border: 0; }
+  #tutorial .card {
+    padding: 4px 10px;
+    border-radius: 12px;
+    box-shadow: none;
+  }
+  #tutorial .card h2 { font-size: 14px; margin: 0; }
+  #tutorial .guide-step { display: none; }
+  #tutorial .card p { margin: 0; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #tutorial .card .actions { margin-top: 4px; }
+  #phone-goal:not([hidden]) {
+    display: block;
+    position: fixed;
+    top: 106px;
+    left: 6px;
+    right: auto;
+    max-width: 46vw;
+    margin: 0;
+    padding: 2px 8px;
+    font-size: 11px;
+    line-height: 1.2;
+    border-radius: 999px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    z-index: 5;
+  }
+  #log {
+    position: fixed;
+    top: 106px;
+    right: 6px;
+    left: auto;
+    width: min(168px, 46vw);
+    max-height: 20px;
+    margin: 0;
+    font-size: 11px;
+    z-index: 5;
+    overflow: hidden;
+  }
+  .log-line { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; width: 100%; }
+  #toast {
+    position: fixed;
+    left: 50%;
+    right: auto;
+    bottom: 96px;
+    top: auto;
+    transform: translateX(-50%);
+    max-width: 86vw;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    z-index: 6;
+  }
+  #banner {
+    top: auto;
+    bottom: 96px;
+    max-width: min(280px, 70vw);
+    max-height: 32px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 12px;
+    padding: 4px 8px;
+  }
+  #speeds, #econ, #mapwrap { display: none; }
+  #econ.in-menu {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    background: transparent;
+    border: 0;
+    padding: 4px 0 0;
+    border-radius: 0;
+  }
+  #dock {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: block;
+    padding: 4px 4px 4px 86px;
+    pointer-events: none;
+    grid-template-columns: none;
+  }
+  #dock > * { pointer-events: auto; }
+  #buildbar {
+    min-width: 0;
+    grid-column: auto;
+    padding: 4px;
+    border-radius: 12px;
+    pointer-events: auto;
+  }
+  #tabs { gap: 4px; flex-wrap: nowrap; }
+  #tabs button { min-height: 32px; padding: 2px 8px; font-size: 12px; flex: 0 0 auto; }
+  #buttonrow { margin-top: 4px; }
+  #buttons { padding-bottom: 0; gap: 4px; }
+  #buttons button { min-width: 0; max-width: 148px; min-height: 44px; padding: 4px 8px; font-size: 12px; white-space: normal; }
+  #buttons b { white-space: normal; }
+  #buttons small { display: none; }
+  #build-prev, #build-next { min-width: 32px; min-height: 44px; padding: 0 6px; }
+  #home, #map-toggle {
+    position: absolute;
+    min-height: 44px;
+    padding: 4px 8px;
+    bottom: calc(100% + 4px);
+  }
+  #home { right: 4px; }
+  #map-toggle { display: inline-flex; right: 92px; }
+  #dock.show-map #mapwrap {
+    display: block;
+    position: absolute;
+    right: 4px;
+    bottom: calc(100% + 4px);
+    width: 120px;
+    height: 72px;
+  }
+  #army {
+    top: auto;
+    left: 4px;
+    bottom: 4px;
+    width: auto;
+    z-index: 5;
+  }
+  #army-box { min-height: 44px; padding: 4px 8px; }
+  #army-body { position: absolute; left: 0; bottom: 48px; width: min(260px, 72vw); }
+  #panel {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-height: min(136px, 28vh);
+    border-radius: 16px 16px 0 0;
+    z-index: 8;
+    padding: 6px 10px 8px;
+    background: #1c1612;
+  }
+  #panel::before {
+    content: "";
+    display: block;
+    width: 36px;
+    height: 4px;
+    border-radius: 4px;
+    background: rgba(246, 234, 215, 0.35);
+    margin: 2px auto 6px;
+  }
+  #panel h2 { font-size: 16px; margin: 0 0 4px; }
+  #panel p { margin: 2px 0; font-size: 13px; }
+  #app:has(#panel:not([hidden])) #dock,
+  #app:has(#panel:not([hidden])) #army,
+  #app:has(#panel:not([hidden])) #hint,
+  #app:has(#panel:not([hidden])) #phone-goal,
+  #app:has(#panel:not([hidden])) #log,
+  #app:has(#panel:not([hidden])) #banner,
+  #app:has(#panel:not([hidden])) #toast {
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+  #popbox, #peoplebox {
+    top: 76px;
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-height: 42vh;
+  }
+  #menu { top: 8px; max-height: calc(100% - 16px); overflow: auto; }
+  #menu .card { max-height: calc(100vh - 20px); overflow: auto; }
+  #audio-panel { left: 8px; right: 8px; top: 48px; width: auto; }
+}
+
+@media (max-height: 500px) and (max-width: 900px) {
+  #resources { display: none; }
+  #topbar.show-res #resources { display: flex; }
+  #res-toggle { display: inline-flex; min-height: 32px; padding: 2px 8px; }
+  #hint, #tutorial {
+    top: 40px;
+    right: auto;
+    width: auto;
+    max-width: 38%;
+  }
+  #tutorial { max-width: 46%; }
+  #phone-goal:not([hidden]) {
+    top: 40px;
+    left: 41%;
+    right: auto;
+    max-width: 26%;
+  }
+  #log { top: 40px; width: min(150px, 28vw); }
+  #app:has(#topbar.show-res) #hint,
+  #app:has(#topbar.show-res) #tutorial,
+  #app:has(#topbar.show-res) #phone-goal:not([hidden]),
+  #app:has(#topbar.show-res) #log { top: 72px; }
+  #dock {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    padding-left: 78px;
+  }
+  #buildbar { flex: 1 1 auto; }
+  #home, #map-toggle { position: static; bottom: auto; }
+  #buildbar { padding: 2px; }
+  #buttonrow { margin-top: 2px; }
+  #tabs button { min-height: 26px; padding: 0 8px; }
+  #buttons button, #map-toggle, #army-box { min-height: 36px; }
 }

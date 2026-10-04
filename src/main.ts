@@ -58,7 +58,7 @@ import {
 import { createBuilding } from './sim/entities';
 import { emptyStocks, PLAYER_NAMES } from './sim/balance';
 import { isLineBuilding, wallLine } from './sim/siege';
-import { cycleGfx, gfxLabel, loadGfx } from './render/gfx';
+import { cycleGfx, gfxLabel, loadGfx, setGfx } from './render/gfx';
 import { bakeTerrain, clearTerrainChunks, minimapToTile, renderMinimap, renderWorld, setTerrainChunks, type Ghost, type OrderMarker } from './render/draw';
 import { net } from './net/session';
 import { NetView } from './net/screens';
@@ -325,6 +325,29 @@ function bootPreview() {
   clampView();
 }
 
+function compactLayout() {
+  return window.matchMedia('(max-width: 840px), (max-height: 500px)').matches;
+}
+
+function parkEcon(intoMenu: boolean) {
+  const econ = document.querySelector<HTMLElement>('#econ');
+  const slot = document.querySelector<HTMLElement>('#menu-econ');
+  const dock = document.querySelector<HTMLElement>('#dock');
+  if (!econ || !dock) return;
+  if (intoMenu && slot) {
+    slot.append(econ);
+    econ.classList.add('in-menu');
+  } else {
+    dock.append(econ);
+    econ.classList.remove('in-menu');
+  }
+}
+
+function hideMenu() {
+  parkEcon(false);
+  menu.hidden = true;
+}
+
 function startGame() {
   netMode = false;
   localPlayer = 0;
@@ -345,7 +368,7 @@ function startGame() {
   speed = uiSettings.speed;
   placing = null;
   roadMode = false;
-  selectedId = keep?.id ?? null;
+  selectedId = compactLayout() ? null : (keep?.id ?? null);
   queue = [];
   acc = 0;
   resetArmy();
@@ -578,7 +601,7 @@ function closeOverlay(): boolean {
     return true;
   }
   if (!menu.hidden) {
-    menu.hidden = true;
+    hideMenu();
     return true;
   }
   if (!tutorial.hidden) {
@@ -845,7 +868,7 @@ function startScenario(id: string) {
   speed = uiSettings.speed;
   placing = null;
   roadMode = false;
-  selectedId = keep?.id ?? null;
+  selectedId = compactLayout() ? null : (keep?.id ?? null);
   selectedPersonId = null;
   queue = [];
   acc = 0;
@@ -938,14 +961,23 @@ function buildChrome() {
       <div class="readout" id="gold-readout"></div>
       <div class="readout" id="clock"></div>
       <div class="readout" id="fps">60 к/с</div>
+      <button type="button" id="res-toggle" data-testid="res-toggle">Ресурсы</button>
       <button type="button" id="mute-btn" data-testid="mute-audio" aria-label="Без звука" aria-pressed="false"></button>
       <button type="button" id="audio-open" data-testid="audio-open" aria-label="Настройки звука">♪</button>
       <div id="presence" data-testid="presence" hidden></div>
     </div>
     <div id="resources"></div>`;
   document.querySelector<HTMLButtonElement>('#open-menu')!.onclick = () => {
-    menu.hidden = !menu.hidden;
-    if (!menu.hidden) renderMenu();
+    if (menu.hidden) {
+      menu.hidden = false;
+      renderMenu();
+    } else hideMenu();
+  };
+  document.querySelector<HTMLButtonElement>('#res-toggle')!.onclick = () => {
+    topbar.classList.toggle('show-res');
+  };
+  document.querySelector<HTMLButtonElement>('#map-toggle')!.onclick = () => {
+    document.querySelector('#dock')?.classList.toggle('show-map');
   };
   document.querySelector<HTMLButtonElement>('#people-btn')!.onclick = () => {
     peoplebox.hidden = !peoplebox.hidden;
@@ -1119,9 +1151,22 @@ function setSpeed(value: number) {
 }
 
 function renderMenu() {
+  parkEcon(false);
+  const compact = compactLayout();
   menu.innerHTML = `<div class="card">
     <h2>Меню</h2>
     <p>Зерно ${state.seed}. Игровое время: ${Math.floor(state.tick / TICKS_PER_GAME_MINUTE)} мин.</p>
+    ${compact ? `<div class="actions" data-testid="menu-speeds">
+      <button type="button" id="menu-speed-0">Пауза</button>
+      <button type="button" id="menu-speed-1">1×</button>
+      <button type="button" id="menu-speed-2">2×</button>
+      <button type="button" id="menu-speed-3">3×</button>
+    </div>
+    <div class="actions">
+      <button type="button" id="menu-mute">Без звука</button>
+      <button type="button" id="menu-audio">Звук</button>
+    </div>
+    <div id="menu-econ"></div>` : ''}
     <div class="actions">
       <button type="button" id="save-btn" data-testid="save-game">Сохранить</button>
       <button type="button" id="load-btn">Загрузить</button>
@@ -1139,24 +1184,35 @@ function renderMenu() {
     <p>Мышь: тянуть карту, колесо — масштаб, край экрана листает карту. На телефоне: два пальца двигают и меняют масштаб, долгое нажатие открывает постройку. Клавиши: WASD, Z X C V B N — вкладки построек, пробел — пауза, 1–3 — скорость, Esc закрывает панели, H — подсказки.</p>
     <div class="actions"><button type="button" id="close-menu">Закрыть</button></div>
   </div>`;
+  if (compact) parkEcon(true);
+  for (const value of [0, 1, 2, 3]) {
+    document.querySelector<HTMLButtonElement>(`#menu-speed-${value}`)?.addEventListener('click', () => setSpeed(value));
+  }
+  document.querySelector<HTMLButtonElement>('#menu-mute')?.addEventListener('click', () => {
+    document.querySelector<HTMLButtonElement>('#mute-btn')?.click();
+  });
+  document.querySelector<HTMLButtonElement>('#menu-audio')?.addEventListener('click', () => {
+    hideMenu();
+    document.querySelector<HTMLButtonElement>('#audio-open')?.click();
+  });
   document.querySelector<HTMLButtonElement>('#save-btn')!.onclick = () => openSavePanel();
   document.querySelector<HTMLButtonElement>('#load-btn')!.onclick = () => openSavePanel();
   document.querySelector<HTMLButtonElement>('#book-btn')!.onclick = () => {
-    menu.hidden = true;
+    hideMenu();
     openHelp();
   };
   document.querySelector<HTMLButtonElement>('#settings-btn')!.onclick = () => {
-    menu.hidden = true;
+    hideMenu();
     openSettings();
   };
   document.querySelector<HTMLButtonElement>('#help-btn')!.onclick = () => {
-    menu.hidden = true;
+    hideMenu();
     if (guideOn) return;
     tutorialStep = 0;
     showTutorial();
   };
   document.querySelector<HTMLButtonElement>('#guide-restart')!.onclick = () => {
-    menu.hidden = true;
+    hideMenu();
     localStorage.removeItem(TUTORIAL_KEY);
     playing = false;
     if (netMode) {
@@ -1169,7 +1225,7 @@ function renderMenu() {
     startGame();
   };
   document.querySelector<HTMLButtonElement>('#resign-btn')!.onclick = () => {
-    menu.hidden = true;
+    hideMenu();
     playing = false;
     campaignSession = null;
     if (netMode) {
@@ -1183,7 +1239,7 @@ function renderMenu() {
     bootPreview();
   };
   document.querySelector<HTMLButtonElement>('#close-menu')!.onclick = () => {
-    menu.hidden = true;
+    hideMenu();
   };
   document.querySelector<HTMLButtonElement>('#gfx-btn')!.onclick = () => {
     cycleGfx();
@@ -1275,23 +1331,35 @@ function syncHud() {
   const idle = idleCount(state, localPlayer);
   const used = usedCount(state, localPlayer);
   const cap = housingCap(state, localPlayer);
+  const compact = compactLayout();
   const peopleBtn = document.querySelector<HTMLButtonElement>('#people-btn');
   if (peopleBtn) {
-    peopleBtn.innerHTML = `Люди <strong>${used}</strong>/<strong>${cap}</strong> · свободно <strong>${idle}</strong>`;
+    peopleBtn.innerHTML = compact
+      ? `<strong>${used}</strong>/<strong>${cap}</strong>`
+      : `Люди <strong>${used}</strong>/<strong>${cap}</strong> · свободно <strong>${idle}</strong>`;
+    peopleBtn.title = `Люди ${used} из ${cap}, свободно ${idle}`;
     peopleBtn.classList.toggle('idle-empty', idle === 0);
     peopleBtn.classList.toggle('idle-ready', idle > 0);
   }
   const mood = document.querySelector<HTMLButtonElement>('#mood-btn');
   if (mood) {
     const sign = player.popularity > 0 ? `+${player.popularity}` : String(player.popularity);
-    mood.innerHTML = `Настроение <strong>${sign}</strong>`;
+    mood.innerHTML = compact ? `<strong>${sign}</strong>` : `Настроение <strong>${sign}</strong>`;
+    mood.title = `Настроение ${sign}`;
     mood.classList.remove('mood-up', 'mood-down');
     mood.classList.add(player.popularity >= 0 ? 'mood-up' : 'mood-down');
   }
   const gold = document.querySelector<HTMLElement>('#gold-readout');
-  if (gold) gold.innerHTML = `Золото <strong>${player.gold}</strong>`;
+  if (gold) {
+    gold.innerHTML = compact ? `<strong>${player.gold}</strong>` : `Золото <strong>${player.gold}</strong>`;
+    gold.title = `Золото ${player.gold}`;
+  }
   const clock = document.querySelector<HTMLElement>('#clock');
-  if (clock) clock.textContent = `${Math.floor(state.tick / TICKS_PER_GAME_MINUTE)} мин`;
+  const minute = Math.floor(state.tick / TICKS_PER_GAME_MINUTE);
+  if (clock) {
+    clock.textContent = compact ? `${minute}м` : `${minute} мин`;
+    clock.title = `${minute} мин`;
+  }
   const fpsEl = document.querySelector<HTMLElement>('#fps');
   if (fpsEl) {
     fpsEl.hidden = !uiSettings.showFps;
@@ -1299,27 +1367,28 @@ function syncHud() {
   }
 
   const resources = document.querySelector<HTMLElement>('#resources');
-  const stockSig = RESOURCES.map((res) => player.stocks[res]).join(',');
+  const stockSig = `${compact ? 'c' : 'd'}:${RESOURCES.map((res) => player.stocks[res]).join(',')}`;
   const nowHud = performance.now();
   if (resources && (stockSig !== resourceSig || nowHud - resourceStamp > 150)) {
     resourceSig = stockSig;
     resourceStamp = nowHud;
-    const groups: { label: string; items: (typeof RESOURCES)[number][] }[] = [
-      { label: 'Еда', items: ['apples', 'cheese', 'meat', 'bread'] },
-      { label: 'Материалы', items: ['wood', 'stone', 'iron', 'pitch'] },
-      { label: 'Пиво', items: ['beer'] },
-    ];
-    resources.innerHTML = groups
-      .map(
-        (group) =>
-          `<div class="resgroup"><span class="glabel">${group.label}</span>${group.items
-            .map((res) => {
-              const amount = player.stocks[res];
-              return `<span class="res ${amount > 0 ? '' : 'zero'}"><i style="background:${cargoColor(res)}"></i>${RESOURCE_NAME[res]} <b>${amount}</b></span>`;
-            })
-            .join('')}</div>`,
-      )
-      .join('');
+    const chip = (res: (typeof RESOURCES)[number]) => {
+      const amount = player.stocks[res];
+      return `<span class="res ${amount > 0 ? '' : 'zero'}"><i style="background:${cargoColor(res)}"></i>${RESOURCE_NAME[res]} <b>${amount}</b></span>`;
+    };
+    if (compact) {
+      const order: (typeof RESOURCES)[number][] = ['wood', 'stone', 'iron', 'pitch', 'apples', 'cheese', 'meat', 'bread', 'beer'];
+      resources.innerHTML = order.map(chip).join('');
+    } else {
+      const groups: { label: string; items: (typeof RESOURCES)[number][] }[] = [
+        { label: 'Еда', items: ['apples', 'cheese', 'meat', 'bread'] },
+        { label: 'Материалы', items: ['wood', 'stone', 'iron', 'pitch'] },
+        { label: 'Пиво', items: ['beer'] },
+      ];
+      resources.innerHTML = groups
+        .map((group) => `<div class="resgroup"><span class="glabel">${group.label}</span>${group.items.map(chip).join('')}</div>`)
+        .join('');
+    }
   }
   const ration = document.querySelector<HTMLSelectElement>('#ration');
   if (ration && document.activeElement !== ration) ration.value = player.ration;
@@ -1562,6 +1631,7 @@ function syncGuide() {
     title.dataset.testid = 'guide-title';
     title.textContent = step.title;
     const count = document.createElement('p');
+    count.className = 'guide-step';
     count.textContent = `Шаг ${index + 1} из ${steps.length}`;
     const body = document.createElement('p');
     body.dataset.testid = 'guide-body';
@@ -2143,6 +2213,7 @@ function livingSelection() {
 
 function syncArmy() {
   armyEl.hidden = !playing || state.outcome !== 'playing';
+  armyBox.textContent = compactLayout() ? 'Войска' : 'Выделить войска';
   livingSelection();
   const list = state.soldiers.filter((s) => selectedSoldiers.has(s.id));
   armyBody.hidden = list.length === 0;
@@ -2897,23 +2968,45 @@ function expose() {
     },
     focusTerrain(kind: string) {
       const want = kind === 'road' ? Terrain.Road : Terrain.Desert;
-      const keep = playerKeep(state, localPlayer);
       let best: { x: number; y: number } | null = null;
-      let bestD = Infinity;
-      for (let y = 0; y < state.mapH; y++) {
-        for (let x = 0; x < state.mapW; x++) {
+      let bestScore = -Infinity;
+      for (let y = 3; y < state.mapH - 3; y++) {
+        for (let x = 3; x < state.mapW - 3; x++) {
           if (state.terrain[y * state.mapW + x] !== want) continue;
-          const d = keep ? Math.hypot(x - keep.x, y - keep.y) : 0;
-          if (d < bestD) {
-            bestD = d;
+      let score = 0;
+      for (let dy = -8; dy <= 8; dy++) {
+        for (let dx = -8; dx <= 8; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= state.mapW || ny >= state.mapH) continue;
+          if (state.terrain[ny * state.mapW + nx] === want) score += 1;
+        }
+      }
+          for (const building of state.buildings) {
+            if (building.hp <= 0) continue;
+            if (Math.abs(building.x - x) < 8 && Math.abs(building.y - y) < 8) score -= 30;
+          }
+          if (score > bestScore) {
+            bestScore = score;
             best = { x, y };
           }
         }
       }
       if (!best) return;
+      selectedId = null;
+      selectedPersonId = null;
+      panel.hidden = true;
+      panelSig = '';
+      hideMenu();
       lookAtPoint(best.x, best.y);
-      camera.zoom = 1.7;
+      camera.zoom = 2.55;
       clampView();
+      setSpeed(0);
+    },
+    setGfxMode(mode: 'high' | 'simple') {
+      setGfx(mode);
+      clearTerrainChunks();
+      baked = bakeTerrain(state);
     },
     stageRoad() {
       const keep = playerKeep(state, localPlayer);
@@ -3295,6 +3388,7 @@ declare global {
       measureFps: (ms: number) => Promise<number>;
       setChunks: (on: boolean) => void;
       focusTerrain: (kind: string) => void;
+      setGfxMode: (mode: 'high' | 'simple') => void;
       stageRoad: () => void;
     };
   }
@@ -3353,7 +3447,7 @@ function beginNet(next: GameState, playerId: number) {
   playing = true;
   speed = 1;
   placing = null;
-  selectedId = keep?.id ?? null;
+  selectedId = compactLayout() ? null : (keep?.id ?? null);
   selectedPersonId = null;
   queue = [];
   acc = 0;

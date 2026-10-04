@@ -640,14 +640,20 @@ test('справка, сохранения, песок, дорога и кадр
   await expect(page.getByTestId('save-panel')).toContainText('партия');
   await page.getByTestId('save-close').click();
 
-  await page.evaluate(() => window.__game!.focusTerrain('desert'));
-  await page.evaluate(
-    () =>
-      new Promise<void>((resolve) => {
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-      }),
-  );
+  await page.evaluate(() => {
+    document.getElementById('app')?.classList.add('frame-bare');
+    window.__game!.setGfxMode('high');
+    window.__game!.focusTerrain('desert');
+  });
+  await page.waitForTimeout(300);
   await page.screenshot({ path: `${shots}/sand_closeup.png` });
+  await page.evaluate(() => window.__game!.setGfxMode('simple'));
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: `${shots}/sand_closeup_simple.png` });
+  await page.evaluate(() => {
+    document.getElementById('app')?.classList.remove('frame-bare');
+    window.__game!.setGfxMode('high');
+  });
 
   await page.evaluate(() => window.__game!.stageRoad());
   await page.waitForTimeout(700);
@@ -665,24 +671,107 @@ test('справка, сохранения, песок, дорога и кадр
   expect(before).toBeGreaterThan(0);
 });
 
-test('телефон: портрет 360×640 и альбом', async ({ page }) => {
+async function phoneProbe(page: import('@playwright/test').Page) {
+  return page.evaluate(() => {
+    const visible = (sel: string) => {
+      const el = document.querySelector(sel);
+      if (!el || (el as HTMLElement).hidden) return null;
+      const style = getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden') return null;
+      const r = el.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) return null;
+      return r;
+    };
+    const hit = (a: DOMRect, b: DOMRect) =>
+      a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1;
+    const bad: string[] = [];
+    for (const [a, b] of [
+      ['#hint', '#resources'],
+      ['#hint', '#status'],
+      ['#hint', '#panel'],
+      ['#hint', '#log'],
+      ['#hint', '#phone-goal'],
+      ['#log', '#resources'],
+      ['#log', '#status'],
+      ['#log', '#phone-goal'],
+      ['#panel', '#status'],
+      ['#panel', '#buildbar'],
+      ['#panel', '#speeds'],
+      ['#panel', '#topbar'],
+      ['#tutorial', '#panel'],
+      ['#tutorial', '#speeds'],
+      ['#dock', '#topbar'],
+      ['#banner', '#panel'],
+    ] as const) {
+      const ra = visible(a);
+      const rb = visible(b);
+      if (ra && rb && hit(ra, rb)) bad.push(`${a}×${b}`);
+    }
+    const nodes = ['#topbar', '#dock', '#panel', '#hint', '#tutorial', '#banner', '#phone-goal', '#log', '#army', '#goals', '#speeds', '#mapwrap', '#toast']
+      .map((sel) => visible(sel))
+      .filter((rect): rect is DOMRect => !!rect);
+    let clear = 0;
+    let total = 0;
+    for (let y = 4; y < innerHeight; y += 12) {
+      for (let x = 4; x < innerWidth; x += 12) {
+        total += 1;
+        if (!nodes.some((rect) => x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom)) clear += 1;
+      }
+    }
+    return {
+      bad,
+      share: clear / total,
+      overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      home: document.querySelector('#home')?.getBoundingClientRect().height ?? 0,
+    };
+  });
+}
+
+test('телефон: портрет 360×640, 390×844 и альбом', async ({ page }) => {
   mkdirSync(shots, { recursive: true });
-  await page.setViewportSize({ width: 360, height: 640 });
   await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+  await page.setViewportSize({ width: 360, height: 640 });
   await page.goto('/road-realms/');
   await page.getByTestId('new-game').click();
-  const fit = await page.evaluate(() => ({
-    overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-    target: document.querySelector('#home')?.getBoundingClientRect().height ?? 0,
-  }));
-  expect(fit.overflow).toBeLessThanOrEqual(1);
-  expect(fit.target).toBeGreaterThanOrEqual(44);
   await expect(page.getByTestId('phone-goal')).toBeVisible();
+  await expect(page.locator('#buildbar')).toBeVisible();
+  await expect(page.locator('#panel')).toBeHidden();
+  await expect(page.locator('#speeds')).toBeHidden();
+  const portrait = await phoneProbe(page);
+  expect(portrait.bad).toEqual([]);
+  expect(portrait.share).toBeGreaterThan(0.58);
+  expect(portrait.overflow).toBeLessThanOrEqual(1);
+  expect(portrait.home).toBeGreaterThanOrEqual(44);
   await page.screenshot({ path: `${shots}/phone_portrait.png` });
+
+  const keep = await page.evaluate(() => window.__game!.snapshot().buildings.find((b) => b.type === 'keep')!.id);
+  await page.evaluate((id) => window.__game!.select(id), keep);
+  await expect(page.locator('#panel')).toBeVisible();
+  await expect(page.locator('#panel')).toContainText('Главное здание');
+  const card = await phoneProbe(page);
+  expect(card.bad).toEqual([]);
+  expect(card.share).toBeGreaterThan(0.55);
+  await page.screenshot({ path: `${shots}/phone_portrait_card.png` });
+  await page.locator('#close-panel').click();
+  await expect(page.locator('#panel')).toBeHidden();
+  await expect(page.locator('#buildbar')).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(200);
+  const tall = await phoneProbe(page);
+  expect(tall.bad).toEqual([]);
+  expect(tall.share).toBeGreaterThan(0.58);
+  expect(tall.overflow).toBeLessThanOrEqual(1);
+  await expect(page.locator('.res', { hasText: 'Дерево' })).toBeVisible();
+  await page.screenshot({ path: `${shots}/phone_390.png` });
+
   await page.setViewportSize({ width: 640, height: 360 });
   await page.waitForTimeout(200);
-  const wide = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-  expect(wide).toBeLessThanOrEqual(1);
+  const wide = await phoneProbe(page);
+  expect(wide.bad).toEqual([]);
+  expect(wide.share).toBeGreaterThan(0.58);
+  expect(wide.overflow).toBeLessThanOrEqual(1);
+  await expect(page.getByTestId('res-toggle')).toBeVisible();
   await page.screenshot({ path: `${shots}/phone_landscape.png` });
 });
 
@@ -720,6 +809,7 @@ declare global {
       measureFps: (ms: number) => Promise<number>;
       setChunks: (on: boolean) => void;
       focusTerrain: (kind: string) => void;
+      setGfxMode: (mode: 'high' | 'simple') => void;
       stageRoad: () => void;
     };
   }
