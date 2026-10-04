@@ -12,6 +12,7 @@ export interface Ghost {
   x: number;
   y: number;
   ok: boolean;
+  extras?: { x: number; y: number; ok: boolean }[];
 }
 
 export interface OrderMarker {
@@ -662,9 +663,28 @@ export function renderWorld(
       depth: unitDepth(state, soldier.x, soldier.y),
       draw: () => {
         if (picked) drawFeetRing(ctx, soldier.x, soldier.y);
-        drawFigure(ctx, soldier.x, soldier.y, color, moving(soldier), time, soldier.weapon === 'sword' ? 'sword' : 'club', null, false);
+        if (soldier.weapon === 'ram') drawRam(ctx, soldier.x, soldier.y, color);
+        else if (soldier.weapon === 'catapult') drawCatapult(ctx, soldier.x, soldier.y, color, time);
+        else {
+          const tool =
+            soldier.weapon === 'sword'
+              ? 'sword'
+              : soldier.weapon === 'bow' || soldier.weapon === 'ladder'
+                ? 'spear'
+                : soldier.weapon === 'engineer'
+                  ? 'pick'
+                  : 'club';
+          drawFigure(ctx, soldier.x, soldier.y, color, moving(soldier), time, tool, null, false);
+          if (soldier.weapon === 'bow') drawBow(ctx, soldier.x, soldier.y);
+        }
         if (picked) drawHpBar(ctx, soldier.x, soldier.y, soldier.maxHp > 0 ? soldier.hp / soldier.maxHp : 0);
       },
+    });
+  }
+  for (const cloud of state.clouds ?? []) {
+    sprites.push({
+      depth: cloud.y + cloud.x + 0.2,
+      draw: () => drawPlagueCloud(ctx, cloud.x, cloud.y, cloud.radius, cloud.ticks),
     });
   }
   sprites.sort((a, b) => a.depth - b.depth);
@@ -961,6 +981,26 @@ function wallHeight(building: Building): number {
     case 'mine':
     case 'market':
       return 16;
+    case 'palisade':
+      return 16;
+    case 'wall':
+    case 'gate':
+      return 22;
+    case 'stairs':
+      return 10;
+    case 'woodtower':
+      return 40;
+    case 'stonetower':
+      return 54;
+    case 'moat':
+    case 'pitchditch':
+      return 4;
+    case 'brazier':
+      return 12;
+    case 'oil':
+      return 16;
+    case 'guild':
+      return 24;
     default:
       return 18;
   }
@@ -1096,11 +1136,81 @@ function drawBuilding(ctx: CanvasRenderingContext2D, building: Building, time: n
     case 'barracks':
       drawBarracks(ctx, building.x, building.y, def.w, def.h, wall);
       break;
+    case 'palisade':
+    case 'wall':
+    case 'gate':
+    case 'stairs':
+    case 'woodtower':
+    case 'stonetower':
+    case 'moat':
+    case 'pitchditch':
+    case 'brazier':
+    case 'oil':
+    case 'guild':
+      drawDefence(ctx, building, wall);
+      break;
     default:
       drawVolume(ctx, building.x, building.y, def.w, def.h, wall, '#ccc', '#999', '#777', true);
   }
   if (!caching) drawPlague(ctx, building, wall);
   ctx.restore();
+}
+
+function drawDefence(ctx: CanvasRenderingContext2D, building: Building, wall: number) {
+  const { x, y, type } = building;
+  const def = BUILDINGS[type];
+  if (type === 'moat') {
+    poly(ctx, diamond(x, y, 1, 1), '#5a4a38');
+    poly(ctx, diamond(x + 0.16, y + 0.16, 0.68, 0.68), '#243848');
+    ctx.strokeStyle = 'rgba(180, 200, 210, 0.35)';
+    ctx.stroke();
+    return;
+  }
+  if (type === 'pitchditch') {
+    poly(ctx, diamond(x, y, 1, 1), '#3a3228');
+    poly(ctx, diamond(x + 0.18, y + 0.18, 0.64, 0.64), '#14110e');
+    return;
+  }
+  if (type === 'palisade') {
+    drawVolume(ctx, x, y, 1, 1, wall, '#8a5a32', '#6b4426', '#c4a574', false, 'log');
+    return;
+  }
+  if (type === 'wall' || type === 'stairs') {
+    drawVolume(ctx, x, y, 1, 1, wall, '#b7b1a4', '#8d877c', '#d9d3c6', false, 'stone');
+    if (type === 'wall') crenellations(ctx, x, y, 1, 1, wall, 2);
+    return;
+  }
+  if (type === 'gate') {
+    drawVolume(ctx, x, y, 1, 1, wall, '#b7b1a4', '#8d877c', '#6b4426', true, 'stone');
+    const door = tileToIso(x + 0.5, y + 0.82);
+    ctx.fillStyle = '#3a2414';
+    ctx.fillRect(door.x - 4, door.y - wall * 0.55, 8, wall * 0.4);
+    return;
+  }
+  if (type === 'woodtower') {
+    drawVolume(ctx, x, y, def.w, def.h, wall, '#8a5a32', '#5c3a22', '#c4a574', false, 'log');
+    crenellations(ctx, x, y, def.w, def.h, wall, 3);
+    return;
+  }
+  if (type === 'stonetower') {
+    drawVolume(ctx, x, y, def.w, def.h, wall, '#b7b1a4', '#7a756c', '#d9d3c6', false, 'stone');
+    crenellations(ctx, x, y, def.w, def.h, wall, 4);
+    return;
+  }
+  if (type === 'brazier') {
+    drawVolume(ctx, x, y, 1, 1, wall * 0.45, '#6a6560', '#3a2a22', '#2a2018', false, 'stone');
+    return;
+  }
+  if (type === 'oil') {
+    drawVolume(ctx, x, y, 1, 1, wall, '#3a2a22', '#2a2018', '#6a6560', false, 'stone');
+    const lip = tileToIso(x + 0.5, y + 0.5);
+    ctx.fillStyle = '#1a140c';
+    ctx.beginPath();
+    ctx.ellipse(lip.x, lip.y - wall, 7, 3.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    return;
+  }
+  drawVolume(ctx, x, y, def.w, def.h, wall, '#8a5a32', '#5c3a22', '#6b4426', true, 'plank');
 }
 
 function drawScaffold(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, wall: number) {
@@ -1908,9 +2018,117 @@ function drawLiveAnims(ctx: CanvasRenderingContext2D, building: Building, time: 
     case 'tavern':
       drawLantern(ctx, x, y, w, h, wall, time);
       break;
+    case 'pitchditch':
+      if (building.buffer > 0) drawPitchFlame(ctx, x + 0.5, y + 0.5, time);
+      break;
+    case 'brazier':
+      if (building.complete) drawPitchFlame(ctx, x + 0.5, y + 0.45, time);
+      break;
     default:
       break;
   }
+}
+
+function drawPitchFlame(ctx: CanvasRenderingContext2D, x: number, y: number, time: number) {
+  const p = tileToIso(x, y);
+  const flicker = 0.75 + 0.25 * Math.sin(time / 90 + x * 4);
+  ctx.save();
+  ctx.globalAlpha = 0.35 * flicker;
+  ctx.fillStyle = '#e07030';
+  ctx.beginPath();
+  ctx.ellipse(p.x, p.y - 8, 10, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 0.9;
+  ctx.fillStyle = '#f2d15a';
+  ctx.beginPath();
+  ctx.moveTo(p.x, p.y - 16 * flicker);
+  ctx.lineTo(p.x + 4, p.y - 4);
+  ctx.lineTo(p.x - 4, p.y - 4);
+  ctx.fill();
+  ctx.fillStyle = '#e15b45';
+  ctx.beginPath();
+  ctx.moveTo(p.x, p.y - 11 * flicker);
+  ctx.lineTo(p.x + 2.2, p.y - 4);
+  ctx.lineTo(p.x - 2.2, p.y - 4);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawPlagueCloud(ctx: CanvasRenderingContext2D, x: number, y: number, radius: number, ticks: number) {
+  const p = tileToIso(x, y);
+  ctx.save();
+  ctx.globalAlpha = 0.28 + 0.12 * ((ticks % 16) / 16);
+  ctx.fillStyle = '#7dba5a';
+  ctx.beginPath();
+  ctx.ellipse(p.x, p.y - 10, radius * 14, radius * 7, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 0.85;
+  ctx.fillStyle = '#1d3a18';
+  ctx.font = 'bold 11px sans-serif';
+  ctx.fillText('чума', p.x - 14, p.y - 8);
+  ctx.restore();
+}
+
+function drawBow(ctx: CanvasRenderingContext2D, x: number, y: number) {
+  const p = tileToIso(x, y);
+  ctx.strokeStyle = '#c4a574';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.arc(p.x + 6, p.y - 16, 6, -1.1, 1.1);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(p.x + 8, p.y - 21);
+  ctx.lineTo(p.x + 8, p.y - 11);
+  ctx.stroke();
+}
+
+function drawRam(ctx: CanvasRenderingContext2D, x: number, y: number, color: string) {
+  const p = tileToIso(x, y);
+  ctx.fillStyle = 'rgba(20,14,10,0.28)';
+  ctx.beginPath();
+  ctx.ellipse(p.x, p.y + 2, 16, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#5c3a22';
+  ctx.fillRect(p.x - 14, p.y - 10, 28, 8);
+  ctx.fillStyle = '#3a2414';
+  ctx.beginPath();
+  ctx.moveTo(p.x + 14, p.y - 8);
+  ctx.lineTo(p.x + 24, p.y - 6);
+  ctx.lineTo(p.x + 14, p.y - 2);
+  ctx.fill();
+  ctx.fillStyle = '#2a2018';
+  ctx.beginPath();
+  ctx.arc(p.x - 8, p.y, 3.2, 0, Math.PI * 2);
+  ctx.arc(p.x + 8, p.y, 3.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = color;
+  ctx.fillRect(p.x - 3, p.y - 18, 6, 8);
+}
+
+function drawCatapult(ctx: CanvasRenderingContext2D, x: number, y: number, color: string, time: number) {
+  const p = tileToIso(x, y);
+  const arm = Math.sin(time / 280) * 0.4;
+  ctx.fillStyle = 'rgba(20,14,10,0.28)';
+  ctx.beginPath();
+  ctx.ellipse(p.x, p.y + 2, 16, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#5c3a22';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(p.x - 10, p.y);
+  ctx.lineTo(p.x, p.y - 16);
+  ctx.lineTo(p.x + 10, p.y);
+  ctx.stroke();
+  ctx.strokeStyle = '#c4a574';
+  ctx.beginPath();
+  ctx.moveTo(p.x, p.y - 14);
+  ctx.lineTo(p.x + 16, p.y - 22 - arm * 8);
+  ctx.stroke();
+  ctx.fillStyle = '#6a6560';
+  ctx.fillRect(p.x + 12, p.y - 26 - arm * 8, 7, 5);
+  ctx.fillStyle = color;
+  ctx.fillRect(p.x - 8, p.y - 8, 5, 6);
+  ctx.lineWidth = 1;
 }
 
 function drawCow(ctx: CanvasRenderingContext2D, x: number, y: number) {
@@ -2149,6 +2367,12 @@ function drawGhost(ctx: CanvasRenderingContext2D, ghost: Ghost) {
       else ctx.lineTo(p.x, p.y);
     }
     ctx.stroke();
+  }
+  if (ghost.extras) {
+    for (const extra of ghost.extras) {
+      ctx.globalAlpha = 0.35;
+      poly(ctx, diamond(extra.x, extra.y, def.w, def.h), extra.ok ? '#7dba5a' : '#d4543c');
+    }
   }
   ctx.restore();
 }

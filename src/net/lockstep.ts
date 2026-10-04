@@ -7,7 +7,7 @@ export const TICKS_PER_TURN = 4;
 export const TURN_MS = 200;
 export const HASH_EVERY = 10;
 
-const SIM_KINDS = new Set(['place', 'assign', 'ration', 'tax', 'upgrade', 'market', 'train', 'order', 'army', 'demolish']);
+const SIM_KINDS = new Set(['place', 'assign', 'ration', 'tax', 'upgrade', 'market', 'train', 'order', 'army', 'demolish', 'cow']);
 
 export interface Seat {
   uid: string;

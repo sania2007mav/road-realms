@@ -25,28 +25,43 @@ const DIRS: readonly (readonly [number, number, number])[] = [
   [-1, -1, 1.414],
 ];
 
-function nearestOpen(state: GameState, x: number, y: number): { x: number; y: number } | null {
+function nearestOpenQuery(x: number, y: number, blocked: (x: number, y: number) => boolean): { x: number; y: number } | null {
   for (let r = 1; r <= 8; r++) {
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
         const nx = x + dx;
         const ny = y + dy;
-        if (!tileBlocked(state, nx, ny)) return { x: nx, y: ny };
+        if (!blocked(nx, ny)) return { x: nx, y: ny };
       }
     }
   }
   return null;
 }
 
+export interface PathQuery {
+  blocked?: (x: number, y: number) => boolean;
+  cost?: (x: number, y: number) => number;
+  limit?: number;
+}
+
 /** Tile-centre waypoints from the soldier to the goal. Empty when no route is needed or none exists. */
-export function findPath(state: GameState, fromX: number, fromY: number, toX: number, toY: number): { x: number; y: number }[] {
+export function findPath(
+  state: GameState,
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+  query?: PathQuery,
+): { x: number; y: number }[] {
+  const blocked = query?.blocked ?? ((x: number, y: number) => tileBlocked(state, x, y));
+  const limit = query?.limit ?? 5000;
   const sx = Math.max(0, Math.min(state.mapW - 1, Math.floor(fromX)));
   const sy = Math.max(0, Math.min(state.mapH - 1, Math.floor(fromY)));
   let gx = Math.floor(toX);
   let gy = Math.floor(toY);
-  if (tileBlocked(state, gx, gy)) {
-    const alt = nearestOpen(state, gx, gy);
+  if (blocked(gx, gy)) {
+    const alt = nearestOpenQuery(gx, gy, blocked);
     if (!alt) return [];
     gx = alt.x;
     gy = alt.y;
@@ -70,7 +85,7 @@ export function findPath(state: GameState, fromX: number, fromY: number, toX: nu
   };
 
   let guard = 0;
-  while (open.length && guard < 5000) {
+  while (open.length && guard < limit) {
     guard += 1;
     let bestI = 0;
     let bestF = Infinity;
@@ -92,11 +107,11 @@ export function findPath(state: GameState, fromX: number, fromY: number, toX: nu
       const nx = cx + dx;
       const ny = cy + dy;
       const startTile = nx === sx && ny === sy;
-      if (!startTile && tileBlocked(state, nx, ny)) continue;
-      if (dx !== 0 && dy !== 0 && (tileBlocked(state, cx + dx, cy) || tileBlocked(state, cx, cy + dy))) continue;
+      if (!startTile && blocked(nx, ny)) continue;
+      if (dx !== 0 && dy !== 0 && (blocked(cx + dx, cy) || blocked(cx, cy + dy))) continue;
       const next = key(nx, ny);
       if (closed.has(next)) continue;
-      const nextG = (gScore.get(current) ?? 1e9) + cost;
+      const nextG = (gScore.get(current) ?? 1e9) + cost * (query?.cost?.(nx, ny) ?? 1);
       if (nextG + 1e-9 >= (gScore.get(next) ?? 1e9)) continue;
       gScore.set(next, nextG);
       parent.set(next, current);

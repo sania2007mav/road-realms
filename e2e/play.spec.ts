@@ -450,6 +450,30 @@ test('подробные текстуры: посёлок, жильё, креп�
   await shoot('site', 'art_site.png');
 });
 
+test('оборона: стены, осада и меню', async ({ page }) => {
+  mkdirSync(shots, { recursive: true });
+  await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+  await page.goto('/road-realms/');
+  await page.getByTestId('new-game').click();
+  const shoot = async (kind: string, file: string) => {
+    await page.evaluate((scene) => window.__game!.debugScene(scene), kind);
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
+    await page.screenshot({ path: `${shots}/${file}` });
+  };
+  await shoot('walls', 'art_walls.png');
+  await shoot('siege', 'art_siege.png');
+  await page.getByTestId('tab-defence').click();
+  await expect(page.getByTestId('build-palisade')).toBeVisible();
+  await expect(page.getByTestId('build-gate')).toBeVisible();
+  await expect(page.getByTestId('build-woodtower')).toBeVisible();
+  await page.screenshot({ path: `${shots}/art_defence_menu.png` });
+});
+
 declare global {
   interface Window {
     __game?: {

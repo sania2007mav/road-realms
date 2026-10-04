@@ -61,5 +61,6 @@ export type {
   Resource,
   Soldier,
   TaxId,
+  Weapon,
 } from './types';
 export { FOODS, RESOURCES, Terrain } from './types';

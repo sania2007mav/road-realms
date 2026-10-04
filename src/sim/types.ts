@@ -44,7 +44,20 @@ export type BuildingType =
   | 'mine'
   | 'pitch'
   | 'market'
-  | 'barracks';
+  | 'barracks'
+  | 'palisade'
+  | 'wall'
+  | 'gate'
+  | 'stairs'
+  | 'woodtower'
+  | 'stonetower'
+  | 'moat'
+  | 'pitchditch'
+  | 'brazier'
+  | 'oil'
+  | 'guild';
+
+export type Weapon = 'club' | 'sword' | 'bow' | 'engineer' | 'ladder' | 'ram' | 'catapult';
 
 export type Terrain = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
@@ -104,6 +117,8 @@ export interface Building {
   work: number;
   plague: number;
   upgrading: boolean;
+  /** 1 when a fort wall has cut this building off from the keep. */
+  seal: number;
 }
 
 export interface Person {
@@ -132,7 +147,7 @@ export interface Soldier {
   hp: number;
   maxHp: number;
   dmg: number;
-  weapon: 'club' | 'sword';
+  weapon: Weapon;
   order: 'defend' | 'raid' | 'move' | 'hold' | 'attack' | 'attackmove' | 'home';
   raidTargetId: number;
   anim: number;
@@ -180,6 +195,15 @@ export interface Mob {
   destY: number;
 }
 
+export interface Cloud {
+  id: number;
+  playerId: number;
+  x: number;
+  y: number;
+  ticks: number;
+  radius: number;
+}
+
 export interface GameState {
   saveVersion: 1;
   seed: number;
@@ -196,6 +220,7 @@ export interface GameState {
   soldiers: Soldier[];
   oxen: Ox[];
   mobs: Mob[];
+  clouds: Cloud[];
   outcome: 'playing' | 'victory' | 'defeat';
   message: string;
   log: string[];
@@ -208,7 +233,8 @@ export type Command =
   | { kind: 'tax'; playerId: number; tax: TaxId }
   | { kind: 'upgrade'; playerId: number; buildingId: number }
   | { kind: 'market'; playerId: number; resource: Resource; mode: 'buy' | 'sell'; qty: number }
-  | { kind: 'train'; playerId: number; weapon: 'club' | 'sword' }
+  | { kind: 'train'; playerId: number; weapon: Weapon }
+  | { kind: 'cow'; playerId: number; soldierId: number; x: number; y: number }
   | { kind: 'order'; playerId: number; order: 'defend' | 'raid' }
   | {
       kind: 'army';

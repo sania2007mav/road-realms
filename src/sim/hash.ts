@@ -30,7 +30,7 @@ export function hashState(state: GameState): string {
   const buildings = [...state.buildings].sort((a, b) => a.id - b.id);
   for (const building of buildings) {
     parts.push(
-      `B${building.id}|${building.playerId}|${building.type}|${building.x}|${building.y}|${building.complete ? 1 : 0}|${num(building.buildProgress)}|${building.hp}|${building.level}|${building.buffer}|${building.bufferRes ?? ''}|${building.input}|${building.inputRes ?? ''}|${num(building.work)}|${building.plague}|${building.upgrading ? 1 : 0}|${building.workerIds.join('.')}`,
+      `B${building.id}|${building.playerId}|${building.type}|${building.x}|${building.y}|${building.complete ? 1 : 0}|${num(building.buildProgress)}|${building.hp}|${building.level}|${building.buffer}|${building.bufferRes ?? ''}|${building.input}|${building.inputRes ?? ''}|${num(building.work)}|${building.plague}|${building.upgrading ? 1 : 0}|${building.seal ?? 0}|${building.workerIds.join('.')}`,
     );
   }
   const people = [...state.people].sort((a, b) => a.id - b.id);
@@ -55,6 +55,10 @@ export function hashState(state: GameState): string {
   const oxen = [...state.oxen].sort((a, b) => a.id - b.id);
   for (const ox of oxen) {
     parts.push(`O${ox.id}|${ox.playerId}|${num(ox.x)}|${num(ox.y)}|${ox.cargo ?? ''}|${ox.cargoQty}|${ox.mode}|${ox.destBuildingId}`);
+  }
+  const clouds = [...(state.clouds ?? [])].sort((a, b) => a.id - b.id);
+  for (const cloud of clouds) {
+    parts.push(`C${cloud.id}|${cloud.playerId}|${num(cloud.x)}|${num(cloud.y)}|${cloud.ticks}|${num(cloud.radius)}`);
   }
   const mobs = [...state.mobs].sort((a, b) => a.id - b.id);
   for (const mob of mobs) {

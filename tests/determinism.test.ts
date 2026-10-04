@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createGame, deserialize, serialize, step } from '../src/sim';
+import { createGame, deserialize, playerKeep, serialize, step, suggestedTile } from '../src/sim';
+import { hashState } from '../src/sim/hash';
 
 function run(seed: number, ticks: number, ai = 3): string {
   const state = createGame(seed, { ai });
@@ -40,5 +41,26 @@ describe('детерминированная симуляция', () => {
     expect(serialize(calm)).not.toBe(serialize(harsh));
     expect(calm.players[0].popularity).not.toBe(harsh.players[0].popularity);
     expect(calm.players[0].gold).not.toBe(harsh.players[0].gold);
+  });
+
+  it('осадные приказы повторяются в локстепе', () => {
+    const left = createGame(11, { ai: 0 });
+    const right = createGame(11, { ai: 0 });
+    for (const state of [left, right]) {
+      playerKeep(state, 0)!.level = 3;
+      state.players[0].stocks.wood = 40;
+      state.players[0].stocks.stone = 20;
+    }
+    const tile = suggestedTile(left, 0, 'palisade');
+    expect(tile).not.toBeNull();
+    const command = { kind: 'place' as const, playerId: 0, building: 'palisade' as const, x: tile!.x, y: tile!.y };
+    step(left, [command]);
+    step(right, [command]);
+    for (let i = 0; i < 20; i++) {
+      step(left, []);
+      step(right, []);
+    }
+    expect(hashState(left)).toBe(hashState(right));
+    expect(serialize(left)).toBe(serialize(right));
   });
 });

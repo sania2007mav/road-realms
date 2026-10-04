@@ -1,5 +1,5 @@
 import { BUILDINGS } from './balance';
-import type { Building, BuildingType, GameState, Mob, MobKind, Ox, Person, Soldier } from './types';
+import type { Building, BuildingType, GameState, Mob, MobKind, Ox, Person, Soldier, Weapon } from './types';
 
 export function createBuilding(
   state: GameState,
@@ -30,6 +30,7 @@ export function createBuilding(
     work: 0,
     plague: 0,
     upgrading: false,
+    seal: 0,
   };
   state.buildings.push(building);
   return building;
@@ -57,22 +58,26 @@ export function createPerson(state: GameState, playerId: number, x: number, y: n
   return person;
 }
 
-export function createSoldier(
-  state: GameState,
-  playerId: number,
-  x: number,
-  y: number,
-  weapon: 'club' | 'sword',
-): Soldier {
-  const sword = weapon === 'sword';
+const SOLDIER_STATS: Record<Weapon, { hp: number; dmg: number }> = {
+  club: { hp: 30, dmg: 5 },
+  sword: { hp: 48, dmg: 8 },
+  bow: { hp: 22, dmg: 4 },
+  engineer: { hp: 24, dmg: 2 },
+  ladder: { hp: 26, dmg: 3 },
+  ram: { hp: 80, dmg: 6 },
+  catapult: { hp: 50, dmg: 4 },
+};
+
+export function createSoldier(state: GameState, playerId: number, x: number, y: number, weapon: Weapon): Soldier {
+  const stats = SOLDIER_STATS[weapon];
   const soldier: Soldier = {
     id: state.nextId++,
     playerId,
     x,
     y,
-    hp: sword ? 48 : 30,
-    maxHp: sword ? 48 : 30,
-    dmg: sword ? 8 : 5,
+    hp: stats.hp,
+    maxHp: stats.hp,
+    dmg: stats.dmg,
     weapon,
     order: 'defend',
     raidTargetId: 0,

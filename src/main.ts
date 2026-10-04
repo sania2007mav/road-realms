@@ -35,8 +35,11 @@ import {
   type GameState,
   type Ration,
   type Resource,
+  type Weapon,
 } from './sim';
 import { createBuilding } from './sim/entities';
+import { emptyStocks } from './sim/balance';
+import { isLineBuilding, wallLine } from './sim/siege';
 import { cycleGfx, gfxLabel, loadGfx } from './render/gfx';
 import { net } from './net/session';
 import { NetView } from './net/screens';
@@ -154,7 +157,8 @@ const controlGroups: number[][] = [[], [], [], [], [], [], [], [], [], []];
 const markers: OrderMarker[] = [];
 let attackArmed = false;
 let boxMode = false;
-let pointerMode: 'none' | 'pan' | 'box' = 'none';
+let pointerMode: 'none' | 'pan' | 'box' | 'wall' = 'none';
+let wallAnchor: { x: number; y: number } | null = null;
 let boxStart = { x: 0, y: 0 };
 let boxNow = { x: 0, y: 0 };
 let boxBase: number[] = [];
@@ -1087,10 +1091,19 @@ function syncPanel() {
       ? `<div class="row">
           <button type="button" data-testid="train-club">Ополченец (2 дерева)</button>
           <button type="button" data-testid="train-sword">Мечник (2 железа)</button>
+          <button type="button" data-testid="train-bow">Лучник (4 дерева)</button>
           <button type="button" data-testid="order-defend">Оборона</button>
           <button type="button" data-testid="order-raid">Набег</button>
         </div>`
-      : '';
+      : mine && building.type === 'guild' && building.complete
+        ? `<div class="row">
+          <button type="button" data-testid="train-engineer">Инженер (3 дерева, 1 железо)</button>
+          <button type="button" data-testid="train-ladder">Лестничник (8 дерева)</button>
+          <button type="button" data-testid="train-ram">Таран (16 дерева, 4 камня)</button>
+          <button type="button" data-testid="train-catapult">Катапульта (18 дерева, 10 камня, 4 железа)</button>
+          <button type="button" data-testid="launch-cow">Пустить корову</button>
+        </div>`
+        : '';
   const market =
     mine && building.type === 'market'
       ? RESOURCES.map((res) => {
@@ -1147,12 +1160,22 @@ function syncPanel() {
     selectedPersonId = null;
     panelSig = '';
   });
-  panel.querySelector<HTMLButtonElement>('[data-testid="train-club"]')?.addEventListener('click', () => {
-    pushCmd({ kind: 'train', playerId: localPlayer, weapon: 'club' });
-    panelSig = '';
-  });
-  panel.querySelector<HTMLButtonElement>('[data-testid="train-sword"]')?.addEventListener('click', () => {
-    pushCmd({ kind: 'train', playerId: localPlayer, weapon: 'sword' });
+  for (const weapon of ['club', 'sword', 'bow', 'engineer', 'ladder', 'ram', 'catapult'] as const) {
+    panel.querySelector<HTMLButtonElement>(`[data-testid="train-${weapon}"]`)?.addEventListener('click', () => {
+      pushCmd({ kind: 'train', playerId: localPlayer, weapon });
+      panelSig = '';
+    });
+  }
+  panel.querySelector<HTMLButtonElement>('[data-testid="launch-cow"]')?.addEventListener('click', () => {
+    const catapult = state.soldiers.find((s) => s.playerId === localPlayer && s.hp > 0 && s.weapon === 'catapult');
+    const dairy = state.buildings.some((b) => b.playerId === localPlayer && b.type === 'dairy' && b.complete && b.hp > 0);
+    if (!catapult || !dairy) {
+      flash('Нужны ферма и катапульта');
+      return;
+    }
+    const enemy = state.buildings.find((b) => b.type === 'keep' && b.playerId !== localPlayer && b.hp > 0);
+    const aim = enemy ? buildingCenter(enemy) : { x: catapult.x + 6, y: catapult.y + 6 };
+    pushCmd({ kind: 'cow', playerId: localPlayer, soldierId: catapult.id, x: aim.x, y: aim.y });
     panelSig = '';
   });
   panel.querySelector<HTMLButtonElement>('[data-testid="order-defend"]')?.addEventListener('click', () => {
@@ -1250,7 +1273,8 @@ function syncArmy() {
   armyBody.hidden = list.length === 0;
   const clubs = list.filter((s) => s.weapon === 'club').length;
   const swords = list.filter((s) => s.weapon === 'sword').length;
-  armyCount.textContent = `Всего ${list.length} · ополченцы ${clubs} · мечники ${swords}`;
+  const bows = list.filter((s) => s.weapon === 'bow').length;
+  armyCount.textContent = `Всего ${list.length} · ополченцы ${clubs} · мечники ${swords}${bows ? ` · лучники ${bows}` : ''}`;
   armyAttack.setAttribute('aria-pressed', attackArmed ? 'true' : 'false');
   armyBox.setAttribute('aria-pressed', boxMode ? 'true' : 'false');
   worldCanvas.classList.toggle('attacking', attackArmed);
@@ -1343,7 +1367,7 @@ function hostileAt(x: number, y: number, tileX: number, tileY: number) {
   return null;
 }
 
-function selectWeaponOnScreen(weapon: 'club' | 'sword') {
+function selectWeaponOnScreen(weapon: Weapon) {
   const { w, h } = viewSize();
   selectedSoldiers.clear();
   for (const soldier of state.soldiers) {
@@ -1431,6 +1455,22 @@ function orderAt(screenX: number, screenY: number) {
 
 function ghost(): Ghost | null {
   if (placing && hover && playing) {
+    if (isLineBuilding(placing) && wallAnchor) {
+      const type = placing;
+      const cells = wallLine(wallAnchor.x, wallAnchor.y, hover.x, hover.y);
+      const first = cells[0] ?? hover;
+      return {
+        type,
+        x: first.x,
+        y: first.y,
+        ok: canPlace(state, localPlayer, type, first.x, first.y).ok,
+        extras: cells.slice(1).map((cell) => ({
+          x: cell.x,
+          y: cell.y,
+          ok: canPlace(state, localPlayer, type, cell.x, cell.y).ok,
+        })),
+      };
+    }
     const check = canPlace(state, localPlayer, placing, hover.x, hover.y);
     return { type: placing, x: hover.x, y: hover.y, ok: check.ok };
   }
@@ -1682,6 +1722,68 @@ function expose() {
         const shack = put('shack', keep.x + 26, keep.y - 4, 1, Math.floor(BUILDINGS.shack.buildTicks * 0.7));
         focusAverage([house, shack], -0.6);
         camera.zoom = 1.55;
+      } else if (kind === 'walls' || kind === 'siege') {
+        keep.level = 4;
+        state.players[localPlayer].stocks.wood = 200;
+        state.players[localPlayer].stocks.stone = 200;
+        state.players[localPlayer].stocks.iron = 40;
+        state.players[localPlayer].stocks.pitch = 20;
+        const x0 = keep.x - 2;
+        const x1 = keep.x + 4;
+        const y0 = keep.y - 2;
+        const y1 = keep.y + 4;
+        const gateX = keep.x + 1;
+        for (let x = x0; x <= x1; x++) {
+          put(x === gateX ? 'gate' : 'palisade', x, y0);
+          if (x !== gateX) put('palisade', x, y1);
+          else put('gate', x, y1);
+        }
+        for (let y = y0 + 1; y < y1; y++) {
+          put(y === keep.y + 1 ? 'stairs' : 'palisade', x0, y);
+          put('palisade', x1, y);
+        }
+        const west = put('woodtower', x0 - 3, y0 - 1);
+        const east = put('stonetower', x1 + 1, y0 - 1);
+        put('brazier', gateX + 1, y1 + 1);
+        const ditch = put('pitchditch', gateX, y1 + 1);
+        if (kind === 'siege') {
+          ditch.buffer = 1;
+          ditch.work = 80;
+        }
+        const man = (tower: { x: number; y: number }, ox: number, oy: number) => {
+          const archer = createSoldier(state, localPlayer, tower.x + ox, tower.y + oy, 'bow');
+          archer.order = 'defend';
+        };
+        man(west, 0.75, 0.75);
+        man(east, 0.8, 0.85);
+        if (kind === 'siege') {
+          if (!state.players[1]) {
+            state.players.push({
+              id: 1,
+              name: 'Осада',
+              isAi: true,
+              alive: true,
+              side: 'south',
+              spawnX: gateX,
+              spawnY: y1 + 8,
+              color: '#d6453d',
+              gold: 0,
+              stocks: emptyStocks(),
+              popularity: 10,
+              ration: 'normal',
+              tax: 'low',
+              hunger: false,
+              beerMood: 0,
+              migrate: 0,
+            });
+          }
+          const ram = createSoldier(state, 1, gateX + 0.4, y1 + 3.2, 'ram');
+          ram.order = 'attack';
+          const catapult = createSoldier(state, 1, gateX + 2.2, y1 + 5.4, 'catapult');
+          catapult.order = 'attack';
+        }
+        lookAtPoint(gateX + 0.5, keep.y + 1.5);
+        camera.zoom = kind === 'siege' ? 1.05 : 1.12;
       } else {
         keep.level = 3;
         put('granary', keep.x + 4, keep.y);
@@ -1783,8 +1885,14 @@ worldCanvas.addEventListener('pointerdown', (event) => {
   boxStart = { x: event.clientX - rect.left, y: event.clientY - rect.top };
   boxNow = { ...boxStart };
   const touch = event.pointerType === 'touch';
+  const downRect = worldCanvas.getBoundingClientRect();
+  const downTile = screenToTile(camera, viewSize().w, viewSize().h, event.clientX - downRect.left, event.clientY - downRect.top);
+  const lineDrag = playing && !!placing && isLineBuilding(placing) && (event.button === 0 || touch);
   const selectDrag = playing && (event.button === 0 || touch) && (!touch || boxMode);
-  if (selectDrag) {
+  if (lineDrag) {
+    pointerMode = 'wall';
+    wallAnchor = { x: downTile.x, y: downTile.y };
+  } else if (selectDrag) {
     pointerMode = 'box';
     boxAdditive = event.shiftKey;
     boxBase = boxAdditive ? [...selectedSoldiers] : [];
@@ -1833,7 +1941,7 @@ worldCanvas.addEventListener('pointermove', (event) => {
   boxNow = { x: localX, y: localY };
   if (pointerMode === 'box') {
     if (dragDist >= 8) paintBox();
-  } else {
+  } else if (pointerMode !== 'wall') {
     camera.x -= dx / camera.zoom;
     camera.y -= dy / camera.zoom;
     clampView();
@@ -1846,6 +1954,19 @@ worldCanvas.addEventListener('pointerup', (event) => {
   window.clearTimeout(longTimer);
   if (pointers.size < 2) pinch = 0;
   if (pointers.size === 0) {
+    if (pointerMode === 'wall' && wallAnchor && placing && isLineBuilding(placing)) {
+      const end = hover ?? wallAnchor;
+      const type = placing;
+      for (const cell of wallLine(wallAnchor.x, wallAnchor.y, end.x, end.y)) {
+        pushCmd({ kind: 'place', playerId: localPlayer, building: type, x: cell.x, y: cell.y });
+      }
+      placing = null;
+      wallAnchor = null;
+      pointerMode = 'none';
+      dragging = false;
+      worldCanvas.classList.remove('placing');
+      return;
+    }
     lastGesture = dragDist;
     const boxed = pointerMode === 'box' && dragDist >= 8;
     pointerMode = 'none';
@@ -1875,6 +1996,7 @@ worldCanvas.addEventListener('contextmenu', (event) => {
   event.preventDefault();
   const wasPlacing = placing != null;
   placing = null;
+  wallAnchor = null;
   worldCanvas.classList.remove('placing');
   if (!playing || wasPlacing || lastGesture >= 8 || !selectedSoldiers.size) return;
   const rect = worldCanvas.getBoundingClientRect();

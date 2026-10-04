@@ -16,8 +16,8 @@ import {
   PLAGUE_TICKS,
   POP_EVERY,
   SOLDIER_SPEED,
-  SWORD_COST,
   TAX_EVERY,
+  TRAIN_COST,
   PRICES,
   RESOURCE_NAME,
   foodTypesIn,
@@ -34,6 +34,7 @@ import type {
   Command,
   GameState,
   Mob,
+  Ox,
   Person,
   Player,
   Ration,
@@ -44,6 +45,22 @@ import type {
 import { FOODS, RESOURCES, Terrain } from './types';
 import { formationPoints } from './formation';
 import { findPath } from './path';
+import {
+  approach,
+  bowRange,
+  fortDamage,
+  moverOf,
+  blocksMover,
+  nearestBreach,
+  nextAiSiege,
+  onOwnTower,
+  routeBlocked,
+  spawnCloud,
+  strikeReach,
+  towerSlotFor,
+  trainHall,
+  updateSiege,
+} from './siege';
 import { terrainAt } from './world';
 
 export function buildingCenter(building: Building): { x: number; y: number } {
@@ -115,6 +132,18 @@ function moveToward(ent: { x: number; y: number }, x: number, y: number, speed: 
   ent.x += (dx / d) * speed;
   ent.y += (dy / d) * speed;
   return false;
+}
+
+function walkPerson(state: GameState, person: Person, x: number, y: number, speed: number): boolean {
+  return approach(state, person, x, y, speed, person.playerId, 'worker');
+}
+
+function walkOx(state: GameState, ox: Ox, x: number, y: number, speed: number): boolean {
+  return approach(state, ox, x, y, speed, ox.playerId, 'worker');
+}
+
+function walkSoldier(state: GameState, soldier: Soldier, x: number, y: number, speed: number): boolean {
+  return approach(state, soldier, x, y, speed, soldier.playerId, moverOf(soldier));
 }
 
 function canAfford(stocks: Record<Resource, number>, cost: Partial<Record<Resource, number>>): boolean {
@@ -211,6 +240,20 @@ export function canPlace(
     if (!deer) return { ok: false, reason: 'Поблизости нет оленей' };
   }
 
+  if (type === 'oil') {
+    const beside = state.buildings.some((building) => {
+      if (building.playerId !== playerId || !building.complete || building.hp <= 0) return false;
+      if (building.type !== 'woodtower' && building.type !== 'stonetower') return false;
+      const other = BUILDINGS[building.type];
+      const xOverlap = x < building.x + other.w && x + def.w > building.x;
+      const yOverlap = y < building.y + other.h && y + def.h > building.y;
+      const xAdj = x + def.w === building.x || building.x + other.w === x;
+      const yAdj = y + def.h === building.y || building.y + other.h === y;
+      return (xAdj && yOverlap) || (yAdj && xOverlap);
+    });
+    if (!beside) return { ok: false, reason: 'Котёл ставят у башни' };
+  }
+
   return { ok: true, reason: '' };
 }
 
@@ -284,6 +327,7 @@ export function applyCommand(state: GameState, command: Command): boolean {
       work: 0,
       plague: 0,
       upgrading: false,
+      seal: 0,
     };
     state.buildings.push(building);
     state.message = `Строим: ${BUILDINGS[command.building].name}`;
@@ -403,16 +447,15 @@ export function applyCommand(state: GameState, command: Command): boolean {
   }
 
   if (command.kind === 'train') {
-    const barracks = state.buildings.find(
-      (b) => b.playerId === command.playerId && b.type === 'barracks' && b.complete && b.hp > 0,
-    );
-    if (!barracks) {
-      state.message = 'Сначала постройте казарму';
+    const hall = trainHall(command.weapon);
+    const yard = state.buildings.find((b) => b.playerId === command.playerId && b.type === hall && b.complete && b.hp > 0);
+    if (!yard) {
+      state.message = hall === 'guild' ? 'Сначала постройте гильдию инженеров' : 'Сначала постройте казарму';
       return false;
     }
-    const cost = command.weapon === 'sword' ? SWORD_COST : CLUB_COST;
+    const cost = TRAIN_COST[command.weapon];
     if (!canAfford(player.stocks, cost)) {
-      state.message = 'Нет оружия: нужно дерево или железо';
+      state.message = 'Не хватает ресурсов на отряд';
       return false;
     }
     const idle = state.people.find((p) => p.playerId === command.playerId && p.hp > 0 && p.task.type === 'idle');
@@ -422,10 +465,33 @@ export function applyCommand(state: GameState, command: Command): boolean {
       return false;
     }
     pay(player.stocks, cost);
-    const center = buildingCenter(barracks);
+    const center = buildingCenter(yard);
     createSoldier(state, command.playerId, center.x, center.y + 1, command.weapon);
     state.people = state.people.filter((p) => p.id !== idle.id);
-    state.message = command.weapon === 'sword' ? 'Обучен мечник' : 'Обучен ополченец';
+    const trained: Record<string, string> = {
+      club: 'Обучен ополченец',
+      sword: 'Обучен мечник',
+      bow: 'Обучен лучник',
+      engineer: 'Обучен инженер',
+      ladder: 'Обучен лестничник',
+      ram: 'Собран таран',
+      catapult: 'Собрана катапульта',
+    };
+    state.message = trained[command.weapon] ?? 'Отряд готов';
+    return true;
+  }
+
+  if (command.kind === 'cow') {
+    const dairy = state.buildings.some((b) => b.playerId === command.playerId && b.type === 'dairy' && b.complete && b.hp > 0);
+    const catapult = state.soldiers.find(
+      (s) => s.id === command.soldierId && s.playerId === command.playerId && s.hp > 0 && s.weapon === 'catapult',
+    );
+    if (!dairy || !catapult) {
+      state.message = 'Нужны ферма и катапульта';
+      return false;
+    }
+    spawnCloud(state, command.playerId, command.x, command.y);
+    state.message = 'Катапульта метнула больную корову';
     return true;
   }
 
@@ -492,7 +558,9 @@ export function applyCommand(state: GameState, command: Command): boolean {
       soldier.anchorY = spot.y;
       soldier.targetKind = 'none';
       soldier.targetId = 0;
-      const path = findPath(state, soldier.x, soldier.y, spot.x, spot.y);
+      const path = findPath(state, soldier.x, soldier.y, spot.x, spot.y, {
+        blocked: (x, y) => routeBlocked(state, x, y, soldier.playerId, moverOf(soldier)),
+      });
       soldier.waypoints = [];
       for (const step of path) soldier.waypoints.push(step.x, step.y);
       soldier.waypointI = 0;
@@ -600,6 +668,8 @@ function nextAiCommand(state: GameState, player: Player): Command | null {
   if (barracks && soldiers < 3 && idleCount(state, id) >= 2 && canAfford(player.stocks, CLUB_COST)) {
     return { kind: 'train', playerId: id, weapon: 'club' };
   }
+  const siege = nextAiSiege(state, player, canPlace, canAfford, idleCount(state, id));
+  if (siege) return siege;
   if (state.tick > 0 && state.tick % 800 === 0 && soldiers >= 2) {
     return { kind: 'order', playerId: id, order: 'raid' };
   }
@@ -648,7 +718,7 @@ function updatePeople(state: GameState) {
       const keep = playerKeep(state, person.playerId);
       if (keep) {
         const center = buildingCenter(keep);
-        moveToward(person, center.x, center.y + 1.5, PERSON_SPEED * 1.15);
+        walkPerson(state, person, center.x, center.y + 1.5, PERSON_SPEED * 1.15);
       }
       if (!threat) person.flee = false;
       continue;
@@ -673,7 +743,7 @@ function updateIdle(state: GameState, person: Person) {
     person.destY = center.y + 1.6 + (takeRng(state) - 0.5) * 1.1;
     person.idlePhase = 28 + Math.floor(takeRng(state) * 36);
   }
-  moveToward(person, person.destX, person.destY, PERSON_SPEED * 0.55);
+  walkPerson(state, person, person.destX, person.destY, PERSON_SPEED * 0.55);
 }
 
 function updateBuilder(state: GameState, person: Person) {
@@ -685,7 +755,7 @@ function updateBuilder(state: GameState, person: Person) {
     return;
   }
   const center = buildingCenter(building);
-  if (!moveToward(person, center.x, center.y, PERSON_SPEED)) return;
+  if (!walkPerson(state, person, center.x, center.y, PERSON_SPEED)) return;
   building.buildProgress += 1;
   const need = building.upgrading ? KEEP_UPGRADE_TICKS : BUILDINGS[building.type].buildTicks;
   if (building.buildProgress < need) return;
@@ -944,6 +1014,7 @@ export function workerStatus(state: GameState, person: Person): string {
 
 export function buildingWarning(state: GameState, building: Building): string | null {
   if (!building.complete || building.hp <= 0) return null;
+  if (building.seal === 1) return 'стена отрезала путь';
   for (const id of building.workerIds) {
     const person = state.people.find((p) => p.id === id && p.hp > 0);
     if (!person || person.task.type !== 'work') continue;
@@ -970,7 +1041,7 @@ function updateWorker(state: GameState, person: Person) {
   const spot = laborSpot(state, building);
 
   if (task.mode === 'goto') {
-    if (!moveToward(person, spot.x, spot.y, PERSON_SPEED)) return;
+    if (!walkPerson(state, person, spot.x, spot.y, PERSON_SPEED)) return;
     task.mode = 'labor';
   }
   if (task.mode === 'fetch') {
@@ -980,7 +1051,7 @@ function updateWorker(state: GameState, person: Person) {
       return;
     }
     const srcCenter = buildingCenter(src);
-    if (!moveToward(person, srcCenter.x, srcCenter.y, PERSON_SPEED)) return;
+    if (!walkPerson(state, person, srcCenter.x, srcCenter.y, PERSON_SPEED)) return;
     const need = def.input;
     if (isStorage(src.type)) {
       const player = state.players[person.playerId];
@@ -1000,7 +1071,7 @@ function updateWorker(state: GameState, person: Person) {
     return;
   }
   if (task.mode === 'return') {
-    if (!moveToward(person, center.x, center.y, PERSON_SPEED)) return;
+    if (!walkPerson(state, person, center.x, center.y, PERSON_SPEED)) return;
     if (person.cargo) {
       building.input += person.cargoQty;
       building.inputRes = person.cargo;
@@ -1031,7 +1102,7 @@ function updateWorker(state: GameState, person: Person) {
       person.destY = drop.y;
       person.destBuildingId = drop.buildingId;
     }
-    if (!moveToward(person, person.destX, person.destY, PERSON_SPEED)) return;
+    if (!walkPerson(state, person, person.destX, person.destY, PERSON_SPEED)) return;
     giveCargo(state, person.playerId, person.destBuildingId, person.cargo, person.cargoQty);
     person.cargo = null;
     person.cargoQty = 0;
@@ -1043,7 +1114,7 @@ function updateWorker(state: GameState, person: Person) {
   const stall = stallReason(state, building);
   if (stall) {
     note(state, `${def.name}: ${stall}`);
-    if (Math.hypot(person.x - spot.x, person.y - spot.y) > 0.4) moveToward(person, spot.x, spot.y, PERSON_SPEED);
+    if (Math.hypot(person.x - spot.x, person.y - spot.y) > 0.4) walkPerson(state, person, spot.x, spot.y, PERSON_SPEED);
     return;
   }
 
@@ -1072,7 +1143,7 @@ function updateWorker(state: GameState, person: Person) {
 
   const dist = Math.hypot(person.x - spot.x, person.y - spot.y);
   if (dist > 0.42) {
-    moveToward(person, spot.x, spot.y, PERSON_SPEED);
+    walkPerson(state, person, spot.x, spot.y, PERSON_SPEED);
     if (!insideBuilding(person, building)) return;
   }
 
@@ -1131,7 +1202,7 @@ function updateOxen(state: GameState) {
     if (!building || building.hp <= 0) continue;
     const center = buildingCenter(building);
     if (ox.mode === 'load') {
-      if (!moveToward(ox, center.x + 0.6, center.y, OX_SPEED)) continue;
+      if (!walkOx(state, ox, center.x + 0.6, center.y, OX_SPEED)) continue;
       if (building.buffer > 0 && building.bufferRes) {
         const amount = Math.min(OX_CARRY, building.buffer);
         ox.cargo = building.bufferRes;
@@ -1161,7 +1232,7 @@ function updateOxen(state: GameState) {
       ox.destY = drop.y;
       ox.destBuildingId = drop.buildingId;
     }
-    if (!moveToward(ox, ox.destX, ox.destY, OX_SPEED)) continue;
+    if (!walkOx(state, ox, ox.destX, ox.destY, OX_SPEED)) continue;
     giveCargo(state, ox.playerId, ox.destBuildingId, ox.cargo, ox.cargoQty);
     ox.cargo = null;
     ox.cargoQty = 0;
@@ -1383,7 +1454,7 @@ function ensureSoldier(soldier: Soldier) {
   if (!soldier.targetKind) soldier.targetKind = 'none';
 }
 
-function followPath(soldier: Soldier): boolean {
+function followPath(state: GameState, soldier: Soldier): boolean {
   while (soldier.waypointI + 1 < soldier.waypoints.length) {
     const x = soldier.waypoints[soldier.waypointI];
     const y = soldier.waypoints[soldier.waypointI + 1];
@@ -1391,10 +1462,10 @@ function followPath(soldier: Soldier): boolean {
       soldier.waypointI += 2;
       continue;
     }
-    moveToward(soldier, x, y, SOLDIER_SPEED);
+    walkSoldier(state, soldier, x, y, SOLDIER_SPEED);
     return false;
   }
-  return moveToward(soldier, soldier.destX, soldier.destY, SOLDIER_SPEED);
+  return walkSoldier(state, soldier, soldier.destX, soldier.destY, SOLDIER_SPEED);
 }
 
 function fightThreat(state: GameState, soldier: Soldier, threat: Threat) {
@@ -1418,14 +1489,16 @@ function fightThreat(state: GameState, soldier: Soldier, threat: Threat) {
 function strikeBuilding(state: GameState, soldier: Soldier, building: Building) {
   const center = buildingCenter(building);
   const def = BUILDINGS[building.type];
-  const reach = Math.max(def.w, def.h) * 0.45 + 0.55;
+  const reach = strikeReach(soldier.weapon, building.type, Math.max(def.w, def.h));
   if (Math.hypot(center.x - soldier.x, center.y - soldier.y) > reach) {
-    moveToward(soldier, center.x, center.y, SOLDIER_SPEED);
+    walkSoldier(state, soldier, center.x, center.y, SOLDIER_SPEED);
     return;
   }
   if (state.tick % 12 !== 0) return;
-  building.hp -= soldier.dmg;
+  const bonus = fortDamage(soldier.weapon, building.type);
+  building.hp -= bonus < 0 ? soldier.dmg : bonus;
   if (building.hp <= 0 && building.type === 'keep') destroyKeep(state, building);
+  else if (building.hp <= 0 && building.type === 'moat') pushLog(state, 'Ров засыпан');
 }
 
 function resolveTarget(state: GameState, soldier: Soldier): Threat | null {
@@ -1457,7 +1530,7 @@ function updateDirected(state: GameState, soldier: Soldier) {
       return;
     }
     if (Math.hypot(soldier.x - soldier.anchorX, soldier.y - soldier.anchorY) > 0.25) {
-      moveToward(soldier, soldier.anchorX, soldier.anchorY, SOLDIER_SPEED);
+      walkSoldier(state, soldier, soldier.anchorX, soldier.anchorY, SOLDIER_SPEED);
     }
     return;
   }
@@ -1480,14 +1553,14 @@ function updateDirected(state: GameState, soldier: Soldier) {
       fightThreat(state, soldier, foe);
       return;
     }
-    if (followPath(soldier)) {
+    if (followPath(state, soldier)) {
       soldier.order = 'hold';
       soldier.anchorX = soldier.destX;
       soldier.anchorY = soldier.destY;
     }
     return;
   }
-  if (followPath(soldier)) {
+  if (followPath(state, soldier)) {
     if (soldier.order === 'home') soldier.order = 'defend';
     else {
       soldier.order = 'hold';
@@ -1502,8 +1575,9 @@ function updateSoldier(state: GameState, soldier: Soldier) {
     updateDirected(state, soldier);
     return;
   }
-  const closeMob = nearestMob(state, soldier.x, soldier.y, soldier.order === 'raid' ? 1.2 : 9, false);
-  const closeEnemy = nearestEnemySoldier(state, soldier, soldier.order === 'raid' ? 1.2 : 8);
+  const bow = soldier.weapon === 'bow' && soldier.order !== 'raid';
+  const closeMob = nearestMob(state, soldier.x, soldier.y, soldier.order === 'raid' ? 1.2 : bow ? bowRange(state, soldier) : 9, false);
+  const closeEnemy = nearestEnemySoldier(state, soldier, soldier.order === 'raid' ? 1.2 : bow ? bowRange(state, soldier) : 8);
   if (soldier.order === 'raid') {
     if (closeMob && Math.hypot(closeMob.x - soldier.x, closeMob.y - soldier.y) < 1.25) {
       strikeMob(state, soldier, closeMob);
@@ -1522,12 +1596,23 @@ function updateSoldier(state: GameState, soldier: Soldier) {
     }
     soldier.raidTargetId = keep.id;
     const center = buildingCenter(keep);
+    const breach = nearestBreach(state, soldier, center.x, center.y);
+    const dx = center.x - soldier.x;
+    const dy = center.y - soldier.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const aheadX = Math.floor(soldier.x + (dx / dist) * Math.min(SOLDIER_SPEED, dist));
+    const aheadY = Math.floor(soldier.y + (dy / dist) * Math.min(SOLDIER_SPEED, dist));
+    const wallAhead = blocksMover(state, aheadX, aheadY, soldier.playerId, moverOf(soldier));
+    if (breach && (soldier.weapon === 'ram' || soldier.weapon === 'catapult' || wallAhead)) {
+      strikeBuilding(state, soldier, breach);
+      return;
+    }
     if (Math.hypot(center.x - soldier.x, center.y - soldier.y) < 1.3) {
       if (state.tick % 12 === 0) {
         keep.hp -= soldier.dmg;
         if (keep.hp <= 0) destroyKeep(state, keep);
       }
-    } else moveToward(soldier, center.x, center.y, SOLDIER_SPEED);
+    } else walkSoldier(state, soldier, center.x, center.y, SOLDIER_SPEED);
     return;
   }
   if (closeMob) {
@@ -1538,11 +1623,18 @@ function updateSoldier(state: GameState, soldier: Soldier) {
     strikeSoldier(state, soldier, closeEnemy);
     return;
   }
+  if (soldier.weapon === 'bow') {
+    const slot = towerSlotFor(state, soldier);
+    if (slot) {
+      walkSoldier(state, soldier, slot.x, slot.y, SOLDIER_SPEED);
+      return;
+    }
+  }
   const keep = playerKeep(state, soldier.playerId);
   if (!keep) return;
   const center = buildingCenter(keep);
   if (Math.hypot(center.x - soldier.x, center.y - soldier.y) > 3.2) {
-    moveToward(soldier, center.x, center.y + 2, SOLDIER_SPEED);
+    walkSoldier(state, soldier, center.x, center.y + 2, SOLDIER_SPEED);
   }
 }
 
@@ -1564,7 +1656,7 @@ function nearestEnemySoldier(state: GameState, soldier: Soldier, range: number):
 function strikeMob(state: GameState, soldier: Soldier, mob: Mob) {
   const d = Math.hypot(mob.x - soldier.x, mob.y - soldier.y);
   if (d > 0.7) {
-    moveToward(soldier, mob.x, mob.y, SOLDIER_SPEED);
+    walkSoldier(state, soldier, mob.x, mob.y, SOLDIER_SPEED);
     return;
   }
   if (state.tick % 12 !== 0) return;
@@ -1577,12 +1669,14 @@ function strikeMob(state: GameState, soldier: Soldier, mob: Mob) {
 
 function strikeSoldier(state: GameState, soldier: Soldier, other: Soldier) {
   const d = Math.hypot(other.x - soldier.x, other.y - soldier.y);
-  if (d > 0.7) {
-    moveToward(soldier, other.x, other.y, SOLDIER_SPEED);
+  const range = soldier.weapon === 'bow' ? bowRange(state, soldier) : 0.7;
+  if (d > range) {
+    walkSoldier(state, soldier, other.x, other.y, SOLDIER_SPEED);
     return;
   }
   if (state.tick % 12 !== 0) return;
-  other.hp -= soldier.dmg;
+  const dealt = onOwnTower(state, other) ? Math.max(1, Math.floor(soldier.dmg * 0.5)) : soldier.dmg;
+  other.hp -= dealt;
 }
 
 function updateEconomy(state: GameState) {
@@ -1709,6 +1803,7 @@ export function step(state: GameState, commands: Command[] = [], opts?: { shelte
   updatePeople(state);
   updateOxen(state);
   updateCombat(state);
+  updateSiege(state, (text) => note(state, text));
   state.people = state.people.filter((p) => p.hp > 0);
   state.soldiers = state.soldiers.filter((s) => s.hp > 0);
   state.mobs = state.mobs.filter((m) => m.alive || m.respawn > 0);
@@ -1735,6 +1830,7 @@ export function serialize(state: GameState): string {
     soldiers: state.soldiers,
     oxen: state.oxen,
     mobs: state.mobs,
+    clouds: state.clouds ?? [],
     outcome: state.outcome,
     message: state.message,
     log: state.log,
@@ -1745,5 +1841,9 @@ export function deserialize(raw: string): GameState {
   const data = JSON.parse(raw) as GameState & { terrain: number[] };
   if (data.saveVersion !== 1) throw new Error('Неизвестная версия сохранения');
   const terrain = Uint8Array.from(data.terrain);
-  return { ...data, terrain };
+  const clouds = data.clouds ?? [];
+  for (const building of data.buildings) {
+    if (building.seal == null) building.seal = 0;
+  }
+  return { ...data, terrain, clouds };
 }

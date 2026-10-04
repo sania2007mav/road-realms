@@ -143,6 +143,7 @@ export function createGame(seed: number, opts?: { ai?: number; humans?: number }
     soldiers: [],
     oxen: [],
     mobs: [],
+    clouds: [],
     outcome: 'playing',
     message: '',
     log: [
