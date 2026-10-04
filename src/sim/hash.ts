@@ -28,7 +28,7 @@ export function hashState(state: GameState): string {
     `s${state.seed >>> 0}`,
     `w${state.winnerId ?? -1}`,
     match
-      ? `K${match.victory}|${match.timeLimit}|${match.map}|${match.start}|${match.ai}|${match.goldTarget}|${match.popTarget}|${match.surviveMinutes}`
+      ? `K${match.victory}|${match.timeLimit}|${match.map}|${match.start}|${match.ai}|${match.goldTarget}|${match.popTarget}|${match.surviveMinutes}|${match.teams === 'pairs' ? 'pairs' : 'ffa'}`
       : 'K',
   );
   const players = [...state.players].sort((a, b) => a.id - b.id);

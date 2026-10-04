@@ -3,12 +3,17 @@ import {
   createGame,
   deserialize,
   normalizeSetup,
+  hostile,
+  packConfig,
   packSeed,
   resultCopy,
   scoreOf,
   serialize,
   step,
+  teamOf,
+  unpackConfig,
   unpackSeed,
+  viewerWon,
   type MatchSetup,
 } from '../src/sim';
 import { createBuilding, createSoldier } from '../src/sim/entities';
@@ -252,5 +257,36 @@ describe('условия победы', () => {
         }
       }
     }
+  });
+
+  it('пакует скорость, команды и сложность отдельно от зерна', () => {
+    const config = { speed: 3 as const, teams: 'pairs' as const, difficulty: 'hard' as const };
+    const packed = packConfig(config);
+    expect(unpackConfig(packed)).toEqual(config);
+    expect(unpackConfig(undefined)).toEqual({ speed: 1, teams: 'ffa', difficulty: 'normal' });
+    const setup = normalizeSetup({ victory: 'conquest', map: 'small', start: 'high', ai: 2, teams: 'pairs' });
+    const seed = packSeed(99, setup);
+    const back = unpackSeed(seed);
+    expect(back.setup.teams).toBeUndefined();
+    expect(back.setup.map).toBe('small');
+    expect(back.setup.start).toBe('high');
+  });
+
+  it('двое на двое не бьют своих и заканчивают матч, когда пала вторая сторона', () => {
+    const state = createGame(5, { humans: 2, ai: 2, setup: { ai: 2, teams: 'pairs', victory: 'conquest', map: 'small' } });
+    expect(state.players).toHaveLength(4);
+    expect(teamOf(0, 4)).toBe(0);
+    expect(teamOf(1, 4)).toBe(0);
+    expect(teamOf(2, 4)).toBe(1);
+    expect(hostile(state, 0, 1)).toBe(false);
+    expect(hostile(state, 0, 2)).toBe(true);
+    state.players[2].alive = false;
+    state.players[3].alive = false;
+    step(state, []);
+    expect(state.outcome).toBe('victory');
+    expect(teamOf(state.winnerId, state.players.length)).toBe(0);
+    expect(viewerWon(state, 1, true)).toBe(true);
+    expect(viewerWon(state, 2, true)).toBe(false);
+    expect(hashState(state)).toBe(hashState(deserialize(serialize(state))));
   });
 });

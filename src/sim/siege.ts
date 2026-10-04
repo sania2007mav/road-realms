@@ -1,5 +1,6 @@
 import { BUILDINGS, BOW_RANGE, CLOUD_RADIUS, CLOUD_TICKS, PITCH_BURN, POP_MAX, POP_MIN, TOWER_RANGE } from './balance';
 import { findPath, tileBlocked } from './path';
+import { hostile } from './match';
 import { roadPace } from './roads';
 import type { Building, BuildingType, Command, GameState, Player, Resource, Soldier, Weapon } from './types';
 
@@ -144,7 +145,7 @@ export function blocksMover(state: GameState, x: number, y: number, playerId: nu
   if (x < 0 || y < 0 || x >= state.mapW || y >= state.mapH) return true;
   const fort = fortOn(state, x, y);
   if (!fort) return false;
-  const own = fort.playerId === playerId;
+  const own = !hostile(state, fort.playerId, playerId);
   if (fort.type === 'gate' || fort.type === 'stairs') return !own;
   if (fort.type === 'moat') return !own;
   if (TOWERS.has(fort.type)) return !(own && kind === 'bow');
@@ -281,7 +282,7 @@ export function nearestBreach(state: GameState, soldier: Soldier, goalX: number,
   let best: Building | null = null;
   let bestScore = Infinity;
   for (const building of state.buildings) {
-    if (building.hp <= 0 || !building.complete || building.playerId === soldier.playerId) continue;
+    if (building.hp <= 0 || !building.complete || !hostile(state, building.playerId, soldier.playerId)) continue;
     if (!BREACH.has(building.type)) continue;
     if (!state.players[building.playerId]?.alive) continue;
     const spot = center(building);
@@ -339,12 +340,12 @@ function adjacent(a: Building, b: Building): boolean {
 
 function unitOn(state: GameState, x: number, y: number, range: number, enemyOf: number): boolean {
   for (const soldier of state.soldiers) {
-    if (soldier.hp <= 0 || soldier.playerId === enemyOf) continue;
+    if (soldier.hp <= 0 || !hostile(state, soldier.playerId, enemyOf)) continue;
     if (!state.players[soldier.playerId]?.alive) continue;
     if (Math.hypot(soldier.x - x, soldier.y - y) <= range) return true;
   }
   for (const person of state.people) {
-    if (person.hp <= 0 || person.playerId === enemyOf) continue;
+    if (person.hp <= 0 || !hostile(state, person.playerId, enemyOf)) continue;
     if (Math.hypot(person.x - x, person.y - y) <= range) return true;
   }
   return false;
@@ -422,7 +423,7 @@ function updateOil(state: GameState) {
     if (!engineer) continue;
     let hit = false;
     for (const soldier of state.soldiers) {
-      if (soldier.hp <= 0 || soldier.playerId === vat.playerId) continue;
+      if (soldier.hp <= 0 || !hostile(state, soldier.playerId, vat.playerId)) continue;
       if (!state.players[soldier.playerId]?.alive) continue;
       if (Math.hypot(soldier.x - spot.x, soldier.y - spot.y) > 1.6) continue;
       soldier.hp -= 8;

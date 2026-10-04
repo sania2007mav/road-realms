@@ -28,7 +28,7 @@ import {
 import { cruelMinute, planOneAi, reactionTicks } from './ai';
 import { consumeFood } from './economy';
 import { createMob, createOx, createPerson, createSoldier } from './entities';
-import { bloomKeepLevel, emptyStats, normalizeSetup, scoreOf } from './match';
+import { bloomKeepLevel, emptyStats, hostile, normalizeSetup, scoreOf, teamOf } from './match';
 import { rngNext } from './rng';
 import type {
   Building,
@@ -199,7 +199,7 @@ export function canPlace(
     if (Math.hypot(center.x - px, center.y - py) <= BUILD_RADIUS) nearOwn = true;
   }
   for (const building of state.buildings) {
-    if (building.type !== 'keep' || building.playerId === playerId || building.hp <= 0) continue;
+    if (building.type !== 'keep' || !hostile(state, building.playerId, playerId) || building.hp <= 0) continue;
     const center = buildingCenter(building);
     if (Math.hypot(center.x - px, center.y - py) < ENEMY_KEEP_GAP) {
       return { ok: false, reason: 'Слишком близко к чужому поселению' };
@@ -1249,7 +1249,7 @@ function nearestEnemyKeep(state: GameState, playerId: number, x: number, y: numb
   let best: Building | null = null;
   let bestD = 1e9;
   for (const building of state.buildings) {
-    if (building.type !== 'keep' || building.playerId === playerId || building.hp <= 0) continue;
+    if (building.type !== 'keep' || !hostile(state, building.playerId, playerId) || building.hp <= 0) continue;
     if (!state.players[building.playerId]?.alive) continue;
     const center = buildingCenter(building);
     const d = Math.hypot(center.x - x, center.y - y);
@@ -1380,7 +1380,7 @@ function nearestThreat(state: GameState, x: number, y: number, range: number, pl
     if (!best || threat.d < best.d - 1e-9 || (Math.abs(threat.d - best.d) <= 1e-9 && threat.id < best.id)) best = threat;
   };
   for (const other of state.soldiers) {
-    if (other.hp <= 0 || other.playerId === playerId) continue;
+    if (other.hp <= 0 || !hostile(state, other.playerId, playerId)) continue;
     if (!state.players[other.playerId]?.alive) continue;
     consider({ kind: 'soldier', id: other.id, x: other.x, y: other.y, d: Math.hypot(other.x - x, other.y - y) });
   }
@@ -1389,7 +1389,7 @@ function nearestThreat(state: GameState, x: number, y: number, range: number, pl
     consider({ kind: 'mob', id: mob.id, x: mob.x, y: mob.y, d: Math.hypot(mob.x - x, mob.y - y) });
   }
   for (const building of state.buildings) {
-    if (building.hp <= 0 || building.playerId === playerId) continue;
+    if (building.hp <= 0 || !hostile(state, building.playerId, playerId)) continue;
     if (!state.players[building.playerId]?.alive) continue;
     const def = BUILDINGS[building.type];
     const center = buildingCenter(building);
@@ -1611,7 +1611,7 @@ function nearestEnemySoldier(state: GameState, soldier: Soldier, range: number):
   let best: Soldier | null = null;
   let bestD = range;
   for (const other of state.soldiers) {
-    if (other.hp <= 0 || other.playerId === soldier.playerId) continue;
+    if (other.hp <= 0 || !hostile(state, other.playerId, soldier.playerId)) continue;
     if (!state.players[other.playerId]?.alive) continue;
     const d = Math.hypot(other.x - soldier.x, other.y - soldier.y);
     if (d <= bestD) {
@@ -1822,7 +1822,15 @@ function finishOutcome(state: GameState) {
     }
   }
   if (setup.victory === 'conquest') {
-    if (multi || arena) {
+    const sides = new Set(state.players.map((player) => teamOf(player.id, state.players.length)));
+    if (setup.teams === 'pairs' && sides.size >= 2) {
+      const alive = state.players.filter((player) => player.alive);
+      const standing = new Set(alive.map((player) => teamOf(player.id, state.players.length)));
+      if (standing.size <= 1) {
+        if (!alive.length) conclude(state, -1, 'defeat');
+        else conclude(state, alive[0].id, 'victory');
+      }
+    } else if (multi || arena) {
       const alive = state.players.filter((player) => player.alive);
       if (alive.length <= 1) conclude(state, alive[0]?.id ?? -1, 'victory');
     } else {

@@ -114,6 +114,7 @@ export interface PlayerStats {
 export type VictoryId = 'conquest' | 'wealth' | 'bloom' | 'survival';
 export type MapSizeId = 'small' | 'normal' | 'large';
 export type StartId = 'low' | 'normal' | 'high';
+export type TeamMode = 'ffa' | 'pairs';
 export type DifficultyId = 'easy' | 'normal' | 'hard' | 'cruel';
 export type PersonalityId = 'merchant' | 'warlord' | 'builder' | 'strategist';
 
@@ -132,6 +133,8 @@ export interface MatchSetup {
   goldTarget: number;
   popTarget: number;
   surviveMinutes: number;
+  /** Free-for-all, or two sides split by seat order. Omitted means free-for-all. */
+  teams?: TeamMode;
   /** Up to three AI neighbours. Omitted in the packed seed; lobbies carry it in the name. */
   profiles?: AiProfile[];
 }

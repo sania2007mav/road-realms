@@ -8,6 +8,7 @@ import type {
   MatchSetup,
   PersonalityId,
   Player,
+  TeamMode,
   PlayerStats,
   StartId,
   VictoryId,
@@ -69,6 +70,7 @@ export function normalizeSetup(partial?: Partial<MatchSetup> | null, ai = DEFAUL
     popTarget: finite(partial.popTarget, base.popTarget),
     surviveMinutes: finite(partial.surviveMinutes, base.surviveMinutes),
   };
+  if (partial.teams === 'pairs' || partial.teams === 'ffa') setup.teams = partial.teams;
   if (partial.profiles) setup.profiles = normalizeProfiles(partial.profiles);
   return setup;
 }
@@ -127,7 +129,55 @@ export function describeSetup(setup: MatchSetup): string {
           .map((profile) => `${personalityName(profile.personality)} (${difficultyName(profile.difficulty).toLowerCase()})`)
           .join(', ')}.`
       : '';
-  return `${victoryName(setup.victory)}${extra}. ${map}, ${start}, соседей ${setup.ai}${time}.${faces}`;
+  const teams = setup.teams === 'pairs' ? ' Команды: двое на двое.' : '';
+  return `${victoryName(setup.victory)}${extra}. ${map}, ${start}, соседей ${setup.ai}${time}.${faces}${teams}`;
+}
+
+/** Seat order splits in half: 0..half-1 against the rest. Two players are opponents; four are 2v2. */
+export function teamOf(playerId: number, playerCount: number): number {
+  const half = Math.max(1, Math.ceil(Math.max(1, playerCount) / 2));
+  return playerId < half ? 0 : 1;
+}
+
+export function hostile(state: GameState, a: number, b: number): boolean {
+  if (a === b) return false;
+  if (state.match?.teams !== 'pairs') return true;
+  const count = state.players.length;
+  return teamOf(a, count) !== teamOf(b, count);
+}
+
+export interface LobbyConfig {
+  speed: 1 | 2 | 3;
+  teams: TeamMode;
+  difficulty: DifficultyId;
+}
+
+const SPEEDS = [1, 2, 3] as const;
+
+/** Extra lobby settings that do not fit in the 16 match bits of the seed. */
+export function packConfig(config: LobbyConfig): number {
+  const speed = config.speed === 2 ? 1 : config.speed === 3 ? 2 : 0;
+  const teams = config.teams === 'pairs' ? 1 : 0;
+  const difficulty = Math.max(0, DIFFICULTIES.indexOf(config.difficulty)) & 3;
+  return (speed | (teams << 2) | (difficulty << 3)) >>> 0;
+}
+
+export function unpackConfig(raw: number | null | undefined): LobbyConfig {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return { speed: 1, teams: 'ffa', difficulty: 'normal' };
+  const n = raw >>> 0;
+  const speed = SPEEDS[(n & 3) === 1 ? 1 : (n & 3) === 2 ? 2 : 0];
+  return {
+    speed,
+    teams: (n >> 2) & 1 ? 'pairs' : 'ffa',
+    difficulty: DIFFICULTIES[(n >> 3) & 3] ?? 'normal',
+  };
+}
+
+export function lobbySummary(setup: MatchSetup, config: LobbyConfig): string {
+  const map = setup.map === 'small' ? 'малая' : setup.map === 'large' ? 'большая' : 'обычная';
+  const start = setup.start === 'low' ? 'скудные' : setup.start === 'high' ? 'богатые' : 'обычные';
+  const teams = config.teams === 'pairs' ? '2×2' : 'каждый сам';
+  return `${victoryName(setup.victory)} · ${map} · ${config.speed}× · ${start} · соседи ${setup.ai} · ${teams}`;
 }
 
 export function defaultProfiles(): AiProfile[] {
@@ -171,28 +221,53 @@ export function normalizeProfiles(list?: AiProfile[] | null): AiProfile[] {
   });
 }
 
-/** Lobby rules reject new fields. The name is an existing 1–32 string, so AI profiles ride a 7-character suffix. */
-export function packLobbyName(name: string, profiles?: AiProfile[] | null): string {
+const LOBBY_TAIL = /~([0-3]{6})(?:([012])([01])(?:([0-9a-f]{8}|-{8}))?)?$/;
+
+export interface LobbyTail {
+  speed: 1 | 2 | 3;
+  teams: TeamMode;
+  /** First 8 hex chars of the password hash, or empty when the room is open. */
+  lock: string;
+}
+
+/** The lobby name is an existing 1–32 string. Profiles, speed, teams and a password tag share its suffix. */
+export function packLobbyName(name: string, profiles?: AiProfile[] | null, tail?: Partial<LobbyTail> | null): string {
   const list = normalizeProfiles(profiles);
   const digits =
     list.map((profile) => String(DIFFICULTIES.indexOf(profile.difficulty))).join('') +
     list.map((profile) => String(PERSONALITIES.indexOf(profile.personality))).join('');
-  const base = displayLobbyName(name).replace(/~/g, '').trim().slice(0, 25);
-  return `${base || 'Тракт'}~${digits}`;
+  const shown = displayLobbyName(name).replace(/~/g, '').trim();
+  if (!tail) return `${shown.slice(0, 25) || 'Тракт'}~${digits}`;
+  const speed = tail.speed === 2 ? '1' : tail.speed === 3 ? '2' : '0';
+  const teams = tail.teams === 'pairs' ? '1' : '0';
+  const lock = tail.lock && /^[0-9a-f]{8}$/.test(tail.lock) ? tail.lock : '';
+  const suffix = `${digits}${speed}${teams}${lock}`;
+  const cap = Math.max(1, 32 - suffix.length - 1);
+  return `${shown.slice(0, cap) || 'Тракт'}~${suffix}`;
 }
 
 export function displayLobbyName(name: string): string {
-  return name.replace(/~[0-3]{6}$/, '');
+  return name.replace(LOBBY_TAIL, '');
 }
 
 export function profilesFromLobbyName(name: string): AiProfile[] | null {
-  const found = name.match(/~([0-3]{6})$/);
+  const found = name.match(LOBBY_TAIL);
   if (!found) return null;
   const digits = found[1];
   return [0, 1, 2].map((index) => ({
     difficulty: DIFFICULTIES[Number(digits[index])] ?? 'normal',
     personality: PERSONALITIES[Number(digits[index + 3])] ?? 'strategist',
   }));
+}
+
+export function tailFromLobbyName(name: string): LobbyTail {
+  const found = name.match(LOBBY_TAIL);
+  if (!found || found[2] == null) return { speed: 1, teams: 'ffa', lock: '' };
+  return {
+    speed: found[2] === '1' ? 2 : found[2] === '2' ? 3 : 1,
+    teams: found[3] === '1' ? 'pairs' : 'ffa',
+    lock: found[4] && !found[4].startsWith('-') ? found[4] : '',
+  };
 }
 
 export interface ResultCopy {
@@ -204,6 +279,9 @@ export interface ResultCopy {
 export function viewerWon(state: GameState, localPlayer: number, netMode: boolean): boolean {
   if (!netMode) return state.outcome === 'victory';
   if (state.winnerId === -2) return !!state.players[localPlayer]?.alive;
+  if (state.match?.teams === 'pairs' && state.winnerId >= 0) {
+    return teamOf(localPlayer, state.players.length) === teamOf(state.winnerId, state.players.length);
+  }
   if (state.winnerId >= 0) return state.winnerId === localPlayer;
   return !!state.players[localPlayer]?.alive;
 }
@@ -230,6 +308,12 @@ export function conditionMet(state: GameState): boolean {
     return state.tick >= setup.surviveMinutes * TICKS_PER_GAME_MINUTE && state.players.some((player) => player.alive);
   }
   const clock = setup.timeLimit > 0 && state.tick >= setup.timeLimit * TICKS_PER_GAME_MINUTE;
+  if (setup.teams === 'pairs' && setup.victory === 'conquest') {
+    const alive = state.players.filter((player) => player.alive);
+    const standing = new Set(alive.map((player) => teamOf(player.id, state.players.length)));
+    const sides = new Set(state.players.map((player) => teamOf(player.id, state.players.length)));
+    if (sides.size >= 2 && standing.size <= 1 && state.winnerId >= 0) return true;
+  }
   const lastKeep = state.players.filter((player) => player.alive).length <= 1 && state.winnerId >= 0;
   if (clock) return lastKeep;
   return lastKeep;
