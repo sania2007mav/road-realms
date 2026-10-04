@@ -562,6 +562,23 @@ test('ии: сложность, войско и стены', async ({ page }) =>
   await page.screenshot({ path: `${shots}/ai_walls.png` });
 });
 
+test('звук: панель настроек', async ({ page }) => {
+  mkdirSync(shots, { recursive: true });
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(String(error)));
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+  await page.goto('/road-realms/');
+  await page.getByTestId('new-game').click();
+  await page.getByTestId('audio-open').click();
+  await expect(page.getByTestId('audio-settings')).toBeVisible();
+  await page.getByTestId('audio-master').fill('40');
+  await page.getByTestId('mute-audio').click();
+  await expect(page.getByTestId('audio-muted')).toBeChecked();
+  await page.screenshot({ path: `${shots}/audio_settings.png` });
+  expect(errors).toEqual([]);
+});
+
 declare global {
   interface Window {
     __game?: {

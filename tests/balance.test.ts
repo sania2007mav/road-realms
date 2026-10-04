@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { PRICES } from '../src/sim/balance';
-import { applyCommand, createGame, suggestedTile } from '../src/sim';
+import { BUILDINGS, PRICES } from '../src/sim/balance';
+import { applyCommand, canPlace, createGame, playerKeep, suggestedTile } from '../src/sim';
 import {
   CHAINS,
   craftMargins,
@@ -10,6 +10,7 @@ import {
   measureDuel,
   measureWall,
   priceRows,
+  scriptedBloom,
   scriptedConquest,
 } from '../src/sim/measure';
 import { RESOURCES } from '../src/sim/types';
@@ -83,4 +84,26 @@ describe('инварианты баланса', () => {
       expect(match.minutes, `зерно ${seed}`).toBeLessThanOrEqual(40);
     }
   }, 30_000);
+
+  it('расцвет против нормального на обычной карте укладывается в 35–50 минут', () => {
+    for (const seed of [3, 7]) {
+      const match = scriptedBloom(seed, 60, 'normal');
+      expect(match.finished, `зерно ${seed}`).toBe(true);
+      expect(match.winnerId, `зерно ${seed}`).toBe(0);
+      expect(match.minutes, `зерно ${seed}`).toBeGreaterThanOrEqual(35);
+      expect(match.minutes, `зерно ${seed}`).toBeLessThanOrEqual(50);
+    }
+  }, 30_000);
+
+  it('пекарня открывается с уровнем 3, вместе с мельницей', () => {
+    expect(BUILDINGS.wheat.keepLevel).toBeLessThanOrEqual(2);
+    expect(BUILDINGS.mill.keepLevel).toBe(3);
+    expect(BUILDINGS.bakery.keepLevel).toBe(3);
+    const state = createGame(4, { ai: 0 });
+    const keep = playerKeep(state, 0)!;
+    keep.level = 2;
+    expect(canPlace(state, 0, 'bakery', keep.x + 4, keep.y).ok).toBe(false);
+    keep.level = 3;
+    expect(canPlace(state, 0, 'bakery', keep.x + 4, keep.y).reason ?? '').not.toMatch(/уров/);
+  });
 });

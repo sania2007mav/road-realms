@@ -7,7 +7,7 @@ import {
   foodTypesIn,
 } from './balance';
 import { totalFood } from './economy';
-import { personalityName, scoreOf } from './match';
+import { bloomKeepLevel, personalityName, scoreOf } from './match';
 import { nextAiSiege } from './siege';
 import type { Building, BuildingType, Command, DifficultyId, GameState, Player, TaxId, Weapon } from './types';
 import { canPlace, housingCap, idleCount, playerKeep, suggestedTile } from './update';
@@ -488,6 +488,11 @@ function army(playerId: number, ids: number[], mode: 'move' | 'home' | 'attack',
 
 function militaryCommand(state: GameState, player: Player): Command | null {
   const id = player.id;
+  if (state.match?.victory === 'bloom' && player.personality !== 'warlord') {
+    const need = bloomKeepLevel(state.match.popTarget);
+    const level = playerKeep(state, id)?.level ?? 1;
+    if (level < need) return null;
+  }
   const mine = soldiersOf(state, id);
   const victim = leaderId(state, id);
   if (victim < 0) return null;

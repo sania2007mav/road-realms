@@ -9,6 +9,7 @@ import {
   TAXES,
   TICKS_PER_GAME_MINUTE,
   TICKS_PER_SECOND,
+  bloomKeepLevel,
   buildingById,
   buildingCenter,
   canPlace,
@@ -34,6 +35,7 @@ import {
   resultCopy,
   scoreOf,
   victoryName,
+  viewerWon,
   CRUEL_BONUS_TEXT,
   SCORE_TEXT,
   serialize,
@@ -63,6 +65,8 @@ import { net } from './net/session';
 import { NetView } from './net/screens';
 import { ZOOM_MAX, clampCamera, focusTile, screenToTile, screenToWorld, worldToScreen, type Camera } from './render/camera';
 import { bakeTerrain, minimapToTile, renderMinimap, renderWorld, type Ghost, type OrderMarker } from './render/draw';
+import { createAudio } from './audio/bus';
+import type { AudioSettings } from './audio/settings';
 import { soldiersInScreenRect } from './select';
 
 const SAVE_KEY = 'dorozhnye-kraya-v1';
@@ -156,10 +160,17 @@ function pushCmd(command: Command) {
   command.playerId = localPlayer;
   const me = state.players[localPlayer];
   if (me && !me.alive) return;
+  if (command.kind === 'place') {
+    const check = canPlace(state, command.playerId, command.building, command.x, command.y);
+    if (check.ok) audio.play('place', command.x, command.y);
+    else audio.play('ui-error');
+  } else if (command.kind === 'market') audio.play('coins');
+  else if (command.kind === 'army' || command.kind === 'train') audio.play('order');
   if (netMode) net.submit(command);
   else queue.push(command);
 }
 const keys = new Set<string>();
+const audio = createAudio();
 let acc = 0;
 let lastFrame = performance.now();
 let fps = 60;
@@ -451,9 +462,9 @@ function buildTitle() {
       </label>
       <label id="field-pop" for="pop-target">Население для «Расцвета»
         <select id="pop-target" data-testid="pop-target">
-          ${option('12', '12', draft.popTarget === 12)}
-          ${option('20', '20', draft.popTarget === 20)}
-          ${option('30', '30', draft.popTarget === 30)}
+          ${option('12', 'уровень 4 и 12 человек', draft.popTarget === 12)}
+          ${option('20', 'уровень 5 и 20 человек', draft.popTarget === 20)}
+          ${option('30', 'уровень 5 и 30 человек', draft.popTarget === 30)}
         </select>
       </label>
       <label id="field-survive" for="survive-min">Минуты «Выживания»
@@ -562,6 +573,68 @@ function buildTitle() {
   document.querySelector<HTMLButtonElement>('#net-title')!.onclick = () => openNet();
 }
 
+function speakerIcon(muted: boolean): string {
+  const slash = muted ? '<path d="M4 4l16 16" fill="none" stroke="currentColor" stroke-width="2"/>' : '';
+  return `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M3 9h4l5-4v14l-5-4H3z"/><path fill="none" stroke="currentColor" stroke-width="2" d="M16 9a4 4 0 010 6"/>${slash}</svg>`;
+}
+
+function paintMute() {
+  const button = document.querySelector<HTMLButtonElement>('#mute-btn');
+  const box = document.querySelector<HTMLInputElement>('#audio-muted');
+  const muted = audio.settings().muted;
+  if (button) {
+    button.innerHTML = speakerIcon(muted);
+    button.setAttribute('aria-pressed', muted ? 'true' : 'false');
+    button.classList.toggle('is-muted', muted);
+  }
+  if (box) box.checked = muted;
+}
+
+function bindAudioRange(id: string, key: keyof AudioSettings) {
+  const input = document.querySelector<HTMLInputElement>(`#${id}`);
+  if (!input) return;
+  const current = audio.settings()[key];
+  input.value = String(Math.round(Number(current) * 100));
+  input.addEventListener('input', () => {
+    audio.update({ [key]: Number(input.value) / 100 });
+  });
+}
+
+function mountAudio() {
+  const host = document.querySelector('#app');
+  let panel = document.querySelector<HTMLElement>('#audio-panel');
+  if (host && !panel) {
+    panel = document.createElement('aside');
+    panel.id = 'audio-panel';
+    panel.dataset.testid = 'audio-settings';
+    panel.hidden = true;
+    panel.innerHTML = `<h2>Звук</h2>
+      <label class="audio-mute"><input type="checkbox" id="audio-muted" data-testid="audio-muted" /> Без звука</label>
+      <label>Общая <input type="range" id="audio-master" data-testid="audio-master" min="0" max="100" step="1" /></label>
+      <label>Музыка <input type="range" id="audio-music" data-testid="audio-music" min="0" max="100" step="1" /></label>
+      <label>Эффекты <input type="range" id="audio-sfx" data-testid="audio-sfx" min="0" max="100" step="1" /></label>
+      <label>Фон <input type="range" id="audio-ambience" data-testid="audio-ambience" min="0" max="100" step="1" /></label>`;
+    host.append(panel);
+    bindAudioRange('audio-master', 'master');
+    bindAudioRange('audio-music', 'music');
+    bindAudioRange('audio-sfx', 'sfx');
+    bindAudioRange('audio-ambience', 'ambience');
+    document.querySelector<HTMLInputElement>('#audio-muted')!.addEventListener('change', () => {
+      audio.update({ muted: document.querySelector<HTMLInputElement>('#audio-muted')!.checked });
+      paintMute();
+    });
+  }
+  paintMute();
+  const sheet = panel;
+  document.querySelector<HTMLButtonElement>('#mute-btn')!.onclick = () => {
+    audio.toggleMuted();
+    paintMute();
+  };
+  document.querySelector<HTMLButtonElement>('#audio-open')!.onclick = () => {
+    if (sheet) sheet.hidden = !sheet.hidden;
+  };
+}
+
 function buildChrome() {
   const player = () => state.players[localPlayer];
   topbar.innerHTML = `
@@ -572,6 +645,8 @@ function buildChrome() {
       <div class="readout" id="gold-readout"></div>
       <div class="readout" id="clock"></div>
       <div class="readout" id="fps">60 к/с</div>
+      <button type="button" id="mute-btn" data-testid="mute-audio" aria-label="Без звука" aria-pressed="false"></button>
+      <button type="button" id="audio-open" data-testid="audio-open" aria-label="Настройки звука">Звук</button>
       <div id="presence" data-testid="presence" hidden></div>
     </div>
     <div id="resources"></div>`;
@@ -587,6 +662,7 @@ function buildChrome() {
     popbox.hidden = !popbox.hidden;
     peoplebox.hidden = true;
   };
+  mountAudio();
 
   const econ = document.querySelector<HTMLElement>('#econ')!;
   econ.innerHTML = `<label>Паёк
@@ -667,6 +743,7 @@ function paintBuildButtons() {
       const reason = blockReason(type);
       if (reason) {
         flash(reason);
+        audio.play('ui-error');
         return;
       }
       placing = type;
@@ -798,7 +875,7 @@ function goalText(playerId: number): string {
   const keep = playerKeep(state, playerId);
   const pop = state.people.filter((person) => person.playerId === playerId && person.hp > 0).length;
   if (setup.victory === 'wealth') return `${player.gold} / ${setup.goldTarget} золота`;
-  if (setup.victory === 'bloom') return `ур. ${keep?.level ?? 0}/5 · люди ${pop}/${setup.popTarget}`;
+  if (setup.victory === 'bloom') return `ур. ${keep?.level ?? 0}/${bloomKeepLevel(setup.popTarget)} · люди ${pop}/${setup.popTarget}`;
   if (setup.victory === 'survival') return 'держится';
   return 'главное здание стоит';
 }
@@ -918,6 +995,7 @@ function syncHud() {
   if (state.message && state.message !== lastMessage) {
     lastMessage = state.message;
     flash(state.message);
+    audio.play('ui-error');
   }
   refreshBuildState();
   syncPanel();
@@ -1642,6 +1720,7 @@ function syncArmy() {
 
 function noteFirstSelection() {
   if (!selectedSoldiers.size) return;
+  audio.play('select');
   if (localStorage.getItem(ARMY_HINT_KEY)) {
     armyHint.hidden = true;
     return;
@@ -1864,6 +1943,7 @@ function pick(screenX: number, screenY: number) {
   }
   if (personHit != null) {
     selectedPersonId = personHit;
+    audio.play('select');
     const person = state.people.find((p) => p.id === personHit);
     selectedId = person && person.task.type !== 'idle' ? person.task.buildingId : null;
     panelSig = '';
@@ -1953,6 +2033,15 @@ function frame(now: number) {
     armyEl.hidden = true;
     goalsEl.hidden = true;
   }
+  audio.follow(
+    state,
+    localPlayer,
+    camera,
+    w,
+    h,
+    playing,
+    state.outcome === 'playing' ? null : viewerWon(state, localPlayer, netMode),
+  );
   requestAnimationFrame(frame);
 }
 
@@ -2578,6 +2667,13 @@ window.addEventListener('keydown', (event) => {
 });
 window.addEventListener('keyup', (event) => keys.delete(event.key.toLowerCase()));
 window.addEventListener('resize', resize);
+document.addEventListener('pointerover', (event) => {
+  if (event.target instanceof HTMLButtonElement) audio.play('ui-hover');
+});
+document.addEventListener('pointerdown', (event) => {
+  const target = event.target;
+  if (target instanceof HTMLButtonElement || target instanceof HTMLSelectElement) audio.play('ui-click');
+});
 
 declare global {
   interface Window {

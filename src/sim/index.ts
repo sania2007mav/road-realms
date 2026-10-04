@@ -34,6 +34,7 @@ export {
   SCORE_TEXT,
   conditionMet,
   defaultProfiles,
+  bloomKeepLevel,
   describeSetup,
   difficultyName,
   displayLobbyName,

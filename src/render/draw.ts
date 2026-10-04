@@ -1,4 +1,4 @@
-import { BUILDINGS } from '../sim/balance';
+import { BUILDINGS, KEEP_UPGRADE_TICKS } from '../sim/balance';
 import { hash2 } from '../sim/rng';
 import type { Building, BuildingType, GameState, Mob, Person, Resource } from '../sim/types';
 import { Terrain } from '../sim/types';
@@ -238,7 +238,7 @@ let paintingSprite = false;
 let forcedGrow = -1;
 
 function buildNeed(building: Building) {
-  if (building.upgrading) return 220;
+  if (building.upgrading) return KEEP_UPGRADE_TICKS;
   return BUILDINGS[building.type].buildTicks || 1;
 }
 
@@ -906,7 +906,7 @@ function markBuilding(ctx: CanvasRenderingContext2D, state: GameState, building:
     ctx.lineWidth = 1;
   }
   if (!building.complete || building.upgrading) {
-    const need = building.upgrading ? 220 : def.buildTicks || 1;
+    const need = building.upgrading ? KEEP_UPGRADE_TICKS : def.buildTicks || 1;
     bar(ctx, west, s, building.buildProgress / need, '#e6b15a');
   } else if (def.cycle > 0 && building.workerIds.length > 0) {
     bar(ctx, west, s, building.work / def.cycle, '#8dce67');

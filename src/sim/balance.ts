@@ -13,7 +13,7 @@ export const TAX_EVERY = 40;
 export const CONSUME_EVERY = 50;
 export const POP_EVERY = 4;
 export const AI_EVERY = 40;
-export const KEEP_UPGRADE_TICKS = 220;
+export const KEEP_UPGRADE_TICKS = 80;
 export const BUILD_RADIUS = 18;
 export const ENEMY_KEEP_GAP = 12;
 
@@ -564,7 +564,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     cost: { wood: 10, stone: 8 },
     workers: 1,
     housing: 0,
-    keepLevel: 4,
+    keepLevel: 3,
     category: 'food',
     buildTicks: 200,
     hp: 120,
@@ -1090,9 +1090,9 @@ export const KEEP_HOUSING = [0, 5, 8, 12, 18, 28];
 
 export const KEEP_UPGRADE_COST: Record<number, Partial<Record<Resource, number>>> = {
   1: { wood: 25, stone: 15 },
-  2: { wood: 35, stone: 30, iron: 4 },
-  3: { wood: 45, stone: 45, iron: 10 },
-  4: { wood: 60, stone: 70, iron: 18 },
+  2: { wood: 8, stone: 6, iron: 1 },
+  3: { wood: 12, stone: 8, iron: 2 },
+  4: { wood: 14, stone: 10, iron: 2 },
 };
 
 export function housingOf(type: BuildingType, level: number): number {

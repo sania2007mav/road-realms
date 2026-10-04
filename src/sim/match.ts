@@ -96,6 +96,11 @@ export function openingBundle(start: StartId): { wood: number; stone: number; ap
   };
 }
 
+/** «12 человек» is the short Расцвет: keep 4. The 20 and 30 tiers still need keep 5. Other targets stay on keep 5. */
+export function bloomKeepLevel(popTarget: number): number {
+  return popTarget === 12 ? 4 : 5;
+}
+
 export function victoryName(id: VictoryId): string {
   if (id === 'wealth') return 'Богатство';
   if (id === 'bloom') return 'Расцвет';
@@ -111,7 +116,7 @@ export function describeSetup(setup: MatchSetup): string {
     setup.victory === 'wealth'
       ? `, ${setup.goldTarget} золота`
       : setup.victory === 'bloom'
-        ? `, уровень 5 и ${setup.popTarget} людей`
+        ? `, уровень ${bloomKeepLevel(setup.popTarget)} и ${setup.popTarget} людей`
         : setup.victory === 'survival'
           ? `, ${setup.surviveMinutes} мин`
           : '';

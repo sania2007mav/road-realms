@@ -11,7 +11,7 @@ import {
   costGold,
 } from './balance';
 import { createBuilding, createSoldier } from './entities';
-import { scoreOf } from './match';
+import { bloomKeepLevel, scoreOf } from './match';
 import type { BuildingType, Command, DifficultyId, GameState, MatchSetup, PersonalityId, Resource, Weapon } from './types';
 import { RESOURCES } from './types';
 import { applyCommand, canPlace, housingCap, idleCount, playerKeep, step, suggestedTile } from './update';
@@ -414,6 +414,7 @@ export function runMatch(
   capMinutes: number,
   kind: string,
   scripted = false,
+  play: (state: GameState) => Command | null = scriptedCommand,
 ): MatchResult {
   const arena = !scripted && setup.ai >= 2;
   const state = createGame(seed, { ai: setup.ai, arena, setup });
@@ -421,7 +422,7 @@ export function runMatch(
   const cap = capMinutes * TICKS_PER_GAME_MINUTE;
   while (state.outcome === 'playing' && state.tick < cap) {
     let command: Command | null = null;
-    if (scripted && state.tick % 40 === 0) command = scriptedCommand(state);
+    if (scripted && state.tick % 40 === 0) command = play(state);
     step(state, command ? [command] : []);
     if (state.tick % TICKS_PER_GAME_MINUTE === 0) {
       const levels = keepLevels(state);
@@ -573,6 +574,83 @@ export function arenaMatch(seed: number, victory: MatchSetup['victory'], cap: nu
     { difficulty: 'normal' as DifficultyId, personality: 'warlord' as PersonalityId },
   ];
   return runMatch(seed, { ai: 2, victory, map, timeLimit: 0, profiles }, cap, `арена ${victory}`, false);
+}
+
+const BLOOM_CORE: BuildingType[] = ['granary', 'woodcutter', 'shack', 'orchard', 'stockpile', 'quarry'];
+
+function placeNext(state: GameState, types: BuildingType[], keepLevelNow: number): Command | null {
+  for (const type of types) {
+    const placed = tryPlace(state, type, 1, keepLevelNow);
+    if (placed) return placed;
+  }
+  return null;
+}
+
+function tryPlace(state: GameState, type: BuildingType, max: number, keepLevelNow: number): Command | null {
+  const player = state.players[0];
+  if (!player) return null;
+  if (BUILDINGS[type].keepLevel > keepLevelNow) return null;
+  if (countType(state, type) >= max) return null;
+  if (!affordable(player.stocks, BUILDINGS[type].cost)) return null;
+  const tile = suggestedTile(state, 0, type);
+  if (!tile) return null;
+  return { kind: 'place', playerId: 0, building: type, x: tile.x, y: tile.y };
+}
+
+export function bloomCommand(state: GameState): Command | null {
+  const player = state.players[0];
+  if (!player?.alive) return null;
+  const target = state.match?.popTarget ?? 20;
+  const needKeep = bloomKeepLevel(target);
+  if (player.tax !== 'none' && state.tick > 120) return { kind: 'tax', playerId: 0, tax: 'none' };
+  if (idleCount(state, 0) > 0) {
+    const site = state.buildings.find((building) => {
+      if (building.playerId !== 0 || !building.complete || building.hp <= 0) return false;
+      return building.workerIds.length < BUILDINGS[building.type].workers;
+    });
+    if (site) return { kind: 'assign', playerId: 0, buildingId: site.id, delta: 1 };
+  }
+  const keep = playerKeep(state, 0);
+  const levelNow = keep?.level ?? 1;
+  const core = placeNext(state, BLOOM_CORE, levelNow);
+  if (core) return core;
+  const secondCutter = tryPlace(state, 'woodcutter', 2, levelNow);
+  if (secondCutter) return secondCutter;
+  const nextCost = keep && levelNow < needKeep ? KEEP_UPGRADE_COST[levelNow] : undefined;
+  const upgradeReady = Boolean(keep && nextCost && !keep.upgrading && affordable(player.stocks, nextCost));
+  if (upgradeReady && keep) return { kind: 'upgrade', playerId: 0, buildingId: keep.id };
+  const mine = levelNow >= 2 ? tryPlace(state, 'mine', 1, levelNow) : null;
+  if (mine) return mine;
+  const people = peopleNow(state);
+  if (levelNow >= 2 && people < target && housingHeadroom(state) < 3) {
+    const shack = tryPlace(state, 'shack', 3, levelNow);
+    if (shack) return shack;
+  }
+  if ((player.stocks.apples ?? 0) < 30 && !upgradeReady) {
+    const orchard = tryPlace(state, 'orchard', 2, levelNow);
+    if (orchard) return orchard;
+    const dairy = levelNow >= 2 ? tryPlace(state, 'dairy', 1, levelNow) : null;
+    if (dairy) return dairy;
+  }
+  return null;
+}
+
+export function scriptedBloom(seed: number, cap: number, map: MatchSetup['map'] = 'normal'): MatchResult {
+  return runMatch(
+    seed,
+    {
+      ai: 1,
+      victory: 'bloom',
+      map,
+      popTarget: 20,
+      timeLimit: 0,
+      profiles: [{ difficulty: 'normal', personality: 'builder' }],
+    },
+    cap,
+    'расцвет против нормального',
+    true,
+    bloomCommand,
+  );
 }
 
 export function scriptedConquest(seed: number, cap: number, map: MatchSetup['map'] = 'normal'): MatchResult {

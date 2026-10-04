@@ -28,7 +28,7 @@ import {
 import { cruelMinute, planOneAi, reactionTicks } from './ai';
 import { consumeFood } from './economy';
 import { createMob, createOx, createPerson, createSoldier } from './entities';
-import { emptyStats, normalizeSetup, scoreOf } from './match';
+import { bloomKeepLevel, emptyStats, normalizeSetup, scoreOf } from './match';
 import { rngNext } from './rng';
 import type {
   Building,
@@ -1792,8 +1792,9 @@ function finishOutcome(state: GameState) {
     }
   }
   if (setup.victory === 'bloom') {
+    const needKeep = bloomKeepLevel(setup.popTarget);
     const winner = state.players.find(
-      (player) => player.alive && keepLevel(state, player.id) >= 5 && livingPeople(state, player.id) >= setup.popTarget,
+      (player) => player.alive && keepLevel(state, player.id) >= needKeep && livingPeople(state, player.id) >= setup.popTarget,
     );
     if (winner) {
       conclude(state, winner.id, side(winner.id));

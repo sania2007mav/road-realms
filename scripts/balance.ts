@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { BUILDINGS, PRICES, TAXES } from '../src/sim/balance';
+import { BUILDINGS, KEEP_UPGRADE_COST, KEEP_UPGRADE_TICKS, PRICES, TAXES } from '../src/sim/balance';
 import {
   CHAINS,
   craftMargins,
@@ -13,6 +13,7 @@ import {
   popularityLines,
   priceRows,
   runMatch,
+  scriptedBloom,
   scriptedConquest,
 } from '../src/sim/measure';
 import type { ChainResult, DuelResult, MatchResult, WallResult } from '../src/sim/measure';
@@ -134,9 +135,9 @@ const arena = [3, 7].map((seed) =>
 );
 const other = [
   runMatch(5, { ai: 1, victory: 'wealth', map: 'small', goldTarget: 2000, timeLimit: 0, profiles: [{ difficulty: 'normal', personality: 'merchant' }] }, 40, 'богатство', true),
-  runMatch(5, { ai: 1, victory: 'bloom', map: 'small', popTarget: 20, timeLimit: 0, profiles: [{ difficulty: 'normal', personality: 'builder' }] }, 40, 'расцвет', true),
   runMatch(5, { ai: 1, victory: 'survival', map: 'small', surviveMinutes: 20, timeLimit: 0, profiles: [{ difficulty: 'normal', personality: 'builder' }] }, 25, 'выживание', true),
 ];
+const bloom = [3, 7, 11].map((seed) => scriptedBloom(seed, 60, 'normal'));
 const taxes = measureTaxes(8);
 const climb = [4, 8, 15].map((seed) => measureKeepClimb(seed, 120));
 const difficultySeeds = [4, 9];
@@ -158,7 +159,7 @@ lines.push('| Яблоки, шт / цикл | 36 / 18 | 12 / 24 | Сад кор�
 lines.push('| Сыр, шт / цикл | 1 / 80 | 22 / 24 | На клетку оазиса сыр выгоднее яблок, пока ферма не в чуме |');
 lines.push('| Чума фермы | 5% и 420 тиков | 5% и 160 тиков | Провал заметный, но ферма успевает отбиться |');
 lines.push('| Мясо, шт / цикл | 1 / 100 | 4 / 36 | Мясо есть, только пока живы олени (урон по оленю 4 → 2) |');
-lines.push('| Пшеница / мука / хлеб | 1 за 55 / 50 / 50 | 24 за 10 / 8 / 8 | Хлеб — лучший выпуск, но три здания и уровень 4 |');
+lines.push('| Пшеница / мука / хлеб | 1 за 55 / 50 / 50 | 24 за 10 / 8 / 8 | Хлеб — лучший выпуск; мельница и пекарня открываются с уровня 3 |');
 lines.push('| Хмель / пиво | 1 за 60 / 70 | 6 за 20 / 16 | Цепочка пива окупается меньше чем за 12 минут работы |');
 lines.push('| Дерево | 1 / 45 | 5 / 18 | Иначе улучшение главного здания не на что копить |');
 lines.push('| Камень и волы | 1 / 70, вол 0.05, воз 4 | 6 / 30, вол 0.08, воз 6 | Уровень 2 до армии, а не к сороковой минуте |');
@@ -174,6 +175,12 @@ lines.push('| Таран | 80 hp, урон 6 | 100 hp, урон 3 | Живёт �
 lines.push('| Катапульта | 50 hp, урон 4 | 40 hp, урон 2 | Ломает стены (18), в поле проигрывает |');
 lines.push('| Скорость солдата | 0.11 | 0.2 | Переход через обычную карту укладывается в окно матча |');
 lines.push('| Первый залп, тики | воевода 900, стратег 1500, зодчий 2200, купец 2600 | 780 / 1200 / 1500 / 1400 | Купец больше не ждёт 43-й минуты |');
+lines.push(`| Пекарня | уровень 4 | уровень ${BUILDINGS.bakery.keepLevel} | Хлебная цепочка открывается вместе с мельницей, а не к 64-й минуте |`);
+const costText = (level: number) => {
+  const cost = KEEP_UPGRADE_COST[level];
+  return `${cost.wood}/${cost.stone}/${cost.iron ?? 0}`;
+};
+lines.push(`| Улучшение главного здания | 220 тиков; уровни 2/3/4 стоили 35/30/4, 45/45/10, 60/70/18 | ${KEEP_UPGRADE_TICKS} тиков; ${costText(2)}, ${costText(3)}, ${costText(4)} | Мирный уровень 5 был около 95-й минуты, «Расцвет» не укладывался в партию |`);
 lines.push('');
 lines.push('Стартовые запасы, обучение и подстраховка без лесоруба не менялись. «Жестокий» по-прежнему получает только 1 золото в игровую минуту.');
 lines.push('');
@@ -208,7 +215,7 @@ const tavern = chains.find((row) => row.id === 'tavern')!;
 lines.push(`- Яблоки: ${n(apples.perMinute)} в минуту на 12 клетках оазиса (${n(apples.perTile, 2)} на клетку), окупаемость ${n(apples.paybackMin)} мин. Дёшево и прожорливо по земле.`);
 lines.push(`- Сыр: ${n(cheese.perMinute)} в минуту на 9 клетках (${n(cheese.perTile, 2)} на клетку), окупаемость ${n(cheese.paybackMin)} мин. Плотнее яблок; в окне чума случалась ${n(cheese.plague, 1)} раза и на ${n(160 / 60)} мин останавливает ферму.`);
 lines.push(`- Мясо: ${n(meat.perMinute)} в минуту и только рядом с оленями. Окупаемость ${n(meat.paybackMin)} мин. Это добавка к разнообразию, не кормушка.`);
-lines.push(`- Хлеб: ${n(bread.perMinute)} в минуту, ${n(bread.perTile, 2)} на клетку оазиса, окупаемость ${n(bread.paybackMin)} мин. Лучший выпуск, но мельница с уровня 3, пекарня с уровня 4.`);
+lines.push(`- Хлеб: ${n(bread.perMinute)} в минуту, ${n(bread.perTile, 2)} на клетку оазиса, окупаемость ${n(bread.paybackMin)} мин. Лучший выпуск. Пшеница с уровня 2, мельница и пекарня с уровня ${BUILDINGS.bakery.keepLevel}.`);
 lines.push(`- Пиво без таверны: ${n(beer.perMinute)} в минуту, окупаемость ${n(beer.paybackMin)} мин. Таверна не продаёт пиво, а выпивает его: золотая окупаемость всей цепочки ${n(tavern.paybackMin)} мин, зато настроение от пива держится ${n(tavern.beerMinutes)} мин за окно (+12 к цели, можно поднять налог).`);
 const pitch = chains.find((row) => row.id === 'pitch')!;
 lines.push(`- Смола: ${pitch.placed ? `${n(pitch.perMinute)} в минуту, окупаемость ${n(pitch.paybackMin)} мин` : 'на этих зёрнах болото не встало'}. Это припас для рва со смолой, не статья дохода.`);
@@ -264,15 +271,20 @@ lines.push('До правок за 25–40 минут ни сценарий, н�
 lines.push('');
 lines.push('| Матч | Минуты | Победитель | Уровни |');
 lines.push('| --- | ---: | ---: | --- |');
-for (const row of [...conquest, ...arena, ...other]) lines.push(matchLine(row));
+for (const row of [...conquest, ...arena, ...bloom, ...other]) lines.push(matchLine(row));
 lines.push('');
-lines.push('Выживание закрывается ровно в заданную минуту, если посад жив. Богатство и расцвет на малой карте за 40 минут не закрылись: это длинные цели, и посад при этом не встал.');
+lines.push('Выживание закрывается ровно в заданную минуту, если посад жив. «Расцвет» — уровень 5 и 20 человек против одного нормального зодчего: сосед не начинает осаду, пока сам не достроил нужный уровень, а сценарий копит людей шалашами и вторым садом, не откладывая улучшение. Цель на 12 человек требует только уровень 4.');
 for (const row of other) {
   if (row.finished) continue;
-  lines.push(`- ${row.kind}, зерно ${row.seed}: золото ${row.gold.map((value) => Math.round(value)).join(' / ')}, люди живы: ${row.alive.map((value) => (value ? 'да' : 'нет')).join(' / ')}.`);
+  lines.push(`${row.kind}, зерно ${row.seed}, за ${n(row.minutes, 0)} минут не закрылось: золото ${row.gold.map((value) => Math.round(value)).join(' / ')}, люди живы: ${row.alive.map((value) => (value ? 'да' : 'нет')).join(' / ')}.`);
 }
 lines.push('');
-lines.push('Мирная стройка без соседа (обычная карта, один лесоруб, сад, каменоломня, потом рудник) берёт уровни 2/3/4/5 в такие минуты. Хлеб открывается с уровнем 4.');
+const climbLevel = (index: number) => {
+  const hit = climb.filter((row) => row.minutes[index] > 0);
+  if (!hit.length) return 0;
+  return hit.reduce((sum, row) => sum + row.minutes[index], 0) / hit.length;
+};
+lines.push(`Мирная стройка без соседа (обычная карта, один лесоруб, сад, каменоломня, потом рудник) берёт уровни 2/3/4/5 в такие минуты. Уровень 3, с которого открываются мельница и пекарня, приходится на ${n(climbLevel(1), 0)}-ю минуту: в получасовой партии хлеб успевают заложить в конце, а в «Расцвете» цепочка уже работает.`);
 lines.push('');
 lines.push('| Зерно | Уровень 2 | Уровень 3 | Уровень 4 | Уровень 5 | Золото | Люди |');
 lines.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: |');
