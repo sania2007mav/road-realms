@@ -86,7 +86,7 @@ export type Weapon =
   | 'ram'
   | 'catapult';
 
-export type Terrain = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+export type Terrain = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
 
 export const Terrain = {
   Land: 0,
@@ -97,6 +97,9 @@ export const Terrain = {
   Iron: 5,
   Swamp: 6,
   Road: 7,
+  Rock: 8,
+  Water: 9,
+  Clay: 10,
 } as const;
 
 export type WorkMode = 'goto' | 'labor' | 'fetch' | 'return' | 'deliver';
@@ -140,6 +143,11 @@ export interface PlayerStats {
   razed: number;
 }
 
+export type SeasonId = 'spring' | 'summer' | 'autumn' | 'winter';
+export type SeasonPace = 'off' | 'normal' | 'long';
+export type WeatherId = 'clear' | 'rain' | 'heat' | 'storm' | 'snow' | 'drought';
+export type EventPace = 'off' | 'rare' | 'normal' | 'often';
+
 export type VictoryId = 'conquest' | 'wealth' | 'bloom' | 'survival';
 export type MapSizeId = 'small' | 'normal' | 'large';
 export type StartId = 'low' | 'normal' | 'high';
@@ -166,6 +174,12 @@ export interface MatchSetup {
   teams?: TeamMode;
   /** Up to three AI neighbours. Omitted in the packed seed; lobbies carry it in the name. */
   profiles?: AiProfile[];
+  /** Season length. Omitted means off, so old matches and the campaign stay on a clear year. */
+  seasons?: SeasonPace;
+  /** Road events. Omitted means off, so the campaign and the balance runs stay quiet. */
+  events?: EventPace;
+  /** Added to the season index. Omitted means the year still opens in spring. */
+  seasonShift?: number;
 }
 
 export interface Sample {
@@ -281,6 +295,59 @@ export interface Mob {
   wander: number;
   destX: number;
   destY: number;
+  /** 1 when this bandit belongs to a road raid and should not respawn with the wild herds. */
+  raid?: number;
+}
+
+export interface Caravan {
+  id: number;
+  fromId: number;
+  toId: number;
+  x: number;
+  y: number;
+  toX: number;
+  hp: number;
+  gold: number;
+  wood: number;
+  apples: number;
+  iron: number;
+  weapons: number;
+  alive: boolean;
+}
+
+export interface RoadFair {
+  playerId: number;
+  x: number;
+  y: number;
+  until: number;
+}
+
+export interface RoadParty {
+  id: number;
+  kind: 'travelers' | 'refugees';
+  playerId: number;
+  x: number;
+  y: number;
+  count: number;
+  until: number;
+}
+
+export interface RoadNote {
+  id: number;
+  text: string;
+  x: number;
+  y: number;
+  until: number;
+}
+
+export interface RoadState {
+  caravans: Caravan[];
+  fair: RoadFair | null;
+  party: RoadParty | null;
+  notes: RoadNote[];
+  /** Player id who wronged this seat, or -1. */
+  anger: number[];
+  seq: number;
 }
 
 export interface Cloud {
@@ -318,6 +385,13 @@ export interface GameState {
   outcome: 'playing' | 'victory' | 'defeat';
   message: string;
   log: string[];
+  /** Derived from tick, seed and match.seasons. Stored so the hash and saves share one value. */
+  season: SeasonId | 'off';
+  weather: WeatherId;
+  /** Caravans, fairs, raids and travelers. Missing on old saves, which stay quiet. */
+  road?: RoadState;
+  /** Fingerprint of a custom map. Procedural matches omit it, so their lockstep hash stays the same. */
+  mapHash?: string;
 }
 
 export type Command =
@@ -327,6 +401,8 @@ export type Command =
   | { kind: 'tax'; playerId: number; tax: TaxId }
   | { kind: 'upgrade'; playerId: number; buildingId: number }
   | { kind: 'market'; playerId: number; resource: Resource; mode: 'buy' | 'sell'; qty: number }
+  | { kind: 'trade'; playerId: number; caravanId: number; resource: Resource; mode: 'buy' | 'sell'; qty: number }
+  | { kind: 'sack'; playerId: number; caravanId: number }
   | { kind: 'train'; playerId: number; weapon: Weapon }
   | { kind: 'hire'; playerId: number; weapon: 'raider' | 'axe' }
   | { kind: 'mail'; playerId: number }

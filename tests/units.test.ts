@@ -151,7 +151,7 @@ describe('копья, конница и кузница', () => {
     delete raw.players[0].stocks.armor;
     delete raw.players[0].mail;
     const back = deserialize(JSON.stringify(raw));
-    expect(back.saveVersion).toBe(4);
+    expect(back.saveVersion).toBe(6);
     expect(back.players[0].stocks.horses).toBe(0);
     expect(back.players[0].stocks.crossbows).toBe(0);
     expect(back.players[0].mail).toBe(0);

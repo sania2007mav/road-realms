@@ -248,7 +248,7 @@ describe('условия победы', () => {
                   for (const surviveMinutes of minutes) {
                     const setup: MatchSetup = { victory, timeLimit, map, start, ai, goldTarget, popTarget, surviveMinutes };
                     const packed = packSeed(0xabcd, setup);
-                    expect(unpackSeed(packed)).toEqual({ worldSeed: 0xabcd, setup });
+                    expect(unpackSeed(packed)).toEqual({ worldSeed: 0xabcd, setup: { ...setup, seasons: 'off', events: 'off' } });
                   }
                 }
               }

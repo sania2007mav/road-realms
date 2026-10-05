@@ -9,7 +9,10 @@ import {
   START_PEOPLE,
 } from './balance';
 import { createBuilding, createMob, createPerson } from './entities';
+import { compileCustom, type CustomMap } from './custom';
+import { emptyRoad } from './events';
 import { emptyStats, mapSize, normalizeProfiles, normalizeSetup, openingBundle } from './match';
+import { syncClimate } from './seasons';
 import { hash2 } from './rng';
 import { Terrain, type GameState, type MatchSetup, type Player } from './types';
 
@@ -73,8 +76,9 @@ function clampPlayers(value: number | undefined, max: number, fallback: number):
 
 export function createGame(
   seed: number,
-  opts?: { ai?: number; humans?: number; setup?: Partial<MatchSetup>; arena?: boolean },
+  opts?: { ai?: number; humans?: number; setup?: Partial<MatchSetup>; arena?: boolean; custom?: CustomMap },
 ): GameState {
+  if (opts?.custom) return createFromCustom(seed, opts.custom, opts);
   const arena = opts?.arena === true;
   const multi = !arena && opts?.humans != null;
   const humans = multi ? clampPlayers(opts?.humans, 4, 1) || 1 : 0;
@@ -148,7 +152,7 @@ export function createGame(
   }
 
   const state: GameState = {
-    saveVersion: 4,
+    saveVersion: 6,
     seed: seed >>> 0,
     tick: 0,
     rng: (seed || 1) >>> 0,
@@ -170,6 +174,9 @@ export function createGame(
     winnerId: -1,
     outcome: 'playing',
     message: '',
+    season: 'off',
+    weather: 'clear',
+    road: emptyRoad(spawns.length),
     log: [
       'Тракт пролегает через весь край. Поставьте амбар и склад.',
       'В запасе уже есть яблоки: успейте поставить сад и назначить работника.',
@@ -260,7 +267,115 @@ export function createGame(
     pop: state.players.map(() => START_PEOPLE),
     gold: state.players.map((player) => player.gold),
   });
+  syncClimate(state);
 
+  return state;
+}
+
+function createFromCustom(
+  seed: number,
+  custom: CustomMap,
+  opts?: { ai?: number; humans?: number; setup?: Partial<MatchSetup>; arena?: boolean },
+): GameState {
+  const compiled = compileCustom(custom);
+  const starts = compiled.spawns;
+  const humans = Math.max(1, Math.min(starts.length, Math.floor(opts?.humans ?? 1) || 1));
+  const open = starts.length - humans;
+  const ai = Math.max(0, Math.min(open, opts?.ai == null ? open : Math.floor(opts.ai) || 0));
+  const seats = starts.slice(0, humans + ai);
+  const match = normalizeSetup(
+    {
+      ...opts?.setup,
+      map: custom.size,
+      ai,
+      seasons: compiled.seasons,
+      events: compiled.events,
+      seasonShift: compiled.seasonShift || undefined,
+    },
+    ai,
+  );
+  if (compiled.seasonShift) match.seasonShift = compiled.seasonShift;
+  const state: GameState = {
+    saveVersion: 6,
+    seed: seed >>> 0,
+    tick: 0,
+    rng: (seed || 1) >>> 0,
+    mapW: compiled.mapW,
+    mapH: compiled.mapH,
+    roadY: compiled.roadY,
+    terrain: compiled.terrain,
+    roads: new Uint8Array(compiled.mapW * compiled.mapH),
+    nextId: 1,
+    players: [],
+    buildings: [],
+    people: [],
+    soldiers: [],
+    oxen: [],
+    mobs: [],
+    clouds: [],
+    match,
+    samples: [],
+    winnerId: -1,
+    outcome: 'playing',
+    message: '',
+    season: 'off',
+    weather: 'clear',
+    road: emptyRoad(seats.length),
+    mapHash: compiled.mapHash,
+    log: ['Своя карта. Поставьте амбар и склад.', 'В запасе уже есть яблоки: успейте поставить сад и назначить работника.'],
+  };
+  const bundle = openingBundle(match.start);
+  const profiles = normalizeProfiles(match.profiles);
+  let aiSlot = 0;
+  seats.forEach((spawn, index) => {
+    const stocks = emptyStocks();
+    stocks.wood = bundle.wood;
+    stocks.stone = bundle.stone;
+    stocks.apples = bundle.apples;
+    stocks.iron = bundle.iron;
+    stocks.pitch = bundle.pitch;
+    const isAi = index >= humans;
+    const profile = isAi ? profiles[aiSlot++] : undefined;
+    const player: Player = {
+      id: index,
+      name: PLAYER_NAMES[index] ?? `Посад ${index + 1}`,
+      isAi,
+      alive: true,
+      side: spawn.side,
+      spawnX: spawn.x,
+      spawnY: spawn.y,
+      color: PLAYER_COLORS[index % PLAYER_COLORS.length],
+      gold: bundle.gold,
+      stocks,
+      popularity: 0,
+      ration: 'normal',
+      tax: 'low',
+      hunger: false,
+      beerMood: 0,
+      mail: 0,
+      migrate: 0,
+      stats: emptyStats(START_PEOPLE),
+      difficulty: profile?.difficulty ?? 'normal',
+      personality: profile?.personality ?? 'strategist',
+    };
+    player.popularity = popularityTarget({
+      ration: player.ration,
+      foodTypes: foodTypesIn(player.stocks),
+      tax: player.tax,
+      beer: false,
+      hunger: false,
+    }).value;
+    state.players.push(player);
+    createBuilding(state, index, 'keep', spawn.x - 1, spawn.y - 1, true);
+    for (let p = 0; p < START_PEOPLE; p++) createPerson(state, index, spawn.x + (p - 2) * 0.45, spawn.y + 2.1, p);
+  });
+  for (const mob of compiled.mobs) createMob(state, mob.kind, mob.x, mob.y);
+  state.samples.push({
+    t: 0,
+    pop: state.players.map(() => START_PEOPLE),
+    gold: state.players.map((player) => player.gold),
+  });
+  syncClimate(state);
   return state;
 }
 

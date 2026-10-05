@@ -1,3 +1,4 @@
+import { hashRoad } from './events';
 import { RESOURCES, type GameState } from './types';
 
 /** Stable text for a number. The sim never uses Math.random or Date.now; this only fingerprints the tick state. */
@@ -26,9 +27,10 @@ export function hashState(state: GameState): string {
     `n${state.nextId}`,
     `o${state.outcome}`,
     `s${state.seed >>> 0}`,
+    ...(state.mapHash ? [`H${state.mapHash}`] : []),
     `w${state.winnerId ?? -1}`,
     match
-      ? `K${match.victory}|${match.timeLimit}|${match.map}|${match.start}|${match.ai}|${match.goldTarget}|${match.popTarget}|${match.surviveMinutes}|${match.teams === 'pairs' ? 'pairs' : 'ffa'}`
+      ? `K${match.victory}|${match.timeLimit}|${match.map}|${match.start}|${match.ai}|${match.goldTarget}|${match.popTarget}|${match.surviveMinutes}|${match.teams === 'pairs' ? 'pairs' : 'ffa'}|${match.seasons ?? 'off'}|${state.season ?? 'off'}|${state.weather ?? 'clear'}`
       : 'K',
   );
   const players = [...state.players].sort((a, b) => a.id - b.id);
@@ -79,8 +81,11 @@ export function hashState(state: GameState): string {
   }
   const mobs = [...state.mobs].sort((a, b) => a.id - b.id);
   for (const mob of mobs) {
-    parts.push(`M${mob.id}|${mob.kind}|${mob.alive ? 1 : 0}|${num(mob.x)}|${num(mob.y)}|${mob.hp}|${num(mob.destX)}|${num(mob.destY)}|${mob.wander}`);
+    parts.push(
+      `M${mob.id}|${mob.kind}|${mob.alive ? 1 : 0}|${num(mob.x)}|${num(mob.y)}|${mob.hp}|${num(mob.destX)}|${num(mob.destY)}|${mob.wander}${mob.raid ? '|raid' : ''}`,
+    );
   }
+  parts.push(...hashRoad(state));
   const roads = state.roads;
   if (roads) {
     for (let i = 0; i < roads.length; i++) if (roads[i]) parts.push(`R${i}`);

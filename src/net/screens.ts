@@ -1,3 +1,4 @@
+import { listMaps } from '../sim/custom';
 import type { LobbyRow, RoomView, WaitView } from './session';
 
 export interface LobbyDraft {
@@ -11,10 +12,14 @@ export interface LobbyDraft {
   ai: number;
   speed: 1 | 2 | 3;
   teams: 'ffa' | 'pairs';
+  seasons: 'off' | 'normal' | 'long';
+  events: 'off' | 'rare' | 'normal' | 'often';
   difficulty: RoomView['draft']['difficulty'];
+  ranked: boolean;
   goldTarget: number;
   popTarget: number;
   surviveMinutes: number;
+  mapId: string;
 }
 
 export interface NetActions {
@@ -39,10 +44,14 @@ const DEFAULT_DRAFT: LobbyDraft = {
   ai: 1,
   speed: 1,
   teams: 'ffa',
+  seasons: 'normal',
+  events: 'normal',
   difficulty: 'normal',
+  ranked: false,
   goldTarget: 2000,
   popTarget: 20,
   surviveMinutes: 20,
+  mapId: '',
 };
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string): HTMLElementTagNameMap[K] {
@@ -142,6 +151,17 @@ function setupGrid(draft: LobbyDraft, testPrefix: string): HTMLDivElement {
     ['ffa', 'Каждый сам'],
     ['pairs', 'Двое на двое'],
   ]);
+  const seasons = select(`${testPrefix}-seasons`, draft.seasons, [
+    ['off', 'Выкл'],
+    ['normal', 'Обычные'],
+    ['long', 'Долгие'],
+  ]);
+  const events = select(`${testPrefix}-events`, draft.events, [
+    ['off', 'Выкл'],
+    ['rare', 'Редко'],
+    ['normal', 'Обычно'],
+    ['often', 'Часто'],
+  ]);
   const gold = select(`${testPrefix}-gold`, String(draft.goldTarget), [
     ['1000', '1000 золота'],
     ['2000', '2000 золота'],
@@ -167,15 +187,22 @@ function setupGrid(draft: LobbyDraft, testPrefix: string): HTMLDivElement {
   };
   victory.addEventListener('change', syncExtra);
   syncExtra();
+  const custom = select(`${testPrefix}-map-custom`, draft.mapId || '', [
+    ['', 'Случайная'],
+    ...listMaps().map((row) => [row.id, row.name] as const),
+  ]);
   grid.append(
     labeled('Условие победы', victory),
     labeled('Лимит времени', time),
     labeled('Размер карты', map),
+    labeled('Своя карта', custom),
     labeled('Скорость', speed),
     labeled('Начальные запасы', start),
     labeled('Соседи на пустые места', ai),
     labeled('Сложность соседей', difficulty),
     labeled('Команды', teams),
+    labeled('Сезоны', seasons),
+    labeled('События на тракте', events),
     goldField,
     popField,
     surviveField,
@@ -192,6 +219,8 @@ function readDraft(root: ParentNode, prefix: string, fallback: LobbyDraft): Lobb
   const map = value('map');
   const start = value('start');
   const teams = value('teams');
+  const seasons = value('seasons');
+  const events = value('events');
   const difficulty = value('diff');
   const speed = Number(value('speed'));
   return {
@@ -205,10 +234,14 @@ function readDraft(root: ParentNode, prefix: string, fallback: LobbyDraft): Lobb
     ai: Math.max(0, Math.min(3, Number(value('ai')) || 0)),
     speed: speed === 2 || speed === 3 ? speed : 1,
     teams: teams === 'pairs' ? 'pairs' : 'ffa',
+    seasons: seasons === 'off' || seasons === 'normal' || seasons === 'long' ? seasons : fallback.seasons,
+    events: events === 'off' || events === 'rare' || events === 'normal' || events === 'often' ? events : fallback.events,
     difficulty: difficulty === 'easy' || difficulty === 'hard' || difficulty === 'cruel' ? difficulty : 'normal',
+    ranked: root.querySelector<HTMLInputElement>('[data-testid="lobby-ranked"]')?.checked === true,
     goldTarget: [1000, 2000, 4000].includes(Number(value('gold'))) ? Number(value('gold')) : 2000,
     popTarget: [12, 20, 30].includes(Number(value('pop'))) ? Number(value('pop')) : 20,
     surviveMinutes: [10, 20, 30].includes(Number(value('survive'))) ? Number(value('survive')) : 20,
+    mapId: value('map-custom'),
   };
 }
 
@@ -262,6 +295,10 @@ export class NetView {
       ['4', '4 игрока'],
     ]);
     max.id = 'lobby-max';
+    const ranked = el('input');
+    ranked.type = 'checkbox';
+    ranked.dataset.testid = 'lobby-ranked';
+    ranked.checked = this.prefill.ranked;
     const pass = el('input');
     pass.type = 'password';
     pass.dataset.testid = 'lobby-pass';
@@ -269,6 +306,32 @@ export class NetView {
     pass.placeholder = 'Пароль, если нужен';
     pass.autocomplete = 'off';
     const grid = setupGrid(this.prefill, 'lobby');
+    const applyRanked = () => {
+      const on = ranked.checked;
+      max.disabled = on;
+      pass.disabled = on;
+      if (on) {
+        max.value = '2';
+        pass.value = '';
+      }
+      for (const control of grid.querySelectorAll<HTMLSelectElement>('select')) {
+        const keep = control.dataset.testid === 'lobby-map';
+        control.disabled = on && !keep;
+        if (!on || keep) continue;
+        if (control.dataset.testid === 'lobby-victory') control.value = 'conquest';
+        if (control.dataset.testid === 'lobby-time') control.value = '0';
+        if (control.dataset.testid === 'lobby-speed') control.value = '1';
+        if (control.dataset.testid === 'lobby-start') control.value = 'normal';
+        if (control.dataset.testid === 'lobby-ai') control.value = '0';
+        if (control.dataset.testid === 'lobby-diff') control.value = 'normal';
+        if (control.dataset.testid === 'lobby-teams') control.value = 'ffa';
+        if (control.dataset.testid === 'lobby-seasons') control.value = 'off';
+        if (control.dataset.testid === 'lobby-events') control.value = 'off';
+        if (control.dataset.testid === 'lobby-map-custom') control.value = '';
+      }
+    };
+    ranked.addEventListener('change', applyRanked);
+    applyRanked();
     const buttons = el('div', 'actions');
     const create = el('button');
     create.type = 'button';
@@ -284,7 +347,9 @@ export class NetView {
     err.id = 'net-error';
     err.dataset.testid = 'net-error';
     buttons.append(create, back);
-    form.append(labeled('Название', name), labeled('Игроков в комнате', max), labeled('Пароль комнаты', pass), grid, buttons);
+    const rankedLabel = labeled('Рейтинговая', ranked);
+    rankedLabel.dataset.testid = 'lobby-ranked-label';
+    form.append(labeled('Название', name), rankedLabel, labeled('Игроков в комнате', max), labeled('Пароль комнаты', pass), grid, buttons);
     card.append(title, note, list, form, err);
     this.root.append(card);
     const empty = el('p');

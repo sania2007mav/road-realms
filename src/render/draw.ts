@@ -1,5 +1,6 @@
 import { BUILDINGS, KEEP_UPGRADE_TICKS } from '../sim/balance';
 import { hash2 } from '../sim/rng';
+import { seasonLength, seasonPace } from '../sim/seasons';
 import type { Building, BuildingType, GameState, Mob, Person, Resource } from '../sim/types';
 import { Terrain } from '../sim/types';
 import { buildingWarning, workRange } from '../sim/update';
@@ -37,6 +38,8 @@ export interface TerrainBake {
   /** Bake is stored at this fraction of iso pixels so the bitmap stays under mobile canvas limits. */
   scale: number;
   props: { x: number; y: number; kind: PropKind }[];
+  /** Season and weather this picture was painted for. A change rebuilds it. */
+  climate: string;
 }
 
 const CARGO: Partial<Record<Resource, string>> = {
@@ -75,6 +78,74 @@ function mix(a: number, b: number, t: number) {
 
 function rgb(r: number, g: number, b: number) {
   return `rgb(${r},${g},${b})`;
+}
+
+interface ViewClimate {
+  season: string;
+  weather: string;
+  late: boolean;
+}
+
+let viewClimate: ViewClimate = { season: 'off', weather: 'clear', late: false };
+
+function bindClimate(state: GameState) {
+  const pace = seasonPace(state.match?.seasons);
+  const len = seasonLength(pace);
+  const season = state.season ?? 'off';
+  const into = len > 0 ? state.tick % len : 0;
+  viewClimate = {
+    season,
+    weather: state.weather ?? 'clear',
+    late: season === 'autumn' && into > len / 2,
+  };
+}
+
+/** Chunks and the far bake key off this so a new season is not a recycled picture. */
+export function climateStamp(state: GameState): string {
+  bindClimate(state);
+  return `${viewClimate.season}|${viewClimate.weather}|${viewClimate.late ? 1 : 0}`;
+}
+
+function shiftRgb(r: number, g: number, b: number, tr: number, tg: number, tb: number, t: number): [number, number, number] {
+  return [mix(r, tr, t), mix(g, tg, t), mix(b, tb, t)];
+}
+
+/** Strong, flat recolour. The old diamond wash was too thin to read on the sand. */
+function climateTint(r: number, g: number, b: number, terrain: number): [number, number, number] {
+  const season = viewClimate.season;
+  if (season === 'off') return [r, g, b];
+  const weather = viewClimate.weather;
+  const snow = season === 'winter' || weather === 'snow';
+  let out: [number, number, number];
+  if (terrain === Terrain.Swamp) {
+    if (snow) out = shiftRgb(r, g, b, 168, 190, 204, 0.84);
+    else if (weather === 'rain' || weather === 'storm') out = shiftRgb(r, g, b, 28, 52, 74, 0.62);
+    else if (season === 'autumn') out = shiftRgb(r, g, b, 92, 72, 36, 0.4);
+    else if (season === 'spring') out = shiftRgb(r, g, b, 42, 118, 78, 0.4);
+    else out = [r, g, b];
+  } else if (terrain === Terrain.Road) {
+    out = snow ? shiftRgb(r, g, b, 228, 234, 238, 0.7) : season === 'autumn' ? shiftRgb(r, g, b, 168, 96, 36, 0.4) : [r, g, b];
+  } else if (terrain === Terrain.Iron || terrain === Terrain.Limestone) {
+    out = snow ? shiftRgb(r, g, b, 232, 238, 242, 0.62) : [r, g, b];
+  } else if (season === 'spring') {
+    out = shiftRgb(r, g, b, 118, 198, 78, terrain === Terrain.Oasis ? 0.34 : 0.66);
+  } else if (season === 'summer') {
+    out =
+      weather === 'drought'
+        ? shiftRgb(r, g, b, 198, 150, 58, 0.55)
+        : shiftRgb(r, g, b, 52, 124, 36, terrain === Terrain.Oasis ? 0.22 : 0.52);
+  } else if (season === 'autumn') {
+    out = shiftRgb(r, g, b, 214, 108, 22, terrain === Terrain.Oasis ? 0.5 : 0.74);
+  } else if (snow) {
+    out = shiftRgb(r, g, b, 240, 246, 250, terrain === Terrain.Oasis ? 0.62 : 0.84);
+  } else {
+    out = [r, g, b];
+  }
+  if (weather === 'rain' || weather === 'storm') {
+    const wet = weather === 'storm' ? 0.38 : 0.3;
+    out = shiftRgb(out[0], out[1], out[2], 28, 40, 58, wet);
+  }
+  return out;
 }
 
 function smoothNoise(seed: number, x: number, y: number, cell = 12): number {
@@ -121,10 +192,22 @@ function groundColor(state: GameState, x: number, y: number): string {
     g = 58;
     b = 44;
   } else if (terrain === Terrain.Road) {
-    const edge = y === state.roadY - 1 || y === state.roadY + 1;
+    const edge = terrainAt(state, x, y - 1) !== Terrain.Road || terrainAt(state, x, y + 1) !== Terrain.Road;
     r = edge ? 132 : 176;
     g = edge ? 96 : 132;
     b = edge ? 58 : 78;
+  } else if (terrain === Terrain.Rock) {
+    r = 118;
+    g = 116;
+    b = 112;
+  } else if (terrain === Terrain.Water) {
+    r = 48;
+    g = 96;
+    b = 148;
+  } else if (terrain === Terrain.Clay) {
+    r = 176;
+    g = 112;
+    b = 72;
   }
   let oasis = 0;
   let sand = 0;
@@ -150,6 +233,10 @@ function groundColor(state: GameState, x: number, y: number): string {
     g = mix(g, 142, t);
     b = mix(b, 78, t);
   }
+  const tinted = climateTint(r, g, b, terrain);
+  r = tinted[0];
+  g = tinted[1];
+  b = tinted[2];
   const sandy = terrain === Terrain.Land || terrain === Terrain.Desert;
   let wobble: number;
   if (sandy) {
@@ -159,12 +246,14 @@ function groundColor(state: GameState, x: number, y: number): string {
   } else {
     wobble = Math.round((dune - 0.5) * 6);
   }
+  if (viewClimate.season === 'winter') wobble = Math.round(wobble * 0.35);
   return rgb(r + wobble, g + Math.round(wobble * 0.85), b + Math.round(wobble * 0.45));
 }
 
 const BAKE_SCALE = 0.25;
 
 export function bakeTerrain(state: GameState): TerrainBake {
+  const climate = climateStamp(state);
   const originX = state.mapH * (TILE_W / 2) + 8;
   const originY = TILE_H * 3;
   const isoW = (state.mapW + state.mapH) * (TILE_W / 2) + 16;
@@ -174,7 +263,7 @@ export function bakeTerrain(state: GameState): TerrainBake {
   canvas.height = Math.max(1, Math.ceil(isoH * BAKE_SCALE));
   const props: TerrainBake['props'] = [];
   const ctx = canvas.getContext('2d');
-  if (!ctx) return { canvas, originX, originY, scale: BAKE_SCALE, props };
+  if (!ctx) return { canvas, originX, originY, scale: BAKE_SCALE, props, climate };
   ctx.setTransform(BAKE_SCALE, 0, 0, BAKE_SCALE, originX * BAKE_SCALE, originY * BAKE_SCALE);
   for (let y = 0; y < state.mapH; y++) {
     for (let x = 0; x < state.mapW; x++) {
@@ -187,7 +276,7 @@ export function bakeTerrain(state: GameState): TerrainBake {
       else if (terrain === Terrain.Swamp) props.push({ x, y, kind: 'swamp' });
     }
   }
-  return { canvas, originX, originY, scale: BAKE_SCALE, props };
+  return { canvas, originX, originY, scale: BAKE_SCALE, props, climate };
 }
 
 function diamond(x: number, y: number, w: number, h: number): Pt[] {
@@ -461,11 +550,12 @@ function paintStamp(ctx: CanvasRenderingContext2D, terrain: number, variant: num
     ctx.arc(b.x, b.y, 1.2, 0, Math.PI * 2);
     ctx.fill();
   } else if (terrain === Terrain.Swamp) {
-    ctx.fillStyle = 'rgba(8,10,8,0.35)';
+    const frozen = viewClimate.season === 'winter' || viewClimate.weather === 'snow';
+    ctx.fillStyle = frozen ? 'rgba(150,176,190,0.55)' : 'rgba(8,10,8,0.35)';
     ctx.beginPath();
     ctx.ellipse(0, 16, 12, 5, 0.3, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = 'rgba(210,220,190,0.2)';
+    ctx.fillStyle = frozen ? 'rgba(230,240,246,0.45)' : 'rgba(210,220,190,0.2)';
     ctx.beginPath();
     ctx.ellipse(-3, 14, 5, 1.6, -0.4, 0, Math.PI * 2);
     ctx.fill();
@@ -474,7 +564,8 @@ function paintStamp(ctx: CanvasRenderingContext2D, terrain: number, variant: num
 }
 
 function groundStamp(terrain: number, variant: number) {
-  return renderSprite(`g|${terrain}|${variant}|${gfxHigh() ? 1 : 0}`, { minX: -36, minY: -4, maxX: 36, maxY: 36 }, (ctx) => {
+  const season = viewClimate.season;
+  return renderSprite(`g|${terrain}|${variant}|${gfxHigh() ? 1 : 0}|${season}`, { minX: -36, minY: -4, maxX: 36, maxY: 36 }, (ctx) => {
     paintStamp(ctx, terrain, variant);
   });
 }
@@ -575,7 +666,8 @@ function paintTileDetail(ctx: CanvasRenderingContext2D, state: GameState, x: num
   const index = y * state.mapW + x;
   const playerRoad = (state.roads?.[index] ?? 0) === 1;
   if (playerRoad) {
-    fillDiamond(ctx, x, y, '#c4a06a');
+    const snowy = viewClimate.season === 'winter' || viewClimate.weather === 'snow';
+    fillDiamond(ctx, x, y, snowy ? '#d7e0e6' : '#c4a06a');
     const pts = diamond(x, y, 1, 1);
     ctx.strokeStyle = 'rgba(255,236,200,0.4)';
     ctx.lineWidth = 1.3;
@@ -610,7 +702,21 @@ function paintSandVeil(ctx: CanvasRenderingContext2D, state: GameState, x0: numb
         const dx = ((n % 21) - 10) * 1.05;
         const dy = (((n >>> 8) % 11) - 5) * 0.8;
         const light = (n & 8) === 0;
-        ctx.fillStyle = light ? 'rgba(255,246,226,0.18)' : 'rgba(120,96,62,0.14)';
+        const season = viewClimate.season;
+        ctx.fillStyle =
+          season === 'winter'
+            ? 'rgba(255,255,255,0.22)'
+            : season === 'autumn'
+              ? light
+                ? 'rgba(232,150,48,0.2)'
+                : 'rgba(140,64,18,0.16)'
+              : season === 'spring'
+                ? light
+                  ? 'rgba(210,240,170,0.2)'
+                  : 'rgba(40,90,36,0.14)'
+                : light
+                  ? 'rgba(255,246,226,0.18)'
+                  : 'rgba(120,96,62,0.14)';
         const size = 1.15 + (n % 3) * 0.4;
         ctx.fillRect(origin.x + dx, origin.y + dy, size, size);
       }
@@ -627,6 +733,49 @@ function paintGround(ctx: CanvasRenderingContext2D, state: GameState, x0: number
   for (let y = y0; y < y1; y++) {
     for (let x = x0; x < x1; x++) paintTileDetail(ctx, state, x, y);
   }
+  paintSeasonSpecks(ctx, state, x0, y0, x1, y1);
+}
+
+/** Flowers in spring, puddles in the rain. A few marks per chunk, skipped when seasons are off. */
+function paintSeasonSpecks(ctx: CanvasRenderingContext2D, state: GameState, x0: number, y0: number, x1: number, y1: number) {
+  const season = viewClimate.season;
+  const weather = viewClimate.weather;
+  if (season === 'off') return;
+  const flowers = season === 'spring';
+  const puddles = weather === 'rain' || weather === 'storm';
+  if (!flowers && !puddles) return;
+  const rich = gfxHigh();
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const index = y * state.mapW + x;
+      if ((state.roads?.[index] ?? 0) === 1) continue;
+      const terrain = terrainAt(state, x, y);
+      if (terrain === Terrain.Swamp || terrain === Terrain.Road) continue;
+      const n = hash2(state.seed ^ (flowers ? 17 : 29), x, y);
+      const origin = tileToIso(x + 0.5, y + 0.5);
+      if (puddles && n % (rich ? 7 : 14) === 0) {
+        ctx.fillStyle = 'rgba(48, 78, 102, 0.55)';
+        ctx.beginPath();
+        ctx.ellipse(origin.x + ((n % 9) - 4), origin.y + 2, rich ? 7 : 5, 2.4, 0.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(210, 226, 236, 0.35)';
+        ctx.beginPath();
+        ctx.ellipse(origin.x - 1, origin.y + 1, 3, 1, -0.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (flowers && n % (rich ? 4 : 8) === 0) {
+        const colors = ['#f4e27a', '#f2f6f2', '#e07a9a', '#f7f3ea'];
+        const count = rich ? 2 : 1;
+        for (let i = 0; i < count; i++) {
+          const spot = hash2(state.seed, x + i * 3, y + 5);
+          ctx.fillStyle = colors[spot % colors.length];
+          ctx.beginPath();
+          ctx.arc(origin.x + ((spot % 15) - 7), origin.y + (((spot >> 4) % 9) - 4), 1.35, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+  }
 }
 
 function paintTiles(ctx: CanvasRenderingContext2D, state: GameState, span: { minX: number; maxX: number; minY: number; maxY: number }) {
@@ -638,7 +787,7 @@ function takeChunk(state: GameState, cx: number, cy: number, scale: number, buck
   const y0 = cy * CHUNK;
   const x1 = Math.min(state.mapW, x0 + CHUNK);
   const y1 = Math.min(state.mapH, y0 + CHUNK);
-  const key = `${state.seed}|${gfxHigh() ? 1 : 0}|${bucket}|${scale}|${cx}|${cy}|${roadDigest(state, x0, y0, x1, y1)}`;
+  const key = `${state.seed}|${gfxHigh() ? 1 : 0}|${bucket}|${scale}|${cx}|${cy}|${roadDigest(state, x0, y0, x1, y1)}|${viewClimate.season}|${viewClimate.weather}|${viewClimate.late ? 1 : 0}`;
   const hit = chunkCache.get(key);
   chunkClock += 1;
   if (hit) {
@@ -723,6 +872,7 @@ export function renderWorld(
   selectedPersonId: number | null = null,
   overlay: BattleOverlay | null = null,
 ) {
+  bindClimate(state);
   noteGfxFrame(camera.zoom, dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = '#241c16';
@@ -788,7 +938,7 @@ export function renderWorld(
         draw: () => {
           ctx.save();
           if (!building.complete && !gfxHigh()) ctx.globalAlpha = 0.82;
-          poly(ctx, diamond(building.x, building.y, def.w, def.h), '#3f8d48');
+          poly(ctx, diamond(building.x, building.y, def.w, def.h), orchardFloor());
           if (gfxHigh()) paintOrchardFloor(ctx, building.x, building.y, def.w, def.h);
           if (gfxHigh() && !building.complete) drawScaffold(ctx, building.x, building.y, def.w, def.h, wall);
           ctx.restore();
@@ -829,6 +979,18 @@ export function renderWorld(
   for (const ox of state.oxen) {
     if (!seen(camera, viewW, viewH, ox.x, ox.y)) continue;
     sprites.push({ depth: unitDepth(state, ox.x, ox.y), draw: () => drawOx(ctx, ox.x, ox.y, moving(ox), time, ox.cargo) });
+  }
+  for (const caravan of state.road?.caravans ?? []) {
+    if (!caravan.alive || !seen(camera, viewW, viewH, caravan.x, caravan.y)) continue;
+    sprites.push({ depth: unitDepth(state, caravan.x, caravan.y), draw: () => drawCaravan(ctx, caravan.x, caravan.y, time) });
+  }
+  const party = state.road?.party;
+  if (party && seen(camera, viewW, viewH, party.x, party.y)) {
+    sprites.push({ depth: unitDepth(state, party.x, party.y), draw: () => drawParty(ctx, party.x, party.y, party.count) });
+  }
+  const fair = state.road?.fair;
+  if (fair && state.tick < fair.until) {
+    sprites.push({ depth: fair.x + fair.y, draw: () => drawFair(ctx, fair.x, fair.y, time) });
   }
   for (const person of state.people) {
     if (person.hp <= 0 || !seen(camera, viewW, viewH, person.x, person.y)) continue;
@@ -894,8 +1056,101 @@ export function renderWorld(
   if (overlay) {
     for (const marker of overlay.markers) drawOrderMarker(ctx, marker, time);
   }
+  paintSeasonTint(ctx, state);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   if (overlay?.box) drawSelectBox(ctx, overlay.box);
+  paintWeather(ctx, state, camera, viewW, viewH, time);
+}
+
+function orchardFloor(): string {
+  if (viewClimate.season === 'autumn') return '#d07828';
+  if (viewClimate.season === 'winter') return '#e6eef3';
+  if (viewClimate.season === 'spring') return '#8ed46a';
+  if (viewClimate.season === 'summer') return '#3c8a3a';
+  return '#3f8d48';
+}
+
+function seasonTint(season: string, weather: string): string {
+  if (season === 'off') return '';
+  if (weather === 'drought') return 'rgba(168, 116, 42, 0.12)';
+  if (weather === 'heat') return 'rgba(214, 132, 36, 0.08)';
+  return '';
+}
+
+/** Tint stays on the map, so the dark margin around a zoomed-out tract keeps its colour. */
+function paintSeasonTint(ctx: CanvasRenderingContext2D, state: GameState) {
+  const season = state.season ?? 'off';
+  if (season === 'off') return;
+  const tint = seasonTint(season, state.weather ?? 'clear');
+  if (!tint) return;
+  const pts = [tileToIso(0, 0), tileToIso(state.mapW, 0), tileToIso(state.mapW, state.mapH), tileToIso(0, state.mapH)];
+  ctx.fillStyle = tint;
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function paintWeather(
+  ctx: CanvasRenderingContext2D,
+  state: GameState,
+  camera: Camera,
+  viewW: number,
+  viewH: number,
+  time: number,
+) {
+  const season = viewClimate.season;
+  const weather = viewClimate.weather;
+  if (season === 'off') return;
+  const snow = weather === 'snow' || (season === 'winter' && weather !== 'rain' && weather !== 'storm');
+  const wet = weather === 'rain' || weather === 'storm';
+  if (!snow && !wet) return;
+  const pts = [tileToIso(0, 0), tileToIso(state.mapW, 0), tileToIso(state.mapW, state.mapH), tileToIso(0, state.mapH)];
+  const project = (x: number, y: number) => ({
+    x: viewW / 2 + (x - camera.x) * camera.zoom,
+    y: viewH / 2 + (y - camera.y) * camera.zoom,
+  });
+  const corners = pts.map((p) => project(p.x, p.y));
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(corners[0].x, corners[0].y);
+  for (let i = 1; i < corners.length; i++) ctx.lineTo(corners[i].x, corners[i].y);
+  ctx.closePath();
+  ctx.clip();
+  if (wet) {
+    ctx.fillStyle = weather === 'storm' ? 'rgba(10, 18, 32, 0.48)' : 'rgba(16, 28, 46, 0.4)';
+    ctx.fillRect(0, 0, viewW, viewH);
+  }
+  const rich = gfxHigh();
+  const count = snow ? (rich ? 18 : 7) : weather === 'storm' ? (rich ? 32 : 10) : rich ? 20 : 8;
+  const left = Math.max(0, Math.min(...corners.map((p) => p.x)));
+  const top = Math.max(0, Math.min(...corners.map((p) => p.y)));
+  const right = Math.min(viewW, Math.max(...corners.map((p) => p.x)));
+  const bottom = Math.min(viewH, Math.max(...corners.map((p) => p.y)));
+  if (right - left < 8 || bottom - top < 8) {
+    ctx.restore();
+    return;
+  }
+  ctx.lineWidth = weather === 'storm' ? 1.5 : 1;
+  ctx.strokeStyle = 'rgba(186, 206, 220, 0.7)';
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+  for (let i = 0; i < count; i++) {
+    const speed = snow ? 0.018 : weather === 'storm' ? 0.22 : 0.12;
+    const y = top + ((time * speed + i * 37) % (bottom - top + 24));
+    const x = left + ((i * 67 + time * (snow ? 0.012 : 0.035)) % (right - left + 12));
+    if (snow) {
+      ctx.beginPath();
+      ctx.arc(x, y, 1.15 + (i % 3) * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + (weather === 'storm' ? 8 : 5), y + (weather === 'storm' ? 18 : 13));
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
 }
 
 function drawFeetRing(ctx: CanvasRenderingContext2D, tx: number, ty: number) {
@@ -1797,6 +2052,7 @@ function drawBuilding(ctx: CanvasRenderingContext2D, building: Building, time: n
     blitSprite(ctx, sprite, origin.x, origin.y);
     drawLiveAnims(ctx, building, time);
     drawPlague(ctx, building, wallHeight(building));
+    paintRoofSnow(ctx, building);
     return;
   }
   ctx.save();
@@ -1905,8 +2161,22 @@ function drawBuilding(ctx: CanvasRenderingContext2D, building: Building, time: n
     default:
       drawVolume(ctx, building.x, building.y, def.w, def.h, wall, '#ccc', '#999', '#777', true);
   }
-  if (!caching) drawPlague(ctx, building, wall);
+  if (!caching) {
+    drawPlague(ctx, building, wall);
+    paintRoofSnow(ctx, building);
+  }
   ctx.restore();
+}
+
+function paintRoofSnow(ctx: CanvasRenderingContext2D, building: Building) {
+  if (viewClimate.season !== 'winter' && viewClimate.weather !== 'snow') return;
+  if (building.type === 'moat' || building.type === 'pitchditch' || building.type === 'wheat' || building.type === 'hop') return;
+  const def = BUILDINGS[building.type];
+  const wall = wallHeight(building);
+  const low = building.type === 'stockpile' || building.type === 'quarry' || building.type === 'pitch';
+  const rise = low ? 4 : Math.max(12, wall * 0.92);
+  const pts = diamond(building.x + 0.06, building.y + 0.06, Math.max(0.3, def.w - 0.12), Math.max(0.3, def.h - 0.12)).map((p) => lift(p, rise));
+  poly(ctx, pts, 'rgba(248, 252, 255, 0.92)');
 }
 
 function drawDefence(ctx: CanvasRenderingContext2D, building: Building, wall: number) {
@@ -2918,9 +3188,49 @@ function drawCow(ctx: CanvasRenderingContext2D, x: number, y: number) {
   ctx.fillRect(p.x - 2, p.y - 6, 2, 2);
 }
 
+function treeCrowns(variant: number): { bare: boolean; colors: [string, string, string] } {
+  const season = viewClimate.season;
+  const bare =
+    (season === 'autumn' && viewClimate.late && variant % 3 === 0) || (season === 'winter' && variant % 3 === 0);
+  if (season === 'autumn') {
+    const sets: [string, string, string][] = [
+      ['#d06018', '#e88828', '#8a3010'],
+      ['#c44820', '#e07030', '#7a2810'],
+      ['#e07820', '#f0a040', '#a04010'],
+      ['#b83828', '#d05830', '#6e2014'],
+    ];
+    return { bare, colors: sets[variant % 4] };
+  }
+  if (season === 'winter') {
+    const sets: [string, string, string][] = [
+      ['#eef4f8', '#ffffff', '#b7c6d0'],
+      ['#e4eef4', '#f7fbfd', '#9aafbc'],
+      ['#f4f7f8', '#ffffff', '#c5d2da'],
+      ['#d5e2ea', '#f2f7fa', '#8ea4b2'],
+    ];
+    return { bare, colors: sets[variant % 4] };
+  }
+  if (season === 'spring') {
+    const sets: [string, string, string][] = [
+      ['#7dce62', '#b6ee8a', '#4e9a48'],
+      ['#8ad46a', '#c6f4a0', '#5aaa50'],
+      ['#6ec45a', '#a8e880', '#468844'],
+      ['#90dc78', '#d0f8b0', '#62b058'],
+    ];
+    return { bare: false, colors: sets[variant % 4] };
+  }
+  const summer: [string, string, string][] = [
+    ['#2f7a3a', '#4ea25a', '#1d5830'],
+    ['#2a6a34', '#3f8a48', '#184828'],
+    ['#3a7a40', '#58a45c', '#245c30'],
+    ['#346848', '#4e9460', '#204830'],
+  ];
+  return { bare: false, colors: summer[variant % 4] };
+}
+
 function drawTree(ctx: CanvasRenderingContext2D, x: number, y: number, apples: boolean, scale = 1, variant = 0) {
   if (gfxHigh() && !paintingSprite) {
-    const key = `tree|${variant % 4}|${apples ? 1 : 0}|${Math.round(scale * 20)}`;
+    const key = `tree|${variant % 4}|${apples ? 1 : 0}|${Math.round(scale * 20)}|${viewClimate.season}|${viewClimate.late ? 1 : 0}`;
     const center = tileToIso(0.5, 0.5);
     const reach = 20 * scale + 10;
     const sprite = renderSprite(
@@ -2945,18 +3255,27 @@ function drawTree(ctx: CanvasRenderingContext2D, x: number, y: number, apples: b
   ctx.beginPath();
   ctx.ellipse(p.x + 2, p.y + 2, 7 * scale, 3 * scale, 0, 0, Math.PI * 2);
   ctx.fill();
+  const look = treeCrowns(variant);
   if (!gfxHigh()) {
     ctx.fillStyle = '#6e4b2e';
     ctx.fillRect(p.x - 1.5 * scale, p.y - 10 * scale, 3 * scale, 10 * scale);
-    ctx.fillStyle = '#2f7a3a';
-    ctx.beginPath();
-    ctx.arc(p.x, p.y - 16 * scale, crown, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#1f5c30';
-    ctx.beginPath();
-    ctx.arc(p.x + 4 * scale, p.y - 14 * scale, crown * 0.62, 0, Math.PI * 2);
-    ctx.fill();
-    if (!apples) return;
+    if (!look.bare) {
+      ctx.fillStyle = look.colors[0];
+      ctx.beginPath();
+      ctx.arc(p.x, p.y - 16 * scale, crown, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = look.colors[2];
+      ctx.beginPath();
+      ctx.arc(p.x + 4 * scale, p.y - 14 * scale, crown * 0.62, 0, Math.PI * 2);
+      ctx.fill();
+      if (viewClimate.season === 'winter') {
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(p.x - 1 * scale, p.y - 20 * scale, crown * 0.38, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    if (!apples || look.bare || viewClimate.season === 'autumn' || viewClimate.season === 'winter') return;
     ctx.fillStyle = '#d6453c';
     ctx.beginPath();
     ctx.arc(p.x - 3 * scale, p.y - 16 * scale, 1.6 * scale, 0, Math.PI * 2);
@@ -2968,12 +3287,8 @@ function drawTree(ctx: CanvasRenderingContext2D, x: number, y: number, apples: b
   ctx.fillRect(p.x - 2 * scale, p.y - 12 * scale, 4 * scale, 12 * scale);
   ctx.fillStyle = '#a67c52';
   ctx.fillRect(p.x - 2 * scale, p.y - 12 * scale, 1.3 * scale, 12 * scale);
-  const greens = [
-    ['#2f7a3a', '#4ea25a', '#1d5830'],
-    ['#2a6a34', '#3f8a48', '#184828'],
-    ['#3a7a40', '#58a45c', '#245c30'],
-    ['#346848', '#4e9460', '#204830'],
-  ][variant % 4];
+  if (look.bare) return;
+  const greens = look.colors;
   ctx.fillStyle = greens[2];
   ctx.beginPath();
   ctx.arc(p.x + 4 * scale, p.y - 13 * scale, crown * 0.9, 0, Math.PI * 2);
@@ -2986,7 +3301,13 @@ function drawTree(ctx: CanvasRenderingContext2D, x: number, y: number, apples: b
   ctx.beginPath();
   ctx.arc(p.x - 4 * scale, p.y - 22 * scale, crown * 0.42, 0, Math.PI * 2);
   ctx.fill();
-  if (!apples) return;
+  if (viewClimate.season === 'winter') {
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.beginPath();
+    ctx.arc(p.x - 2 * scale, p.y - 24 * scale, crown * 0.36, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  if (!apples || viewClimate.season === 'autumn' || viewClimate.season === 'winter') return;
   ctx.fillStyle = '#d6453c';
   const spots: [number, number][] = [
     [-4, -16],
@@ -3089,20 +3410,21 @@ function drawRock(ctx: CanvasRenderingContext2D, x: number, y: number, light: st
 function drawMarsh(ctx: CanvasRenderingContext2D, seed: number, x: number, y: number) {
   const n = hash2(seed, x + 17, y + 3);
   if (n % 5 === 0) return;
+  const frozen = viewClimate.season === 'winter' || viewClimate.weather === 'snow';
   const p = tileToIso(x + 0.4 + (n % 5) * 0.05, y + 0.45);
-  ctx.fillStyle = '#1a2420';
+  ctx.fillStyle = frozen ? '#8eafc0' : '#1a2420';
   ctx.beginPath();
   ctx.ellipse(p.x, p.y, 8 + (n % 4), 4 + (n % 3), ((n % 7) - 3) * 0.15, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = '#101614';
+  ctx.fillStyle = frozen ? '#d5e4ee' : '#101614';
   ctx.beginPath();
   ctx.ellipse(p.x + 3, p.y + 1, 4, 2.2, 0.4, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = 'rgba(220,230,200,0.22)';
+  ctx.fillStyle = frozen ? 'rgba(255,255,255,0.55)' : 'rgba(220,230,200,0.22)';
   ctx.beginPath();
   ctx.ellipse(p.x - 1, p.y - 1, 3.2, 1.3, -0.5, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = '#7aa04a';
+  ctx.strokeStyle = frozen ? '#c5d5df' : '#7aa04a';
   ctx.lineWidth = 1.4;
   const reeds = 2 + (n % 3);
   for (let i = 0; i < reeds; i++) {
@@ -3316,6 +3638,192 @@ function drawOx(ctx: CanvasRenderingContext2D, tx: number, ty: number, walk: boo
   }
 }
 
+function drawCaravan(ctx: CanvasRenderingContext2D, x: number, y: number, time: number) {
+  const p = tileToIso(x, y);
+  const bob = Math.sin(time / 180) * 1.1;
+  const ox = p.x - 16;
+  const oy = p.y + bob;
+  ctx.fillStyle = 'rgba(20,14,10,0.3)';
+  ctx.beginPath();
+  ctx.ellipse(p.x + 4, p.y + 6, 30, 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#3a2a22';
+  ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  ctx.moveTo(ox - 8, oy - 2);
+  ctx.lineTo(ox - 10, oy + 8);
+  ctx.moveTo(ox + 2, oy - 2);
+  ctx.lineTo(ox + 1, oy + 8);
+  ctx.moveTo(ox + 10, oy - 1);
+  ctx.lineTo(ox + 12, oy + 8);
+  ctx.stroke();
+  ctx.fillStyle = '#6b4428';
+  ctx.beginPath();
+  ctx.ellipse(ox, oy - 8, 16, 8, -0.15, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#f0e2c4';
+  ctx.beginPath();
+  ctx.ellipse(ox + 14, oy - 12, 5, 3.6, 0.4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#2a2018';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(ox + 16, oy - 14);
+  ctx.lineTo(ox + 22, oy - 22);
+  ctx.moveTo(ox + 12, oy - 14);
+  ctx.lineTo(ox + 8, oy - 22);
+  ctx.stroke();
+  ctx.strokeStyle = '#c4a574';
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.moveTo(ox + 8, oy - 6);
+  ctx.lineTo(p.x - 2, p.y - 8 + bob);
+  ctx.stroke();
+  const wx = p.x + 6;
+  const wy = p.y - 10 + bob;
+  ctx.fillStyle = '#8a5a32';
+  ctx.fillRect(wx - 16, wy, 34, 14);
+  ctx.fillStyle = '#c4a574';
+  ctx.fillRect(wx - 14, wy + 2, 30, 3);
+  ctx.fillStyle = '#2a2018';
+  ctx.beginPath();
+  ctx.arc(wx - 8, wy + 14, 5.5, 0, Math.PI * 2);
+  ctx.arc(wx + 12, wy + 14, 5.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#d9c7ae';
+  ctx.beginPath();
+  ctx.arc(wx - 8, wy + 14, 2.2, 0, Math.PI * 2);
+  ctx.arc(wx + 12, wy + 14, 2.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#d6453c';
+  ctx.fillRect(wx - 12, wy - 8, 10, 8);
+  ctx.fillStyle = '#e6b15a';
+  ctx.fillRect(wx - 1, wy - 7, 8, 7);
+  ctx.fillStyle = '#3e4a5c';
+  ctx.fillRect(wx + 4, wy - 22, 8, 12);
+  ctx.fillStyle = '#f0c7a0';
+  ctx.beginPath();
+  ctx.arc(wx + 8, wy - 26, 4.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#6e2420';
+  ctx.fillRect(wx + 4, wy - 31, 8, 4);
+  const pole = wx + 22;
+  ctx.strokeStyle = '#6e5134';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(pole, wy + 4);
+  ctx.lineTo(pole, wy - 28);
+  ctx.stroke();
+  ctx.fillStyle = '#e6b15a';
+  ctx.beginPath();
+  ctx.moveTo(pole, wy - 28);
+  ctx.lineTo(pole + 14, wy - 22 + bob);
+  ctx.lineTo(pole, wy - 16);
+  ctx.closePath();
+  ctx.fill();
+  ctx.lineWidth = 1;
+}
+
+function drawParty(ctx: CanvasRenderingContext2D, x: number, y: number, count: number) {
+  for (let i = 0; i < count; i++) {
+    const p = tileToIso(x + i * 0.45, y + (i % 2) * 0.3);
+    ctx.fillStyle = i % 2 ? '#d9c7ae' : '#8dce67';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y - 10, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillRect(p.x - 3, p.y - 6, 6, 8);
+  }
+}
+
+function drawFair(ctx: CanvasRenderingContext2D, x: number, y: number, time: number) {
+  const p = tileToIso(x, y);
+  const wave = Math.sin(time / 200) * 2;
+  ctx.fillStyle = 'rgba(224, 161, 27, 0.35)';
+  ctx.beginPath();
+  ctx.ellipse(p.x, p.y, 22, 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#e6b15a';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(p.x - 10, p.y);
+  ctx.lineTo(p.x - 10, p.y - 28);
+  ctx.moveTo(p.x + 10, p.y);
+  ctx.lineTo(p.x + 10, p.y - 24);
+  ctx.stroke();
+  ctx.fillStyle = '#e15b45';
+  ctx.beginPath();
+  ctx.moveTo(p.x - 10, p.y - 28);
+  ctx.lineTo(p.x + 6, p.y - 22 + wave);
+  ctx.lineTo(p.x - 10, p.y - 16);
+  ctx.fill();
+  ctx.fillStyle = '#f2d15a';
+  ctx.beginPath();
+  ctx.moveTo(p.x + 10, p.y - 24);
+  ctx.lineTo(p.x + 24, p.y - 18 + wave);
+  ctx.lineTo(p.x + 10, p.y - 12);
+  ctx.fill();
+  ctx.lineWidth = 1;
+}
+
+function drawBandit(ctx: CanvasRenderingContext2D, x: number, y: number, walk: boolean, time: number) {
+  const step = walk ? Math.sin(time / 90) * 2 : 0;
+  ctx.fillStyle = 'rgba(20,14,10,0.35)';
+  ctx.beginPath();
+  ctx.ellipse(x, y + 2, 9, 3.2, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#1a1412';
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.moveTo(x - 5, y - 8);
+  ctx.lineTo(x - 7, y + 6 + step);
+  ctx.moveTo(x + 4, y - 8);
+  ctx.lineTo(x + 6, y + 6 - step);
+  ctx.stroke();
+  ctx.fillStyle = '#241c22';
+  ctx.beginPath();
+  ctx.moveTo(x - 9, y - 10);
+  ctx.lineTo(x + 9, y - 12);
+  ctx.lineTo(x + 7, y + 2);
+  ctx.lineTo(x - 7, y + 2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#e15b45';
+  ctx.fillRect(x - 8, y - 4, 16, 3);
+  ctx.fillStyle = '#141014';
+  ctx.beginPath();
+  ctx.arc(x, y - 18, 7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(x - 8, y - 16);
+  ctx.quadraticCurveTo(x, y - 30, x + 8, y - 16);
+  ctx.lineTo(x + 7, y - 8);
+  ctx.lineTo(x - 7, y - 8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#c9b8a4';
+  ctx.fillRect(x - 3, y - 16, 6, 3);
+  ctx.strokeStyle = '#3a2a22';
+  ctx.lineWidth = 2.6;
+  ctx.beginPath();
+  ctx.moveTo(x + 6, y - 8);
+  ctx.lineTo(x + 16, y - 20 + step);
+  ctx.stroke();
+  ctx.fillStyle = '#d7dde2';
+  ctx.beginPath();
+  ctx.moveTo(x + 14, y - 24 + step);
+  ctx.lineTo(x + 22, y - 16 + step);
+  ctx.lineTo(x + 12, y - 14 + step);
+  ctx.fill();
+  ctx.fillStyle = '#e15b45';
+  ctx.beginPath();
+  ctx.moveTo(x, y - 34);
+  ctx.lineTo(x + 6, y - 26);
+  ctx.lineTo(x - 6, y - 26);
+  ctx.closePath();
+  ctx.fill();
+  ctx.lineWidth = 1;
+}
+
 function drawMob(ctx: CanvasRenderingContext2D, mob: Mob, walk: boolean, time: number) {
   const p = tileToIso(mob.x, mob.y);
   const y = p.y + (walk ? Math.sin(time / 100 + mob.id) : 0);
@@ -3361,10 +3869,7 @@ function drawMob(ctx: CanvasRenderingContext2D, mob: Mob, walk: boolean, time: n
     ctx.arc(p.x + 7, y - 8, 3.5, 0, Math.PI * 2);
     ctx.fill();
   } else {
-    drawFigure(ctx, mob.x, mob.y, '#6e2420', walk, time, 'club', null, false);
-    ctx.fillStyle = '#e15b45';
-    const q = tileToIso(mob.x, mob.y);
-    ctx.fillRect(q.x - 3, q.y - 18, 6, 2);
+    drawBandit(ctx, p.x, y, walk, time + mob.id);
   }
   if (mob.hp < mob.maxHp) {
     ctx.fillStyle = '#3a2018';

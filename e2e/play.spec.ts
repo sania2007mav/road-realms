@@ -228,6 +228,7 @@ test('полоса, подсказка и список построек не п�
   const views = [
     { width: 1280, height: 800, phone: false },
     { width: 1024, height: 640, phone: false },
+    { width: 1024, height: 576, phone: false },
     { width: 390, height: 844, phone: true },
   ];
   for (const view of views) {
@@ -277,6 +278,53 @@ test('полоса, подсказка и список построек не п�
     });
     expect(layout.bad, `${view.width}×${view.height}`).toEqual([]);
     expect(layout.covered, `${view.width}×${view.height}`).toEqual([]);
+    if (view.width === 1024 && view.height === 576) {
+      await page.evaluate(() => window.__game!.debugScene('season-winter'));
+      await page.waitForTimeout(200);
+      const bar = await page.evaluate(() => {
+        const lines = (el: Element | null) => {
+          if (!el) return { w: 0, h: 0, text: '', title: '' };
+          return {
+            w: el.scrollWidth - el.clientWidth,
+            h: el.scrollHeight - el.clientHeight,
+            text: (el.textContent || '').replace(/\s+/g, ' ').trim(),
+            title: (el as HTMLElement).title || '',
+          };
+        };
+        const status = document.querySelector('#status');
+        const resources = document.querySelector('#resources');
+        const pitch = [...document.querySelectorAll('.res')].find((node) => node.textContent?.includes('Смола')) as HTMLElement | undefined;
+        pitch?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+        const host = resources?.getBoundingClientRect();
+        const chip = pitch?.getBoundingClientRect();
+        const pitchFit =
+          !!pitch &&
+          !!host &&
+          !!chip &&
+          chip.left >= host.left - 1 &&
+          chip.right <= host.right + 1 &&
+          pitch.scrollWidth <= pitch.clientWidth + 1;
+        return {
+          status: status ? status.scrollWidth - status.clientWidth : 99,
+          fps: lines(document.querySelector('#fps')),
+          people: lines(document.querySelector('#people-btn')),
+          badge: lines(document.querySelector('#season-badge')),
+          pitchFit,
+        };
+      });
+      expect(bar.status, 'status row').toBeLessThanOrEqual(1);
+      expect(bar.fps.h, `fps ${bar.fps.text}`).toBeLessThanOrEqual(1);
+      expect(bar.fps.w, `fps ${bar.fps.text}`).toBeLessThanOrEqual(1);
+      expect(bar.people.h, `people ${bar.people.text}`).toBeLessThanOrEqual(1);
+      expect(bar.people.w, `people ${bar.people.text}`).toBeLessThanOrEqual(1);
+      expect(bar.badge.text.startsWith('❄'), bar.badge.text).toBe(true);
+      expect(bar.badge.text.includes('дальше'), bar.badge.text).toBe(false);
+      expect(bar.badge.title.includes('дальше'), bar.badge.title).toBe(true);
+      expect(bar.badge.w, bar.badge.text).toBeLessThanOrEqual(1);
+      expect(bar.badge.h).toBeLessThanOrEqual(1);
+      expect(bar.pitchFit, 'Смола').toBe(true);
+      await page.screenshot({ path: `${shots}/topbar_1024.png` });
+    }
 
     const buttons = page.locator('#buttons button');
     const count = await buttons.count();
@@ -921,7 +969,7 @@ test('кадры для витрины 1280×720', async ({ page, browser }) => 
 test('кнопки заставки внутри карточки', async ({ page }) => {
   test.setTimeout(120_000);
   mkdirSync(shots, { recursive: true });
-  const ids = ['new-game', 'net-game', 'continue-game', 'campaign-open', 'load-game', 'help-open', 'settings-open', 'know-game', 'about-open'];
+  const ids = ['new-game', 'net-game', 'continue-game', 'campaign-open', 'load-game', 'help-open', 'settings-open', 'know-game', 'about-open', 'achieve-open', 'rating-open', 'stats-open', 'editor-open'];
   const viewports = [
     { width: 1280, height: 800 },
     { width: 830, height: 755 },
@@ -1011,6 +1059,92 @@ test('настройки лобби видны до старта', async ({ page
   } finally {
     await page.getByTestId('lobby-leave').click({ timeout: 4_000 }).catch(() => {});
     await mate.getByTestId('lobby-leave').click({ timeout: 4_000 }).catch(() => {});
+    await guest.close();
+  }
+});
+
+test('живая партия: пароль, условия, минута локстепа', async ({ browser }) => {
+  test.setTimeout(180_000);
+  const lobbyName = `Жив ${Date.now().toString(36)}`.slice(0, 12);
+  const host = await browser.newContext();
+  const guest = await browser.newContext();
+  await host.addInitScript(() => {
+    localStorage.setItem('dorozhnye-kraya-name', 'Хозяин');
+    localStorage.setItem('dorozhnye-kraya-tutorial', '1');
+  });
+  await guest.addInitScript(() => {
+    localStorage.setItem('dorozhnye-kraya-name', 'Путник');
+    localStorage.setItem('dorozhnye-kraya-tutorial', '1');
+  });
+  const a = await host.newPage();
+  const b = await guest.newPage();
+  const errors: string[] = [];
+  for (const page of [a, b]) {
+    page.on('pageerror', (err) => errors.push(err.message));
+  }
+  try {
+    await a.goto('/road-realms/');
+    await a.getByTestId('net-game').click();
+    await expect(a.getByTestId('lobby-setup')).toBeVisible();
+    await expect(a.locator('#net-error')).toHaveText('', { timeout: 20_000 });
+    await a.getByTestId('lobby-max').selectOption('2');
+    await a.getByTestId('lobby-map').selectOption('large');
+    await a.getByTestId('lobby-speed').selectOption('2');
+    await a.getByTestId('lobby-start').selectOption('high');
+    await a.getByTestId('lobby-ai').selectOption('1');
+    await a.getByTestId('lobby-diff').selectOption('hard');
+    await a.getByTestId('lobby-teams').selectOption('pairs');
+    await a.getByTestId('lobby-pass').fill('тракт');
+    await a.getByTestId('lobby-name').fill(lobbyName);
+    await a.getByTestId('lobby-create').click({ timeout: 15_000 });
+    await expect(a.getByTestId('lobby-room')).toBeVisible({ timeout: 20_000 });
+    await expect(a.getByTestId('lobby-settings')).toContainText('2×');
+    await expect(a.getByTestId('lobby-settings')).toContainText('2×2');
+    await expect(a.getByTestId('lobby-settings')).toContainText('богатые');
+
+    await b.goto('/road-realms/');
+    await b.getByTestId('net-game').click();
+    const row = b.locator('.lobby-row', { hasText: lobbyName });
+    await expect(row).toBeVisible({ timeout: 20_000 });
+    await expect(row.getByTestId('lobby-lock')).toBeVisible();
+    await row.getByTestId('lobby-join').click();
+    await expect(b.getByTestId('net-error')).toContainText('парол', { timeout: 15_000 });
+    await b.getByTestId('lobby-pass').fill('тракт');
+    await row.getByTestId('lobby-join').click();
+    await expect(b.getByTestId('lobby-room')).toContainText('Хозяин', { timeout: 20_000 });
+    await expect(a.getByTestId('lobby-room')).toContainText('Путник');
+
+    await a.getByTestId('lobby-ready').click();
+    await b.getByTestId('lobby-ready').click();
+    await expect(a.getByTestId('lobby-start')).toBeEnabled({ timeout: 15_000 });
+    await a.getByTestId('lobby-start').click();
+    await expect(a.getByTestId('speed-1')).toBeDisabled({ timeout: 20_000 });
+    await expect(b.getByTestId('speed-1')).toBeDisabled({ timeout: 20_000 });
+    await a.locator('#ration').selectOption('feast');
+
+    const started = Date.now();
+    let matched = 0;
+    let maxTurn = 0;
+    while (Date.now() - started < 60_000) {
+      const left = await a.evaluate(() => window.__game?.mp() ?? null);
+      const right = await b.evaluate(() => window.__game?.mp() ?? null);
+      expect(left && right, JSON.stringify({ left, right, errors })).toBeTruthy();
+      await expect(a.locator('#syncbox')).not.toContainText('Рассинхронизация');
+      await expect(b.locator('#syncbox')).not.toContainText('Рассинхронизация');
+      if (left!.turn === right!.turn) {
+        expect(left!.hash, JSON.stringify({ left, right })).toBe(right!.hash);
+        matched += 1;
+        maxTurn = Math.max(maxTurn, left!.turn);
+      }
+      await a.waitForTimeout(1000);
+    }
+    expect(maxTurn, JSON.stringify({ maxTurn, matched, errors })).toBeGreaterThan(40);
+    expect(matched, 'хотя бы одна общая сверка хеша').toBeGreaterThan(0);
+    expect(errors, errors.join('\n')).toEqual([]);
+  } finally {
+    await a.evaluate(() => window.__game?.cleanupNet()).catch(() => {});
+    await b.evaluate(() => window.__game?.cleanupNet()).catch(() => {});
+    await host.close();
     await guest.close();
   }
 });
@@ -1125,6 +1259,150 @@ test('копейщики, конюшня и матрица контрударо�
   await page.getByTestId('help-matrix').screenshot({ path: `${shots}/counter_matrix.png` });
 });
 
+test('сезоны: одно поселение летом, осенью, зимой и в дождь', async ({ page }) => {
+  test.setTimeout(90_000);
+  mkdirSync(shots, { recursive: true });
+  await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('/road-realms/');
+  await page.getByTestId('new-game').click();
+  await page.evaluate(() => window.__game!.setGfxMode('high'));
+  await page.evaluate(() => window.__game!.setSpeed(0));
+
+  const shot = async (kind: string, file: string, season: string) => {
+    await page.evaluate((name) => window.__game!.debugScene(name), kind);
+    await page.waitForTimeout(300);
+    const climate = await page.evaluate(() => {
+      const snap = window.__game!.snapshot();
+      const badge = document.querySelector<HTMLElement>('#season-badge');
+      return { season: snap.season, weather: snap.weather, text: badge?.textContent ?? '', title: badge?.title ?? '' };
+    });
+    expect(climate.season).toBe(season);
+    expect(climate.text.length).toBeGreaterThan(0);
+    expect(climate.title).toContain('дальше');
+    await expect(page.getByTestId('season-badge')).toBeVisible();
+    await page.screenshot({ path: `${shots}/${file}` });
+    return climate;
+  };
+
+  await shot('season-spring', 'season_spring.png', 'spring');
+  const summer = await shot('season-summer', 'season_summer.png', 'summer');
+  expect(summer.weather === 'clear' || summer.weather === 'heat').toBe(true);
+  await page.getByTestId('season-badge').screenshot({ path: `${shots}/season_badge.png` });
+  await shot('season-autumn', 'season_autumn.png', 'autumn');
+  const winter = await shot('season-winter', 'season_winter.png', 'winter');
+  expect(winter.weather).toBe('snow');
+  const rain = await shot('season-rain', 'season_rain.png', 'spring');
+  expect(rain.weather).toBe('rain');
+});
+
+test('дорожные события: караван, налёт, ярмарка и весть', async ({ page }) => {
+  test.setTimeout(90_000);
+  mkdirSync(shots, { recursive: true });
+  await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('/road-realms/');
+  await page.getByTestId('new-game').click();
+  await page.evaluate(() => window.__game!.setGfxMode('high'));
+  await page.evaluate(() => window.__game!.setSpeed(0));
+
+  await page.evaluate(() => window.__game!.debugScene('event-caravan'));
+  await page.waitForTimeout(300);
+  await expect(page.getByTestId('caravan-box')).toBeVisible();
+  await expect(page.getByTestId('caravan-buy')).toBeVisible();
+  await expect(page.getByTestId('event-note')).toBeVisible();
+  await page.screenshot({ path: `${shots}/event_caravan.png` });
+
+  await page.evaluate(() => window.__game!.debugScene('event-raid'));
+  await page.waitForTimeout(300);
+  await expect(page.getByTestId('event-note')).toContainText('разбойники');
+  await page.screenshot({ path: `${shots}/event_raid.png` });
+
+  await page.evaluate(() => window.__game!.debugScene('event-fair'));
+  await page.waitForTimeout(300);
+  await expect(page.getByTestId('event-note')).toContainText('Ярмарка');
+  await page.screenshot({ path: `${shots}/event_fair.png` });
+
+  await page.evaluate(() => window.__game!.debugScene('event-note'));
+  await page.waitForTimeout(200);
+  await page.getByTestId('event-show').click();
+  await expect(page.getByTestId('event-note')).toBeVisible();
+  await page.screenshot({ path: `${shots}/event_note.png` });
+});
+
+test('достижения и статистика', async ({ page }) => {
+  test.setTimeout(60_000);
+  mkdirSync(shots, { recursive: true });
+  await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('/road-realms/');
+  await page.evaluate(() => window.__game!.previewMeta());
+  await expect(page.getByTestId('achieve-count')).toHaveText('3 / 32');
+  await expect(page.getByTestId('ach-gold-1000')).toBeVisible();
+  await expect(page.getByTestId('ach-secret-road')).toContainText('Скрытое');
+  const titleFont = await page.locator('#achieve-book h2').evaluate((node) => getComputedStyle(node).fontFamily);
+  expect(titleFont.toLowerCase()).not.toContain('georgia');
+  const headPad = await page.locator('#achieve-book .ach-head').evaluate((node) => getComputedStyle(node).padding);
+  const bodyPad = await page.locator('#achieve-book .help-body').evaluate((node) => getComputedStyle(node).padding);
+  expect(headPad).toBe('8px 16px');
+  expect(bodyPad.startsWith('8px 16px')).toBe(true);
+  const barWidths = await page.locator('.ach-bar').evaluateAll((nodes) => nodes.map((node) => Math.round(node.getBoundingClientRect().width)));
+  expect(barWidths.length).toBeGreaterThan(10);
+  expect(new Set(barWidths).size).toBe(1);
+  expect(barWidths[0]).toBe(160);
+  await page.screenshot({ path: `${shots}/achievements.png` });
+  await page.getByTestId('ach-filter-done').click();
+  await expect(page.getByTestId('ach-gold-400')).toBeVisible();
+  await expect(page.getByTestId('ach-gold-1000')).toBeHidden();
+  await page.getByTestId('ach-filter-open').click();
+  await expect(page.getByTestId('ach-gold-1000')).toBeVisible();
+  await expect(page.getByTestId('ach-gold-400')).toBeHidden();
+  await page.getByTestId('ach-filter-all').click();
+  await expect(page.getByTestId('ach-gold-400')).toBeVisible();
+  await expect(page.getByTestId('ach-gold-1000')).toBeVisible();
+  await page.getByTestId('achieve-close').click();
+  await page.evaluate(() => window.__game!.previewStats());
+  await expect(page.getByTestId('stats-games')).toHaveText('12');
+  await expect(page.getByTestId('stats-wins')).toHaveText('5');
+  await expect(page.getByTestId('stats-time')).toHaveText('1 ч 35 мин');
+  await expect(page.getByTestId('stats-unit')).toHaveText('копейщик');
+  await page.screenshot({ path: `${shots}/stats.png` });
+  await page.getByTestId('stats-close').click();
+  await page.evaluate(() => window.__game!.previewUnlock());
+  await expect(page.locator('#toast')).toContainText('Собрать 1000 золота');
+  await page.screenshot({ path: `${shots}/achieve_toast.png` });
+});
+
+test('рейтинг: профиль, таблица, лобби и итог', async ({ page }) => {
+  test.setTimeout(60_000);
+  mkdirSync(shots, { recursive: true });
+  await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/road-realms/');
+  await page.evaluate(() => window.__game!.previewProfile());
+  await expect(page.getByTestId('rating-nick')).toHaveValue('Хозяин');
+  await expect(page.getByTestId('rating-tag')).toContainText('Хозяин#2048');
+  await expect(page.getByTestId('emblem-eagle')).toHaveClass(/on/);
+  await page.screenshot({ path: `${shots}/rating_profile.png` });
+  await page.evaluate(() => window.__game!.previewBoard());
+  await expect(page.getByTestId('board-place')).toContainText('3');
+  await expect(page.getByTestId('season-reset')).toBeDisabled();
+  await expect(page.getByTestId('rating-history')).toContainText('Ковыль#1102');
+  await expect(page.getByTestId('board-list')).toContainText('1116');
+  await page.screenshot({ path: `${shots}/rating_board.png` });
+  await page.evaluate(() => window.__game!.previewRanked());
+  await expect(page.getByTestId('lobby-ranked')).toBeChecked();
+  await expect(page.getByTestId('lobby-map')).toBeEnabled();
+  await expect(page.getByTestId('lobby-victory')).toBeDisabled();
+  await expect(page.getByTestId('lobby-speed')).toBeDisabled();
+  await expect(page.getByTestId('lobby-pass')).toBeDisabled();
+  await page.getByTestId('lobby-ranked-label').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${shots}/ranked_lobby.png` });
+  await page.evaluate(() => window.__game!.previewRatingChange());
+  await expect(page.getByTestId('rating-line')).toHaveText('Рейтинг 1000 → 1016 (+16)');
+  await page.screenshot({ path: `${shots}/rating_change.png` });
+});
+
 function letterboxPhone(raw: string, out: string): string {
   return `
 from PIL import Image, ImageDraw, ImageFont
@@ -1148,6 +1426,342 @@ canvas.save(${JSON.stringify(out)})
 `;
 }
 
+test.describe('альбом телефона', () => {
+  test.use({
+    hasTouch: true,
+    isMobile: true,
+    viewport: { width: 915, height: 412 },
+    deviceScaleFactor: 1,
+  });
+
+  test('удобный альбом: колонки, призрак, войско и подсказка портрета', async ({ page }) => {
+    test.setTimeout(120_000);
+    mkdirSync(shots, { recursive: true });
+    await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+    await page.goto('/road-realms/');
+    await page.getByTestId('new-game').click();
+    await expect(page.locator('#buildbar')).toBeVisible();
+
+    const probe = () =>
+      page.evaluate(() => {
+        const shown = (el: Element | null) => {
+          if (!el || (el as HTMLElement).hidden) return null;
+          const style = getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden') return null;
+          const rect = el.getBoundingClientRect();
+          if (rect.width < 2 || rect.height < 2) return null;
+          return rect;
+        };
+        const clipped = (el: Element) => {
+          const rect = el.getBoundingClientRect();
+          let parent = el.parentElement;
+          while (parent && parent !== document.body) {
+            const style = getComputedStyle(parent);
+            const scroll = `${style.overflow}${style.overflowY}${style.overflowX}`;
+            if (/auto|scroll|hidden/.test(scroll)) {
+              const host = parent.getBoundingClientRect();
+              if (rect.top < host.top - 1 || rect.bottom > host.bottom + 1 || rect.left < host.left - 1 || rect.right > host.right + 1) return true;
+            }
+            parent = parent.parentElement;
+          }
+          return false;
+        };
+        const hit = (a: DOMRect, b: DOMRect) => a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1;
+        const bad: string[] = [];
+        for (const [a, b] of [
+          ['#topbar', '#dock'],
+          ['#topbar', '#land-tray'],
+          ['#topbar', '#army'],
+          ['#dock', '#army'],
+          ['#dock', '#place-confirm'],
+          ['#hint', '#topbar'],
+          ['#hint', '#dock'],
+          ['#log', '#phone-goal'],
+          ['#log', '#topbar'],
+          ['#log', '#dock'],
+          ['#panel', '#topbar'],
+          ['#panel', '#army'],
+          ['#home', '#tabs button'],
+          ['#map-toggle', '#tabs button'],
+        ] as const) {
+          const left = shown(document.querySelector(a));
+          const right = shown(document.querySelector(b));
+          if (left && right && hit(left, right)) bad.push(`${a}×${b}`);
+        }
+        const covers = ['#topbar', '#dock', '#army', '#land-tray', '#panel', '#hint', '#phone-goal', '#log', '#place-confirm', '#banner', '#toast']
+          .map((sel) => shown(document.querySelector(sel)))
+          .filter((rect): rect is DOMRect => !!rect);
+        let clear = 0;
+        let total = 0;
+        for (let y = 4; y < innerHeight; y += 12) {
+          for (let x = 4; x < innerWidth; x += 12) {
+            total += 1;
+            if (!covers.some((rect) => x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom)) clear += 1;
+          }
+        }
+        const outside: string[] = [];
+        const short: string[] = [];
+        const overflow: string[] = [];
+        const textOf = (el: Element) => (el.textContent || '').replace(/\s+/g, ' ').trim();
+        for (const button of document.querySelectorAll('button')) {
+          if (!shown(button) || clipped(button)) continue;
+          const rect = button.getBoundingClientRect();
+          const name = button.id || textOf(button) || 'button';
+          if (rect.left < -1 || rect.top < -1 || rect.right > innerWidth + 1 || rect.bottom > innerHeight + 1) outside.push(name);
+          if (button.scrollWidth > button.clientWidth + 1) overflow.push(`${name}:${button.scrollWidth}>${button.clientWidth}`);
+        }
+        const resources = document.querySelector('#resources');
+        const resourceBox = resources?.getBoundingClientRect();
+        const resourceStyle = resources ? getComputedStyle(resources) : null;
+        const resourceScrolls = !!(
+          resources &&
+          resourceStyle &&
+          /auto|scroll/.test(resourceStyle.overflowY) &&
+          resources.scrollHeight > resources.clientHeight + 1
+        );
+        for (const chip of document.querySelectorAll('#resources .res')) {
+          if (!shown(chip) || !resourceBox) continue;
+          if (chip.scrollWidth > chip.clientWidth + 1) overflow.push(`res:${textOf(chip)}:${chip.scrollWidth}>${chip.clientWidth}`);
+          if (chip.scrollHeight > chip.clientHeight + 1) overflow.push(`res-h:${textOf(chip)}`);
+          const rect = chip.getBoundingClientRect();
+          const horizontal = rect.left < resourceBox.left - 1 || rect.right > resourceBox.right + 1;
+          const above = rect.bottom < resourceBox.top - 1;
+          const below = rect.top > resourceBox.bottom + 1;
+          const partial = rect.top < resourceBox.bottom - 1 && rect.bottom > resourceBox.bottom + 1;
+          if (horizontal) overflow.push(`res-cut:${textOf(chip)}:resources`);
+          if ((above || below || partial) && !resourceScrolls) overflow.push(`res-cut:${textOf(chip)}:resources`);
+          if (partial) overflow.push(`res-cut:${textOf(chip)}:partial`);
+        }
+        for (const sel of ['#open-menu', '#land-full', '#army-box', '#speeds button', '#army-groups button']) {
+          for (const button of document.querySelectorAll(sel)) {
+            const rect = shown(button);
+            if (!rect) continue;
+            if (rect.height < 44 || rect.width < 44) short.push(`${sel}:${Math.round(rect.width)}x${Math.round(rect.height)}`);
+          }
+        }
+        return {
+          land: document.documentElement.classList.contains('phone-land'),
+          coarse: window.matchMedia('(pointer: coarse) and (orientation: landscape) and (max-height: 500px)').matches,
+          share: clear / total,
+          bad,
+          outside,
+          short,
+          overflow,
+        };
+      });
+
+    const tabClear = () =>
+      page.evaluate(() => {
+        const overlap = (a: { left: number; right: number; top: number; bottom: number }, b: { left: number; right: number; top: number; bottom: number }) =>
+          a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1;
+        const tabs = document.querySelector<HTMLElement>('#tabs');
+        const home = document.querySelector('#home');
+        const map = document.querySelector('#map-toggle');
+        if (!tabs || !home || !map) return ['missing'];
+        const hits: string[] = [];
+        const check = (label: string) => {
+          const host = tabs.getBoundingClientRect();
+          const buttons = [home, map].map((el) => el.getBoundingClientRect());
+          for (const tab of tabs.querySelectorAll('button')) {
+            const rect = tab.getBoundingClientRect();
+            const top = Math.max(rect.top, host.top);
+            const bottom = Math.min(rect.bottom, host.bottom);
+            const left = Math.max(rect.left, host.left);
+            const right = Math.min(rect.right, host.right);
+            if (bottom - top < 2 || right - left < 2) continue;
+            const visible = { left, right, top, bottom };
+            for (const button of buttons) {
+              if (overlap(button, visible)) hits.push(`${label}:${(tab.textContent || '').trim()}`);
+            }
+          }
+          if (buttons[0].bottom > host.top + 1) hits.push(`${label}:nav-below-tabs`);
+        };
+        tabs.scrollTop = 0;
+        check('top');
+        tabs.scrollTop = Math.max(0, tabs.scrollHeight - tabs.clientHeight);
+        check('end');
+        tabs.scrollTop = 0;
+        return hits;
+      });
+
+    for (const size of [
+      { width: 800, height: 360 },
+      { width: 915, height: 412 },
+      { width: 740, height: 360 },
+    ]) {
+      await page.setViewportSize(size);
+      await page.waitForTimeout(200);
+      if (size.width === 915 || size.width === 740) {
+        expect(await tabClear(), `${size.width} tabs under nav`).toEqual([]);
+      }
+      const layout = await probe();
+      expect(layout.land, `${size.width} class`).toBe(true);
+      expect(layout.share, `${size.width} map`).toBeGreaterThan(0.6);
+      expect(layout.bad, `${size.width} overlaps ${JSON.stringify(layout)}`).toEqual([]);
+      expect(layout.outside, `${size.width} outside`).toEqual([]);
+      expect(layout.short, `${size.width} thumbs`).toEqual([]);
+      expect(layout.overflow, `${size.width} text`).toEqual([]);
+    }
+
+    await page.setViewportSize({ width: 740, height: 360 });
+    await page.waitForTimeout(200);
+    expect(await tabClear(), '740 shot').toEqual([]);
+    await page.screenshot({ path: `${shots}/land_hud_740.png` });
+    await page.setViewportSize({ width: 915, height: 412 });
+    await page.evaluate(() => window.__game!.debugScene('land'));
+    await page.waitForTimeout(250);
+    await expect(page.getByTestId('phone-goal')).toBeVisible();
+    await expect(page.getByTestId('open-menu')).toBeVisible();
+    await expect(page.getByTestId('speed-0')).toBeVisible();
+    expect(await tabClear(), '915 shot').toEqual([]);
+    await page.screenshot({ path: `${shots}/land_hud_915.png` });
+
+    await page.evaluate(() => window.__game!.debugScene('land-ghost'));
+    await page.waitForTimeout(250);
+    await expect(page.getByTestId('place-confirm')).toBeVisible();
+    await expect(page.getByTestId('place-ok')).toBeVisible();
+    await expect(page.getByTestId('place-cancel')).toBeVisible();
+    const ghost = await probe();
+    expect(ghost.bad, JSON.stringify(ghost)).toEqual([]);
+    expect(ghost.outside).toEqual([]);
+    expect(ghost.overflow, JSON.stringify(ghost.overflow)).toEqual([]);
+    await page.screenshot({ path: `${shots}/land_ghost.png` });
+
+    await page.evaluate(() => window.__game!.setSpeed(1));
+    const before = await page.evaluate(() => window.__game!.snapshot().buildings.length);
+    const canvas = page.locator('#world');
+    const box = (await canvas.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 36, box.y + box.height / 2 + 16);
+    await page.mouse.up();
+    expect(await page.evaluate(() => window.__game!.snapshot().buildings.length)).toBe(before);
+    await page.getByTestId('place-cancel').click();
+    await expect(page.getByTestId('place-confirm')).toBeHidden();
+    expect(await page.evaluate(() => window.__game!.snapshot().buildings.length)).toBe(before);
+
+    await page.getByTestId('tab-storage').click();
+    await page.getByTestId('build-granary').click();
+    await expect(page.getByTestId('place-confirm')).toBeVisible();
+    const granaries = await page.evaluate(() => window.__game!.snapshot().buildings.filter((b) => b.type === 'granary').length);
+    await page.getByTestId('place-ok').click();
+    await expect.poll(async () => page.evaluate(() => window.__game!.snapshot().buildings.filter((b) => b.type === 'granary').length)).toBe(granaries + 1);
+
+    await page.evaluate(() => window.__game!.debugScene('land-army'));
+    await page.waitForTimeout(200);
+    const point = await page.evaluate(() => window.__game!.armyPoints()[0]);
+    await page.mouse.click(point.x, point.y);
+    await page.mouse.click(point.x, point.y);
+    await expect(page.getByTestId('army-attack')).toBeVisible();
+    await expect(page.getByTestId('army-attack')).toHaveText('Атака');
+    await expect(page.getByTestId('army-hold')).toHaveText('Стоять');
+    await expect(page.getByTestId('army-home')).toHaveText('Отступить');
+    await expect(page.getByTestId('army-count')).toContainText('Всего 3');
+    const army = await probe();
+    expect(army.bad, JSON.stringify(army)).toEqual([]);
+    expect(army.overflow, JSON.stringify(army.overflow)).toEqual([]);
+    expect(army.share).toBeGreaterThan(0.6);
+    await page.screenshot({ path: `${shots}/land_army.png` });
+    const keepId = await page.evaluate(() => window.__game!.snapshot().buildings.find((b) => b.type === 'keep')!.id);
+    await page.evaluate((id) => window.__game!.select(id), keepId);
+    await expect(page.locator('#panel')).toBeVisible();
+    const sheet = await page.locator('#panel').boundingBox();
+    expect(sheet!.x).toBeGreaterThan(700);
+    expect(sheet!.x + sheet!.width).toBeLessThanOrEqual(916);
+    const sheetProbe = await probe();
+    expect(sheetProbe.bad, JSON.stringify(sheetProbe)).toEqual([]);
+    expect(sheetProbe.share).toBeGreaterThan(0.6);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(200);
+    await expect(page.getByTestId('turn-hint')).toBeVisible();
+    await expect(page.getByTestId('turn-hint')).toContainText('Поверните телефон для удобства');
+    await expect(page.locator('html')).not.toHaveClass(/phone-land/);
+    await page.screenshot({ path: `${shots}/land_portrait_hint.png` });
+    await page.getByTestId('turn-dismiss').click();
+    await expect(page.getByTestId('turn-hint')).toBeHidden();
+
+    const manifest = await page.evaluate(async () => {
+      const response = await fetch('/road-realms/manifest.webmanifest');
+      return response.json() as Promise<{ orientation?: string }>;
+    });
+    expect(manifest.orientation).toBe('landscape');
+  });
+});
+
+test('редактор карт на столе', async ({ page }) => {
+  test.setTimeout(60_000);
+  mkdirSync(shots, { recursive: true });
+  await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/road-realms/');
+  await page.getByTestId('editor-open').click();
+  await expect(page.getByTestId('map-editor')).toBeVisible();
+  await expect(page.getByTestId('tool-water')).toBeVisible();
+  await expect(page.getByTestId('brush-5')).toBeVisible();
+  await page.getByTestId('tool-water').click();
+  await page.getByTestId('brush-3').click();
+  await page.getByTestId('editor-canvas').click({ position: { x: 420, y: 220 } });
+  await page.getByTestId('editor-undo').click();
+  await page.getByTestId('editor-redo').click();
+  await expect(page.getByTestId('editor-confirm')).toBeHidden();
+  await page.screenshot({ path: `${shots}/editor_desktop.png` });
+});
+
+test('редактор показывает ошибку и список карт', async ({ page }) => {
+  test.setTimeout(60_000);
+  mkdirSync(shots, { recursive: true });
+  await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/road-realms/');
+  await page.evaluate(() => window.__game!.previewEditorError());
+  await page.getByTestId('editor-validate').click();
+  await expect(page.getByTestId('editor-errors')).toContainText('слишком близко');
+  await page.screenshot({ path: `${shots}/editor_error.png` });
+  await page.evaluate(() => window.__game!.previewEditorList());
+  await expect(page.getByTestId('editor-saved').locator('input').nth(0)).toHaveValue('Изгиб у реки');
+  await expect(page.getByTestId('editor-saved').locator('input').nth(1)).toHaveValue('Северный тракт');
+  await page.screenshot({ path: `${shots}/editor_list.png` });
+});
+
+test('своя карта в игре', async ({ page }) => {
+  test.setTimeout(60_000);
+  mkdirSync(shots, { recursive: true });
+  await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/road-realms/');
+  await page.evaluate(() => window.__game!.previewCustomPlay());
+  await expect(page.locator('#buildbar')).toBeVisible();
+  await expect(page.getByTestId('map-editor')).toBeHidden();
+  await page.screenshot({ path: `${shots}/editor_play.png` });
+});
+
+test.describe('редактор в альбоме', () => {
+  test.use({
+    hasTouch: true,
+    isMobile: true,
+    viewport: { width: 915, height: 412 },
+    deviceScaleFactor: 1,
+  });
+
+  test('призрак кисти на узком экране', async ({ page }) => {
+    test.setTimeout(60_000);
+    mkdirSync(shots, { recursive: true });
+    await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+    await page.goto('/road-realms/');
+    await page.evaluate(() => window.__game!.previewEditor());
+    await expect(page.locator('html')).toHaveClass(/phone-land/);
+    await expect(page.getByTestId('editor-confirm')).toBeVisible();
+    const canvas = page.getByTestId('editor-canvas');
+    const box = await canvas.boundingBox();
+    expect(box).toBeTruthy();
+    await canvas.click({ position: { x: box!.width / 2, y: box!.height / 2 } });
+    await expect(page.getByTestId('editor-ghost')).toBeVisible();
+    await expect(page.getByTestId('editor-ghost')).toContainText('Кисть');
+    await page.screenshot({ path: `${shots}/editor_land.png` });
+  });
+});
+
 declare global {
   interface Window {
     __game?: {
@@ -1165,6 +1779,8 @@ declare global {
       focusArmy: () => void;
       snapshot: () => {
         tick: number;
+        season: string;
+        weather: string;
         idle: number;
         used: number;
         cap: number;
@@ -1185,6 +1801,10 @@ declare global {
       offerInstall: () => void;
       setGfxMode: (mode: 'high' | 'simple') => void;
       stageRoad: () => void;
+      previewEditor: () => void;
+      previewEditorError: () => void;
+      previewEditorList: () => void;
+      previewCustomPlay: () => void;
     };
   }
 }

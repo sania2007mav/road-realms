@@ -675,7 +675,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   quarry: def({
     type: 'quarry',
     name: 'Каменоломня',
-    desc: 'Только на известняке. Камень везут волы.',
+    desc: 'На известняке или глине. Камень везут волы.',
     w: 3,
     h: 2,
     cost: { wood: 8 },
@@ -685,7 +685,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     category: 'industry',
     buildTicks: 180,
     hp: 140,
-    terrain: [T.Limestone],
+    terrain: [T.Limestone, T.Clay],
     nearTerrain: null,
     nearRadius: 0,
     nearHint: '',

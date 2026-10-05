@@ -192,3 +192,147 @@ test('cleanup: host deletes; stale lobbies/matches deletable by anyone authed', 
   await assertSucceeds(remove(ref(db('alice'), 'matches/START_OLD')));  // host
   await assertFails(remove(ref(db(null), 'lobbies/START_OLD')));
 });
+
+const RANKED = 'Тракт~1111110000r';
+const HASH = 'abcd1234';
+
+function player(nick, tag, extra = {}) {
+  return { nick, tag, emblem: 'eagle', rating: 1000, games: 0, wins: 0, last: '', ...extra };
+}
+
+async function rankedRoom() {
+  await set(ref(db('alice'), 'lobbies/R1'), newLobby('alice', { name: RANKED, maxPlayers: 2 }));
+  await join('bob', 'R1', 1, 'Путник');
+  await update(ref(db('alice'), 'lobbies/R1'), { status: 'started', startedAt: TS });
+  await set(ref(db('alice'), 'players/alice'), player('Хозяин', '2048'));
+  await set(ref(db('bob'), 'players/bob'), player('Путник', '3391'));
+}
+
+test('profile, claim and leaderboard query', async () => {
+  await assertFails(set(ref(db('alice'), 'players/alice'), player('аб', '2048')));
+  await assertFails(set(ref(db('alice'), 'players/alice'), player('Хозяин', '2048', { rating: 1400 })));
+  await assertSucceeds(set(ref(db('alice'), 'players/alice'), player('Хозяин', '2048')));
+  await assertFails(remove(ref(db('alice'), 'players/alice')));
+  await assertFails(set(ref(db('bob'), 'players/alice'), player('Чужой', '2048', { rating: 1000 })));
+  await assertSucceeds(set(ref(db('alice'), 'players/alice'), player('Хозяйка', '2048')));
+  await assertFails(set(ref(db('alice'), 'players/alice'), player('Хозяйка', '9999')));
+  await assertSucceeds(set(ref(db('alice'), 'claims/abc_2048'), 'alice'));
+  await assertFails(set(ref(db('bob'), 'claims/abc_2048'), 'bob'));
+  await assertFails(set(ref(db('bob'), 'players/bob'), player('Путник', '3391', { rating: 1100, games: 2, wins: 1 })));
+  await assertSucceeds(set(ref(db('bob'), 'players/bob'), player('Путник', '3391')));
+  await assertSucceeds(get(query(ref(db('alice'), 'players'), orderByChild('rating'), limitToLast(100))));
+  await assertFails(get(ref(db('alice'), 'players')));
+  await assertFails(get(query(ref(db('alice'), 'players'), orderByChild('rating'), limitToLast(101))));
+  await assertSucceeds(get(ref(db('bob'), 'players/alice')));
+});
+
+function settledBody(extra = {}) {
+  return {
+    winner: 'alice', hash: HASH, a: 'alice', b: 'bob',
+    oldA: 1000, oldB: 1000, nextA: 1016, nextB: 984, deltaA: 16, deltaB: -16,
+    mode: 'agree', minutes: 8, at: TS, pair: 'alice_bob', ...extra,
+  };
+}
+function pairBody(slot, matchId, prev = {}) {
+  const body = { a: 'alice', b: 'bob', m0: '', m1: '', m2: '', t0: 0, t1: 0, t2: 0, ...prev };
+  body[`m${slot}`] = matchId;
+  body[`t${slot}`] = TS;
+  return body;
+}
+const settle = (id, body, pair) => update(ref(db('alice')), { [`settled/${id}`]: body, [`pairs/alice_bob`]: pair });
+
+test('ranked reports agree before a rating moves, and a forfeit waits out the timeout', async () => {
+  await rankedRoom();
+  await seed('lobbies/R1/startedAt', Date.now() - 120000);
+  const report = (delta, extra = {}) => ({ winner: 'alice', hash: HASH, delta, at: TS, ...extra });
+  await assertFails(set(ref(db('alice'), 'matches/R1/reports/alice'), report(40)));
+  await assertSucceeds(set(ref(db('alice'), 'matches/R1/reports/alice'), report(16)));
+  await assertFails(set(ref(db('alice'), 'matches/R1/reports/alice'), report(16)));
+  const settled = settledBody();
+  await assertFails(set(ref(db('alice'), 'matches/R1/settled'), settled));
+  await assertSucceeds(set(ref(db('bob'), 'matches/R1/reports/bob'), { winner: 'alice', hash: HASH, delta: -16, at: TS }));
+  await assertFails(settle('R1', settledBody({ nextA: 1032, deltaA: 32, deltaB: -32, nextB: 968 }), pairBody(0, 'R1')));
+  await assertSucceeds(settle('R1', settled, pairBody(0, 'R1')));
+  await assertFails(settle('R1', settled, pairBody(0, 'R1')));
+  await assertFails(remove(ref(db('alice'), 'settled/R1')));
+  await assertFails(remove(ref(db('alice'), 'pairs/alice_bob')));
+  await assertSucceeds(remove(ref(db('alice'), 'matches/R1')));
+  const kept = await get(ref(db('alice'), 'settled/R1'));
+  assert.equal(kept.child('deltaA').val(), 16);
+  await assertFails(settle('R1', settledBody({ deltaA: 32, nextA: 1032, deltaB: -32, nextB: 968 }), pairBody(0, 'R1')));
+  const up = (uid, rating, wins) => player(uid === 'alice' ? 'Хозяин' : 'Путник', uid === 'alice' ? '2048' : '3391', {
+    rating, games: 1, wins, last: 'R1',
+  });
+  await assertFails(set(ref(db('alice'), 'players/alice'), up('alice', 1032, 1)));
+  await assertSucceeds(set(ref(db('alice'), 'players/alice'), up('alice', 1016, 1)));
+  await assertSucceeds(set(ref(db('alice'), 'players/bob'), up('bob', 984, 0)));
+  await assertFails(set(ref(db('alice'), 'players/alice'), up('alice', 1032, 2)));
+  await assertSucceeds(set(ref(db('alice'), `history/alice/R1`), { opp: 'bob', delta: 16, rating: 1016, winner: 'alice', at: TS }));
+  await assertFails(set(ref(db('bob'), `history/alice/R1`), { opp: 'bob', delta: 16, rating: 1016, winner: 'alice', at: TS }));
+  await assertFails(get(ref(db('bob'), 'history/alice')));
+
+  await set(ref(db('alice'), 'lobbies/R2'), newLobby('alice', { name: 'Обычная~1111110000', maxPlayers: 2 }));
+  await join('bob', 'R2', 1);
+  await update(ref(db('alice'), 'lobbies/R2'), { status: 'started', startedAt: TS });
+  await set(ref(db('alice'), 'matches/R2/reports/alice'), report(16));
+  await set(ref(db('bob'), 'matches/R2/reports/bob'), { winner: 'alice', hash: HASH, delta: -16, at: TS });
+  await assertFails(settle('R2', settledBody(), pairBody(1, 'R2')));
+
+  await seed('players/alice', player('Хозяин', '2048'));
+  await seed('players/bob', player('Путник', '3391'));
+  await set(ref(db('alice'), 'lobbies/R3'), newLobby('alice', { name: RANKED, maxPlayers: 2 }));
+  await join('bob', 'R3', 1);
+  await update(ref(db('alice'), 'lobbies/R3'), { status: 'started', startedAt: TS });
+  await seed('lobbies/R3/startedAt', Date.now() - 120000);
+  await set(ref(db('alice'), 'matches/R3/reports/alice'), report(16, { forfeit: true }));
+  await assertFails(settle('R3', settledBody({ mode: 'forfeit' }), pairBody(1, 'R3')));
+  await seed('matches/R3/presence/bob', { online: false, at: Date.now() - 120000 });
+  const stored = (await get(ref(db('alice'), 'pairs/alice_bob'))).val();
+  await assertSucceeds(settle('R3', settledBody({ mode: 'forfeit' }), pairBody(1, 'R3', stored)));
+});
+
+test('short matches do not move Elo and a pair is capped at three rated games a day', async () => {
+  await rankedRoom();
+  const report = (delta, extra = {}) => ({ winner: 'alice', hash: HASH, delta, at: TS, ...extra });
+  await set(ref(db('alice'), 'matches/R1/reports/alice'), report(0));
+  await set(ref(db('bob'), 'matches/R1/reports/bob'), { winner: 'alice', hash: HASH, delta: 0, at: TS });
+  const quiet = settledBody({ minutes: 5, deltaA: 0, deltaB: 0, nextA: 1000, nextB: 1000 });
+  await assertFails(settle('R1', settledBody({ minutes: 5 }), pairBody(0, 'R1')));
+  await assertSucceeds(set(ref(db('alice'), 'settled/R1'), quiet));
+  await assertFails(remove(ref(db('bob'), 'settled/R1')));
+
+  async function ratedLobby(id) {
+    await set(ref(db('alice'), `lobbies/${id}`), newLobby('alice', { name: RANKED, maxPlayers: 2 }));
+    await join('bob', id, 1);
+    await update(ref(db('alice'), `lobbies/${id}`), { status: 'started', startedAt: TS });
+    await set(ref(db('alice'), `matches/${id}/reports/alice`), report(16));
+    await set(ref(db('bob'), `matches/${id}/reports/bob`), { winner: 'alice', hash: HASH, delta: -16, at: TS });
+  }
+  await ratedLobby('R4');
+  await assertFails(settle('R4', settledBody({ minutes: 8 }), pairBody(0, 'R4')));
+  await seed('lobbies/R4/startedAt', Date.now() - 120000);
+  await assertSucceeds(settle('R4', settledBody(), pairBody(0, 'R4')));
+  await ratedLobby('R5');
+  await seed('lobbies/R5/startedAt', Date.now() - 120000);
+  let stored = (await get(ref(db('alice'), 'pairs/alice_bob'))).val();
+  await assertSucceeds(settle('R5', settledBody(), pairBody(1, 'R5', stored)));
+  await ratedLobby('R6');
+  await seed('lobbies/R6/startedAt', Date.now() - 120000);
+  stored = (await get(ref(db('alice'), 'pairs/alice_bob'))).val();
+  await assertSucceeds(settle('R6', settledBody(), pairBody(2, 'R6', stored)));
+  await ratedLobby('R7');
+  await seed('lobbies/R7/startedAt', Date.now() - 120000);
+  stored = (await get(ref(db('alice'), 'pairs/alice_bob'))).val();
+  await assertFails(settle('R7', settledBody(), pairBody(0, 'R7', { ...stored, t0: Date.now() })));
+  await seed('pairs/alice_bob/t0', Date.now() - 90_000_000);
+  stored = (await get(ref(db('alice'), 'pairs/alice_bob'))).val();
+  await assertSucceeds(settle('R7', settledBody(), pairBody(0, 'R7', stored)));
+});
+
+test('lobby may carry a map share code', async () => {
+  await assertSucceeds(set(ref(db('alice'), 'lobbies/MAP1'), newLobby('alice', { map: 'A'.repeat(16) })));
+  await assertSucceeds(set(ref(db('alice'), 'lobbies/MAP5'), newLobby('alice')));
+  await assertFails(set(ref(db('alice'), 'lobbies/MAP2'), newLobby('alice', { map: 'A'.repeat(12001) })));
+  await assertFails(set(ref(db('alice'), 'lobbies/MAP3'), newLobby('alice', { map: 'abc$defgh' })));
+  await assertFails(set(ref(db('alice'), 'lobbies/MAP4'), newLobby('alice', { map: 'short' })));
+});

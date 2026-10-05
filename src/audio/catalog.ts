@@ -42,6 +42,8 @@ export type SoundId =
   | 'fire'
   | 'cough'
   | 'horn'
+  | 'rain'
+  | 'wind'
   | 'victory'
   | 'defeat';
 
@@ -99,6 +101,8 @@ export const SOUNDS: readonly SoundDef[] = [
   { id: 'fire', bus: 'sfx', gapMs: 280, world: true, label: 'Огонь и смола' },
   { id: 'cough', bus: 'sfx', gapMs: 600, world: false, label: 'Кашель чумы' },
   { id: 'horn', bus: 'sfx', gapMs: 5000, world: false, label: 'Рог «на нас напали»' },
+  { id: 'rain', bus: 'ambience', gapMs: 380, world: false, label: 'Дождь' },
+  { id: 'wind', bus: 'ambience', gapMs: 620, world: false, label: 'Ветер' },
   { id: 'victory', bus: 'ui', gapMs: 4000, world: false, label: 'Победа' },
   { id: 'defeat', bus: 'ui', gapMs: 4000, world: false, label: 'Поражение' },
 ];

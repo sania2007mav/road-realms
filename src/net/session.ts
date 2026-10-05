@@ -22,8 +22,11 @@ import {
   type Unsubscribe,
 } from 'firebase/database';
 import { OFFLINE_NOTE, enableAppCheck, firebaseConfig, friendlyNetError } from '../firebase';
-import { describeSetup, displayLobbyName, lobbySummary, normalizeProfiles, normalizeSetup, packLobbyName, profilesFromLobbyName, tailFromLobbyName, unpackSeed } from '../sim/match';
+import { TICKS_PER_GAME_MINUTE } from '../sim/balance';
+import { describeSetup, displayLobbyName, lobbySummary, normalizeProfiles, normalizeSetup, packLobbyName, profilesFromLobbyName, rankedSetup, tailFromLobbyName, unpackSeed } from '../sim/match';
+import { readStoredProfile, seatLabel } from '../meta/rating';
 import { passwordLock } from './password';
+import { decodeShare, validateMap } from '../sim/custom';
 import { createGame } from '../sim/world';
 import { hashState } from '../sim/hash';
 import { step, type Command, type GameState } from '../sim';
@@ -59,6 +62,7 @@ export interface LobbyData {
   lock?: string;
   createdAt?: number;
   startedAt?: number;
+  map?: string;
   players?: Record<string, LobbyPlayer>;
   seats?: Record<string, string> | string[];
 }
@@ -101,6 +105,8 @@ export interface RoomView {
     surviveMinutes: number;
     speed: 1 | 2 | 3;
     teams: 'ffa' | 'pairs';
+    seasons: 'off' | 'normal' | 'long';
+    events: 'off' | 'rare' | 'normal' | 'often';
     difficulty: 'easy' | 'normal' | 'hard' | 'cruel';
   };
   me: string;
@@ -123,12 +129,23 @@ export interface NetHooks {
   onClosed: (reason: string) => void;
   onError: (message: string) => void;
   onEnded: () => void;
+  onForfeit: () => void;
 }
 
 const app = initializeApp(firebaseConfig);
 void enableAppCheck(app);
 const auth = getAuth(app);
-const db = getDatabase(app, firebaseConfig.databaseURL);
+export const db = getDatabase(app, firebaseConfig.databaseURL);
+
+export interface RankPacket {
+  matchId: string;
+  myUid: string;
+  oppUid: string;
+  winnerUid: string;
+  hash: string;
+  forfeit: boolean;
+  minutes: number;
+}
 
 export function clampText(raw: string, max: number): string {
   return raw.replace(/\s+/g, ' ').trim().slice(0, max);
@@ -202,6 +219,7 @@ export class NetSession {
     onClosed: () => {},
     onError: () => {},
     onEnded: () => {},
+    onForfeit: () => {},
   };
 
   private unsubs: Unsubscribe[] = [];
@@ -220,6 +238,31 @@ export class NetSession {
   private waitingSince = 0;
   private ended = false;
   private pace: 1 | 2 | 3 = 1;
+  private rankedMatch = false;
+  private forfeitSent = false;
+  private presenceTimer = 0;
+
+  isRanked(): boolean {
+    return this.rankedMatch;
+  }
+
+  resultPacket(forfeit: boolean): RankPacket | null {
+    if (!this.rankedMatch || !this.state || !this.lobbyId || !this.uid || this.roster.length !== 2) return null;
+    const opp = this.roster.find((seat) => seat.uid !== this.uid);
+    if (!opp) return null;
+    const winnerSeat = this.roster.find((seat) => seat.playerId === this.state?.winnerId);
+    const winnerUid = forfeit ? this.uid : winnerSeat?.uid || '';
+    if (!winnerUid) return null;
+    return {
+      matchId: this.lobbyId,
+      myUid: this.uid,
+      oppUid: opp.uid,
+      winnerUid,
+      hash: hashState(this.state),
+      forfeit,
+      minutes: Math.floor(this.state.tick / TICKS_PER_GAME_MINUTE),
+    };
+  }
 
   speed(): 1 | 2 | 3 {
     return this.pace;
@@ -263,8 +306,11 @@ export class NetSession {
             max: lobby.maxPlayers,
             age: ageLabel(created),
             summary: lobbySummary(
-              { ...decoded.setup, teams: tail.teams, profiles: named ?? undefined },
+              tail.ranked
+                ? rankedSetup(decoded.setup.map)
+                : { ...decoded.setup, teams: tail.teams, seasons: tail.seasons, events: tail.events, profiles: named ?? undefined },
               { speed: tail.speed, teams: tail.teams, difficulty: named?.[0]?.difficulty ?? 'normal' },
+              tail.ranked,
             ),
             locked: tail.lock.length > 0,
           });
@@ -284,14 +330,22 @@ export class NetSession {
     profiles?: import('../sim/types').AiProfile[];
     speed?: 1 | 2 | 3;
     teams?: 'ffa' | 'pairs';
+    seasons?: 'off' | 'normal' | 'long';
+    events?: 'off' | 'rare' | 'normal' | 'often';
     password?: string;
+    ranked?: boolean;
+    mapCode?: string;
   }): Promise<void> {
     await this.signIn();
-    const lock = (await passwordLock(opts.password ?? '')).slice(0, 8);
+    const ranked = opts.ranked === true;
+    const lock = ranked ? '' : (await passwordLock(opts.password ?? '')).slice(0, 8);
     const name = packLobbyName(opts.name, opts.profiles, {
-      speed: opts.speed ?? 1,
-      teams: opts.teams ?? 'ffa',
+      speed: ranked ? 1 : opts.speed ?? 1,
+      teams: ranked ? 'ffa' : opts.teams ?? 'ffa',
+      seasons: ranked ? 'off' : opts.seasons ?? 'off',
+      events: ranked ? 'off' : opts.events ?? 'off',
       lock,
+      ranked,
     });
     if (name.length < 1) throw new Error('Введите название');
     const lobbyRef = push(ref(db, 'lobbies'));
@@ -300,12 +354,13 @@ export class NetSession {
     await set(lobbyRef, {
       hostUid: this.uid,
       name,
-      maxPlayers: opts.maxPlayers,
+      maxPlayers: ranked ? 2 : opts.maxPlayers,
       status: 'open',
       seed: opts.seed >>> 0,
       createdAt: serverTimestamp(),
       players: { [this.uid]: { name: this.playerName(), seat: 0, joinedAt: serverTimestamp() } },
       seats: { 0: this.uid },
+      ...(opts.mapCode ? { map: opts.mapCode } : {}),
     });
     this.watchLobby(id);
   }
@@ -394,6 +449,7 @@ export class NetSession {
       this.finishMatch();
       return;
     }
+    this.watchForfeit();
     let guard = 0;
     while (guard < 4 && this.state.outcome === 'playing' && now >= this.nextAt) {
       const turn = this.ls.executed;
@@ -458,6 +514,8 @@ export class NetSession {
   }
 
   private playerName(): string {
+    const profile = readStoredProfile();
+    if (profile) return clampText(seatLabel(profile.nick, profile.tag), 20) || 'Путник';
     const stored = clampText(localStorage.getItem('dorozhnye-kraya-name') || '', 20);
     return stored || 'Путник';
   }
@@ -501,7 +559,9 @@ export class NetSession {
     const decoded = unpackSeed((lobby.seed ?? 0) >>> 0);
     const tail = tailFromLobbyName(String(lobby.name || ''));
     const profiles = normalizeProfiles(profilesFromLobbyName(String(lobby.name || '')));
-    const setup = normalizeSetup({ ...decoded.setup, profiles, teams: tail.teams });
+    const setup = tail.ranked
+      ? normalizeSetup({ ...rankedSetup(decoded.setup.map), profiles })
+      : normalizeSetup({ ...decoded.setup, profiles, teams: tail.teams, seasons: tail.seasons, events: tail.events });
     const locked = tail.lock.length > 0;
     return {
       id,
@@ -510,7 +570,7 @@ export class NetSession {
       maxPlayers: lobby.maxPlayers,
       seed: decoded.worldSeed,
       rules: describeSetup(setup),
-      summary: lobbySummary(setup, { speed: tail.speed, teams: tail.teams, difficulty: profiles[0]?.difficulty ?? 'normal' }),
+      summary: `${lobbySummary(setup, { speed: tail.speed, teams: tail.teams, difficulty: profiles[0]?.difficulty ?? 'normal' }, tail.ranked)}${lobby.map ? ' · своя карта' : ''}`,
       locked,
       draft: {
         victory: setup.victory,
@@ -523,6 +583,8 @@ export class NetSession {
         surviveMinutes: setup.surviveMinutes,
         speed: tail.speed,
         teams: tail.teams,
+        seasons: tail.seasons,
+        events: tail.events,
         difficulty: profiles[0]?.difficulty ?? 'normal',
       },
       me: this.uid,
@@ -542,13 +604,39 @@ export class NetSession {
     const decoded = unpackSeed(lobby.seed >>> 0);
     const tail = tailFromLobbyName(String(lobby.name || ''));
     const humans = this.roster.length;
-    const ai = Math.max(0, Math.min(4 - humans, decoded.setup.ai));
+    const ranked = tail.ranked && humans === 2;
+    const ai = ranked ? 0 : Math.max(0, Math.min(4 - humans, decoded.setup.ai));
     const profiles = normalizeProfiles(profilesFromLobbyName(String(lobby.name || '')));
-    this.pace = tail.speed;
+    this.pace = ranked ? 1 : tail.speed;
+    this.rankedMatch = ranked;
+    this.forfeitSent = false;
+    let custom: ReturnType<typeof decodeShare> | undefined;
+    if (!ranked && lobby.map) {
+      try {
+        custom = decodeShare(lobby.map);
+      } catch {
+        this.hooks.onError('Карта в комнате не читается');
+        return;
+      }
+      const errors = validateMap(custom);
+      if (errors.length) {
+        this.hooks.onError(errors[0]);
+        return;
+      }
+      if (humans > custom.starts.length) {
+        this.hooks.onError(`На карте ${custom.starts.length} стартов, а игроков больше`);
+        return;
+      }
+    }
+    const customAi = custom ? Math.max(0, Math.min(custom.starts.length - humans, ai)) : ai;
+    const setup = ranked
+      ? { ...rankedSetup(decoded.setup.map), ai: 0, profiles, teams: 'ffa' as const, seasons: 'off' as const, events: 'off' as const }
+      : { ...decoded.setup, ai: custom ? customAi : ai, profiles, teams: tail.teams, seasons: tail.seasons, events: tail.events };
     const state = createGame(decoded.worldSeed, {
       humans,
-      ai,
-      setup: { ...decoded.setup, ai, profiles, teams: tail.teams },
+      ai: custom ? customAi : ai,
+      setup,
+      ...(custom ? { custom } : {}),
     });
     for (const seat of this.roster) {
       const player = state.players[seat.playerId];
@@ -591,10 +679,12 @@ export class NetSession {
 
   private listenPresence(id: string) {
     const mine = ref(db, `matches/${id}/presence/${this.uid}`);
+    const beat = () => set(mine, { online: true, at: serverTimestamp() }).catch(() => {});
     void onDisconnect(mine)
       .set({ online: false, at: serverTimestamp() })
-      .then(() => set(mine, { online: true, at: serverTimestamp() }))
+      .then(() => beat())
       .catch((err) => this.hooks.onError(friendlyNetError(err, 'Не удалось отметить присутствие')));
+    this.presenceTimer = window.setInterval(() => void beat(), 20_000);
     this.unsubs.push(
       onValue(ref(db, `matches/${id}/presence`), (snap) => {
         const value = (snap.val() || {}) as Record<string, { online?: boolean; at?: number }>;
@@ -656,6 +746,16 @@ export class NetSession {
     });
   }
 
+  private watchForfeit() {
+    if (!this.rankedMatch || this.forfeitSent || this.roster.length !== 2) return;
+    const opp = this.roster.find((seat) => seat.uid !== this.uid);
+    if (!opp) return;
+    const presence = this.presence[opp.uid];
+    if (!presence?.at || Date.now() - presence.at < 60_000) return;
+    this.forfeitSent = true;
+    this.hooks.onForfeit();
+  }
+
   private finishMatch() {
     if (this.ended) return;
     this.ended = true;
@@ -673,6 +773,10 @@ export class NetSession {
   private clearSubs() {
     for (const unsub of this.unsubs) unsub();
     this.unsubs = [];
+    if (this.presenceTimer) {
+      window.clearInterval(this.presenceTimer);
+      this.presenceTimer = 0;
+    }
   }
 }
 

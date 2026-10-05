@@ -31,10 +31,15 @@ import {
   personalityName,
   normalizeSetup,
   packSeed,
+  rankedSetup,
   resultCopy,
   scoreOf,
   victoryName,
   viewerWon,
+  forecastLine,
+  seasonName,
+  weatherName,
+  syncClimate,
   CRUEL_BONUS_TEXT,
   SCORE_TEXT,
   step,
@@ -59,8 +64,40 @@ import { createBuilding, createOx, createPerson } from './sim/entities';
 import { emptyStocks, PLAYER_NAMES } from './sim/balance';
 import { isLineBuilding, wallLine } from './sim/siege';
 import { cycleGfx, gfxLabel, loadGfx, setGfx } from './render/gfx';
-import { bakeTerrain, clearTerrainChunks, minimapToTile, renderMinimap, renderWorld, setTerrainChunks, type Ghost, type OrderMarker } from './render/draw';
+import { emptyRoad } from './sim/events';
+import {
+  addPlayMs,
+  achievementsHtml,
+  beginMatch,
+  loadMeta,
+  noteTrade,
+  noteUnit,
+  observe,
+  saveMeta as persistMeta,
+  statsHtml,
+  type MetaState,
+  type ObservePulse,
+} from './meta/achievements';
+import {
+  boardHtml,
+  cleanNick,
+  displayTag,
+  historyHtml,
+  isEmblem,
+  nickOk,
+  profileHtml,
+  readStoredProfile,
+  tagFromUid,
+  writeStoredProfile,
+  type BoardEntry,
+  type EmblemId,
+  type LocalProfile,
+} from './meta/rating';
+import { loadBoard, loadHistory, publishProfile, settleRanked, SOON } from './net/rank';
+import { bakeTerrain, climateStamp, clearTerrainChunks, minimapToTile, renderMinimap, renderWorld, setTerrainChunks, type Ghost, type OrderMarker } from './render/draw';
 import { net } from './net/session';
+import { closeMapEditor, editorShowList, openMapEditor } from './editor/editor';
+import { blankMap, encodeShare, listMaps, loadMap, MAP_SHARE_LIMIT, saveMap, validateMap, type CustomMap } from './sim/custom';
 import { NetView, type LobbyDraft } from './net/screens';
 import { ZOOM_MAX, clampCamera, focusTile, screenToTile, screenToWorld, worldToScreen, type Camera } from './render/camera';
 import { helpHtml } from './ui/help';
@@ -81,6 +118,8 @@ import { campaignIntroHtml, campaignMapHtml, starMarkup } from './campaign/view'
 import { soldiersInScreenRect } from './select';
 
 const TUTORIAL_KEY = 'dorozhnye-kraya-tutorial';
+const TURN_HINT_KEY = 'dorozhnye-kraya-turn';
+const PHONE_LAND_QUERY = '(pointer: coarse) and (orientation: landscape) and (max-height: 500px)';
 const NAME_KEY = 'dorozhnye-kraya-name';
 const ARMY_HINT_KEY = 'dorozhnye-kraya-army-hint';
 const ARMY_HINT =
@@ -211,9 +250,12 @@ const selectedSoldiers = new Set<number>();
 const controlGroups: number[][] = [[], [], [], [], [], [], [], [], [], []];
 const markers: OrderMarker[] = [];
 let attackArmed = false;
+let openCaravanId: number | null = null;
 let boxMode = false;
-let pointerMode: 'none' | 'pan' | 'box' | 'wall' | 'road' = 'none';
+let pointerMode: 'none' | 'pan' | 'box' | 'wall' | 'road' | 'ghost' = 'none';
 let wallAnchor: { x: number; y: number } | null = null;
+let pendingLine: { x: number; y: number }[] | null = null;
+const landGroupsOpen = new Set(['Материалы', 'Еда']);
 let boxStart = { x: 0, y: 0 };
 let boxNow = { x: 0, y: 0 };
 let boxBase: number[] = [];
@@ -249,6 +291,7 @@ function resize() {
   miniCanvas.width = Math.max(1, Math.floor(miniCanvas.clientWidth * dpr));
   miniCanvas.height = Math.max(1, Math.floor(miniCanvas.clientHeight * dpr));
   syncBuildScroll();
+  syncLandMode();
 }
 
 function syncBuildScroll() {
@@ -261,7 +304,7 @@ function syncBuildScroll() {
   next.hidden = !overflow;
 }
 
-let setupDraft: MatchSetup = normalizeSetup({ ai: 3 });
+let setupDraft: MatchSetup = normalizeSetup({ ai: 3, seasons: 'normal', events: 'normal' });
 
 function readProfiles(): AiProfile[] {
   const difficulty = (index: number): DifficultyId =>
@@ -310,6 +353,8 @@ function readSetup(): MatchSetup {
     goldTarget: num('gold-target', 2000),
     popTarget: num('pop-target', 20),
     surviveMinutes: num('survive-min', 20),
+    seasons: pick('seasons', 'normal'),
+    events: pick('events', 'normal'),
     profiles: readProfiles(),
   });
   return setupDraft;
@@ -332,6 +377,171 @@ function compactLayout() {
   return window.matchMedia('(max-width: 840px), (max-height: 500px)').matches;
 }
 
+function phoneLandscape(): boolean {
+  if (window.matchMedia(PHONE_LAND_QUERY).matches) return true;
+  const touch = navigator.maxTouchPoints > 0 || window.matchMedia('(pointer: coarse)').matches;
+  const landscape = window.matchMedia('(orientation: landscape)').matches && window.innerWidth > window.innerHeight;
+  return touch && landscape && window.innerHeight <= 500;
+}
+
+function phonePortrait(): boolean {
+  const touch = navigator.maxTouchPoints > 0 || window.matchMedia('(pointer: coarse)').matches;
+  const portrait = window.matchMedia('(orientation: portrait)').matches && window.innerHeight > window.innerWidth;
+  const query = window.matchMedia('(pointer: coarse) and (orientation: portrait) and (max-width: 500px)').matches;
+  return query || (touch && portrait && window.innerWidth <= 500);
+}
+
+function syncLandMode() {
+  const land = phoneLandscape();
+  const changed = document.documentElement.classList.contains('phone-land') !== land;
+  document.documentElement.classList.toggle('phone-land', land);
+  const hint = document.querySelector<HTMLElement>('#turn-hint');
+  if (hint) {
+    const dismissed = sessionStorage.getItem(TURN_HINT_KEY) === '1';
+    hint.hidden = !phonePortrait() || dismissed;
+  }
+  parkLand();
+  const home = document.querySelector<HTMLButtonElement>('#home');
+  if (home) {
+    home.textContent = land ? 'Дом' : 'К себе';
+    home.title = 'К себе';
+    home.setAttribute('aria-label', 'К себе');
+  }
+  syncPlaceChrome();
+  measureLandTrays();
+  fitLandResources();
+  if (changed) resourceSig = '';
+}
+
+function measureLandTrays() {
+  if (!phoneLandscape()) return;
+  const tray = document.querySelector<HTMLElement>('#land-tray');
+  const armyHeight = armyEl.hidden || getComputedStyle(armyEl).display === 'none' ? 0 : armyEl.offsetHeight;
+  const confirm = document.querySelector<HTMLElement>('#place-confirm');
+  const confirmHeight = confirm && !confirm.hidden ? confirm.offsetHeight : 0;
+  if (tray) document.documentElement.style.setProperty('--land-left-tray', `${Math.max(tray.offsetHeight, 8)}px`);
+  document.documentElement.style.setProperty('--land-tray', `${Math.max(armyHeight, confirmHeight, 8)}px`);
+}
+
+function fitLandResources() {
+  const res = document.querySelector<HTMLElement>('#resources');
+  const top = document.querySelector<HTMLElement>('#topbar');
+  const status = document.querySelector<HTMLElement>('#status');
+  if (!res || !top || !status) return;
+  if (!document.documentElement.classList.contains('phone-land')) {
+    if (res.dataset.fit) {
+      res.style.maxHeight = '';
+      delete res.dataset.fit;
+    }
+    return;
+  }
+  const style = getComputedStyle(top);
+  const gap = Number.parseFloat(style.rowGap || style.gap) || 0;
+  const pad = (Number.parseFloat(style.paddingTop) || 0) + (Number.parseFloat(style.paddingBottom) || 0);
+  const available = Math.floor(top.clientHeight - status.offsetHeight - gap - pad);
+  const mark = `${available}:${res.scrollHeight}`;
+  if (res.dataset.fit === mark) return;
+  const resTop = res.getBoundingClientRect().top;
+  const scroll = res.scrollTop;
+  let fit = 0;
+  for (const child of res.querySelectorAll<HTMLElement>('.glabel, .res')) {
+    const rect = child.getBoundingClientRect();
+    if (rect.height < 2) continue;
+    const bottom = rect.bottom - resTop + scroll;
+    if (bottom <= available + 0.5) fit = bottom;
+    else break;
+  }
+  res.style.maxHeight = fit > 8 && available - fit > 1 ? `${Math.ceil(fit)}px` : '';
+  res.dataset.fit = mark;
+}
+
+function releaseLandTray() {
+  const speedsEl = document.querySelector<HTMLElement>('#speeds');
+  const menu = document.querySelector<HTMLElement>('#open-menu');
+  const dock = document.querySelector<HTMLElement>('#dock');
+  const top = document.querySelector<HTMLElement>('#topbar');
+  if (speedsEl && dock && !dock.contains(speedsEl)) dock.append(speedsEl);
+  if (menu && top && !top.contains(menu)) top.append(menu);
+}
+
+function parkLand() {
+  const speeds = document.querySelector<HTMLElement>('#speeds');
+  const menu = document.querySelector<HTMLElement>('#open-menu');
+  const full = document.querySelector<HTMLButtonElement>('#land-full');
+  const status = document.querySelector<HTMLElement>('#status');
+  const dock = document.querySelector<HTMLElement>('#dock');
+  const buildbarEl = document.querySelector<HTMLElement>('#buildbar');
+  const slot = document.querySelector<HTMLElement>('#land-speeds-slot');
+  const row = document.querySelector<HTMLElement>('#land-row');
+  if (!speeds || !menu || !status || !dock || !slot || !row) return;
+  if (phoneLandscape()) {
+    slot.append(speeds);
+    row.append(menu);
+    if (full) {
+      full.hidden = false;
+      row.append(full);
+    }
+    return;
+  }
+  status.prepend(menu);
+  if (buildbarEl) dock.insertBefore(speeds, buildbarEl);
+  else dock.append(speeds);
+  if (full) full.hidden = true;
+}
+
+function syncPlaceChrome() {
+  const on = phoneLandscape() && playing && (placing != null || roadMode);
+  const box = document.querySelector<HTMLElement>('#place-confirm');
+  if (box) box.hidden = !on;
+  document.documentElement.classList.toggle('placing-build', on);
+}
+
+function aimPlacement(type: BuildingType) {
+  const suggested = suggestedTile(state, localPlayer, type);
+  if (suggested) {
+    hover = suggested;
+    return;
+  }
+  const keep = playerKeep(state, localPlayer);
+  if (keep) hover = { x: keep.x + 4, y: keep.y };
+}
+
+function cancelBuild() {
+  placing = null;
+  roadMode = false;
+  pendingLine = null;
+  wallAnchor = null;
+  worldCanvas.classList.remove('placing');
+  syncPlaceChrome();
+}
+
+function confirmBuild() {
+  if (roadMode) {
+    const cells = pendingLine ?? (hover ? [hover] : []);
+    for (const cell of cells) pushCmd({ kind: 'road', playerId: localPlayer, x: cell.x, y: cell.y });
+  } else if (placing) {
+    const cells = isLineBuilding(placing) ? pendingLine ?? (hover ? [hover] : []) : hover ? [hover] : [];
+    const type = placing;
+    for (const cell of cells) pushCmd({ kind: 'place', playerId: localPlayer, building: type, x: cell.x, y: cell.y });
+  }
+  cancelBuild();
+}
+
+async function enterLandScreen() {
+  try {
+    if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
+  } catch {
+    /* the browser can refuse fullscreen until a gesture */
+  }
+  const orientation = screen.orientation as ScreenOrientation & { lock?: (orientation: string) => Promise<void> };
+  if (!orientation?.lock) return;
+  try {
+    await orientation.lock('landscape');
+  } catch {
+    /* lock is allowed once installed or after fullscreen on some phones */
+  }
+}
+
 function parkEcon(intoMenu: boolean) {
   const econ = document.querySelector<HTMLElement>('#econ');
   const slot = document.querySelector<HTMLElement>('#menu-econ');
@@ -351,13 +561,33 @@ function hideMenu() {
   menu.hidden = true;
 }
 
-function startGame() {
+function pickedCustom(): CustomMap | undefined {
+  const mapId = document.querySelector<HTMLSelectElement>('#custom-map')?.value ?? '';
+  if (!mapId) return undefined;
+  const loaded = loadMap(mapId);
+  if (!loaded) {
+    flash('Карта не читается');
+    return undefined;
+  }
+  return loaded;
+}
+
+function startGame(custom?: CustomMap) {
+  const chosen = custom ?? pickedCustom();
+  if (!custom && document.querySelector<HTMLSelectElement>('#custom-map')?.value && !chosen) return;
+  if (chosen) {
+    const errors = validateMap(chosen);
+    if (errors.length) {
+      flash(errors[0]);
+      return;
+    }
+  }
   netMode = false;
   localPlayer = 0;
   campaignSession = null;
   const seed = Number((document.querySelector<HTMLInputElement>('#seed')?.value ?? '20261003')) || 1;
   const setup = readSetup();
-  state = createGame(seed >>> 0, { ai: setup.ai, setup });
+  state = createGame(seed >>> 0, { ai: setup.ai, humans: 1, setup, ...(chosen ? { custom: chosen } : {}) });
   baked = bakeTerrain(state);
   clearTerrainChunks();
   const keep = playerKeep(state, localPlayer);
@@ -375,6 +605,7 @@ function startGame() {
   queue = [];
   acc = 0;
   resetArmy();
+  resetMetaWatch(false, true);
   title.hidden = true;
   netView.hide();
   netView.wait(null, null);
@@ -382,8 +613,27 @@ function startGame() {
   menu.hidden = true;
   buildChrome();
   tutorial.hidden = true;
-  if (!netMode && !localStorage.getItem(TUTORIAL_KEY)) beginGuide();
+  closeMapEditor();
+  if (!chosen && !localStorage.getItem(TUTORIAL_KEY)) beginGuide();
   expose();
+}
+
+function openEditor(initial?: CustomMap) {
+  const host = document.querySelector<HTMLElement>('#map-editor');
+  if (!host) return;
+  title.hidden = true;
+  openMapEditor(host, {
+    land: () => phoneLandscape(),
+    flash,
+    onPlay: (map) => startGame(map),
+    onClose: () => {
+      closeMapEditor();
+      if (!playing) {
+        buildTitle();
+        bootPreview();
+      }
+    },
+  }, initial);
 }
 
 function applyUi() {
@@ -437,6 +687,7 @@ async function restoreSlot(slot: SlotId) {
   } else campaignSession = null;
   playing = true;
   speed = uiSettings.speed;
+  resetMetaWatch(false, false);
   title.hidden = true;
   netView.hide();
   netView.wait(null, null);
@@ -456,7 +707,7 @@ async function restoreSlot(slot: SlotId) {
 }
 
 function hideBooks() {
-  for (const id of ['#help-book', '#settings-panel', '#save-panel']) {
+  for (const id of ['#help-book', '#settings-panel', '#save-panel', '#achieve-book', '#stats-book', '#rating-book']) {
     const node = document.querySelector<HTMLElement>(id);
     if (node) node.hidden = true;
   }
@@ -752,11 +1003,32 @@ function buildTitle() {
             ${option('large', 'Большая', draft.map === 'large')}
           </select>
         </label>
+        <label for="custom-map">Карта
+          <select id="custom-map" data-testid="custom-map">
+            ${option('', 'Случайная', true)}
+            ${listMaps().map((row) => option(row.id, row.name, false)).join('')}
+          </select>
+        </label>
         <label for="start-res">Начальные запасы
           <select id="start-res" data-testid="start-res">
             ${option('low', 'Скудные', draft.start === 'low')}
             ${option('normal', 'Обычные', draft.start === 'normal')}
             ${option('high', 'Богатые', draft.start === 'high')}
+          </select>
+        </label>
+        <label for="seasons">Сезоны
+          <select id="seasons" data-testid="seasons">
+            ${option('off', 'Выкл', draft.seasons === 'off')}
+            ${option('normal', 'Обычные', (draft.seasons ?? 'normal') === 'normal')}
+            ${option('long', 'Долгие', draft.seasons === 'long')}
+          </select>
+        </label>
+        <label for="events">События на тракте
+          <select id="events" data-testid="events">
+            ${option('off', 'Выкл', draft.events === 'off')}
+            ${option('rare', 'Редко', draft.events === 'rare')}
+            ${option('normal', 'Обычно', (draft.events ?? 'normal') === 'normal')}
+            ${option('often', 'Часто', draft.events === 'often')}
           </select>
         </label>
       </div>
@@ -804,6 +1076,10 @@ function buildTitle() {
         <button type="button" id="settings-title" data-testid="settings-open">Настройки</button>
         <button type="button" id="know-game" data-testid="know-game">Я умею играть</button>
         <button type="button" id="about-title" data-testid="about-open">Об игре</button>
+        <button type="button" id="achieve-title" data-testid="achieve-open">Достижения</button>
+        <button type="button" id="rating-title" data-testid="rating-open">Рейтинг</button>
+        <button type="button" id="stats-title" data-testid="stats-open">Статистика</button>
+        <button type="button" id="editor-title" data-testid="editor-open">Редактор карт</button>
       </div>
       <p class="fineprint"><a href="privacy.html">Политика конфиденциальности</a></p>
     </div>
@@ -841,6 +1117,10 @@ function buildTitle() {
   document.querySelector<HTMLButtonElement>('#net-title')!.onclick = () => openNet();
   document.querySelector<HTMLButtonElement>('#campaign-title')!.onclick = () => showCampaignMap();
   document.querySelector<HTMLButtonElement>('#about-title')!.onclick = () => openAbout();
+  document.querySelector<HTMLButtonElement>('#achieve-title')!.onclick = () => openAchievements();
+  document.querySelector<HTMLButtonElement>('#rating-title')!.onclick = () => void openRating();
+  document.querySelector<HTMLButtonElement>('#stats-title')!.onclick = () => openStats();
+  document.querySelector<HTMLButtonElement>('#editor-title')!.onclick = () => openEditor();
 }
 
 function openAbout() {
@@ -908,6 +1188,7 @@ function startScenario(id: string) {
   speed = uiSettings.speed;
   placing = null;
   roadMode = false;
+  resetMetaWatch(false, true);
   selectedId = compactLayout() ? null : (keep?.id ?? null);
   selectedPersonId = null;
   queue = [];
@@ -992,6 +1273,7 @@ function mountAudio() {
 }
 
 function buildChrome() {
+  releaseLandTray();
   const player = () => state.players[localPlayer];
   topbar.innerHTML = `
     <div id="status">
@@ -1000,6 +1282,7 @@ function buildChrome() {
       <button type="button" class="readout" id="mood-btn" data-testid="popularity"></button>
       <div class="readout" id="gold-readout"></div>
       <div class="readout" id="clock"></div>
+      <div id="season-badge" data-testid="season-badge" hidden tabindex="0"></div>
       <div class="readout" id="fps">60 к/с</div>
       <button type="button" id="res-toggle" data-testid="res-toggle">Ресурсы</button>
       <button type="button" id="mute-btn" data-testid="mute-audio" aria-label="Без звука" aria-pressed="false"></button>
@@ -1007,6 +1290,10 @@ function buildChrome() {
       <div id="presence" data-testid="presence" hidden></div>
     </div>
     <div id="resources"></div>`;
+  document.querySelector<HTMLElement>('#season-badge')!.onclick = () => {
+    const line = forecastLine(state);
+    if (line) flash(line);
+  };
   document.querySelector<HTMLButtonElement>('#open-menu')!.onclick = () => {
     if (menu.hidden) {
       menu.hidden = false;
@@ -1015,6 +1302,29 @@ function buildChrome() {
   };
   document.querySelector<HTMLButtonElement>('#res-toggle')!.onclick = () => {
     topbar.classList.toggle('show-res');
+  };
+  document.querySelector<HTMLButtonElement>('#event-show')!.onclick = () => {
+    const note = state.road?.notes.find((item) => item.until > state.tick);
+    if (!note) return;
+    lookAtPoint(note.x, note.y);
+    camera.zoom = Math.max(camera.zoom, 0.85);
+    clampView();
+  };
+  document.querySelector<HTMLButtonElement>('#caravan-buy')!.onclick = () => {
+    if (openCaravanId == null) return;
+    pushCmd({ kind: 'trade', playerId: localPlayer, caravanId: openCaravanId, resource: 'wood', mode: 'buy', qty: 2 });
+    meta = noteTrade(meta, openCaravanId);
+    persistMeta(meta);
+  };
+  document.querySelector<HTMLButtonElement>('#caravan-sell')!.onclick = () => {
+    if (openCaravanId == null) return;
+    pushCmd({ kind: 'trade', playerId: localPlayer, caravanId: openCaravanId, resource: 'apples', mode: 'sell', qty: 2 });
+    meta = noteTrade(meta, openCaravanId);
+    persistMeta(meta);
+  };
+  document.querySelector<HTMLButtonElement>('#caravan-sack')!.onclick = () => {
+    if (openCaravanId == null) return;
+    pushCmd({ kind: 'sack', playerId: localPlayer, caravanId: openCaravanId });
   };
   document.querySelector<HTMLButtonElement>('#map-toggle')!.onclick = () => {
     document.querySelector('#dock')?.classList.toggle('show-map');
@@ -1083,6 +1393,8 @@ function buildChrome() {
   paintBuildButtons();
   setSpeed(speed);
   panelSig = '';
+  parkLand();
+  syncLandMode();
 }
 
 function paintBuildButtons() {
@@ -1114,9 +1426,16 @@ function paintBuildButtons() {
       return;
     }
     placing = null;
+    pendingLine = null;
+    wallAnchor = null;
     roadMode = true;
     worldCanvas.classList.add('placing');
-    flash('Проведите дорогу');
+    if (phoneLandscape()) {
+      const { w, h } = viewSize();
+      hover = screenToTile(camera, w, h, w / 2, h / 2);
+      flash('Проведите дорогу и подтвердите');
+    } else flash('Проведите дорогу');
+    syncPlaceChrome();
   });
   host.querySelectorAll<HTMLButtonElement>('button').forEach((button) => {
     if (!button.dataset.build) return;
@@ -1129,9 +1448,15 @@ function paintBuildButtons() {
         return;
       }
       roadMode = false;
+      pendingLine = null;
+      wallAnchor = null;
       placing = type;
       worldCanvas.classList.add('placing');
-      flash(`Выберите место: ${BUILDINGS[type].name}`);
+      if (phoneLandscape()) {
+        aimPlacement(type);
+        flash(isLineBuilding(type) ? 'Проведите линию и подтвердите' : 'Перетащите и подтвердите');
+      } else flash(`Выберите место: ${BUILDINGS[type].name}`);
+      syncPlaceChrome();
     };
   });
   syncBuildScroll();
@@ -1373,11 +1698,17 @@ function syncHud() {
   const used = usedCount(state, localPlayer);
   const cap = housingCap(state, localPlayer);
   const compact = compactLayout();
+  const land = phoneLandscape();
   const peopleBtn = document.querySelector<HTMLButtonElement>('#people-btn');
   if (peopleBtn) {
-    peopleBtn.innerHTML = compact
-      ? `<strong>${used}</strong>/<strong>${cap}</strong>`
-      : `Люди <strong>${used}</strong>/<strong>${cap}</strong> · свободно <strong>${idle}</strong>`;
+    const tight = !land && !compact && window.innerWidth <= 1100;
+    peopleBtn.innerHTML = land
+      ? `Люди <strong>${used}</strong>/<strong>${cap}</strong>`
+      : compact
+        ? `<strong>${used}</strong>/<strong>${cap}</strong>`
+        : tight
+          ? `Люди <strong>${used}</strong>/<strong>${cap}</strong>`
+          : `Люди <strong>${used}</strong>/<strong>${cap}</strong> · свободно <strong>${idle}</strong>`;
     peopleBtn.title = `Люди ${used} из ${cap}, свободно ${idle}`;
     peopleBtn.classList.toggle('idle-empty', idle === 0);
     peopleBtn.classList.toggle('idle-ready', idle > 0);
@@ -1385,21 +1716,30 @@ function syncHud() {
   const mood = document.querySelector<HTMLButtonElement>('#mood-btn');
   if (mood) {
     const sign = player.popularity > 0 ? `+${player.popularity}` : String(player.popularity);
-    mood.innerHTML = compact ? `<strong>${sign}</strong>` : `Настроение <strong>${sign}</strong>`;
+    mood.innerHTML = land ? `Дух <strong>${sign}</strong>` : compact ? `<strong>${sign}</strong>` : `Настроение <strong>${sign}</strong>`;
     mood.title = `Настроение ${sign}`;
     mood.classList.remove('mood-up', 'mood-down');
     mood.classList.add(player.popularity >= 0 ? 'mood-up' : 'mood-down');
   }
   const gold = document.querySelector<HTMLElement>('#gold-readout');
   if (gold) {
-    gold.innerHTML = compact ? `<strong>${player.gold}</strong>` : `Золото <strong>${player.gold}</strong>`;
+    gold.innerHTML = land ? `Золото <strong>${player.gold}</strong>` : compact ? `<strong>${player.gold}</strong>` : `Золото <strong>${player.gold}</strong>`;
     gold.title = `Золото ${player.gold}`;
   }
   const clock = document.querySelector<HTMLElement>('#clock');
   const minute = Math.floor(state.tick / TICKS_PER_GAME_MINUTE);
   if (clock) {
-    clock.textContent = compact ? `${minute}м` : `${minute} мин`;
+    clock.textContent = land ? `${minute} мин` : compact ? `${minute}м` : `${minute} мин`;
     clock.title = `${minute} мин`;
+  }
+  const badge = document.querySelector<HTMLElement>('#season-badge');
+  if (badge) {
+    const line = forecastLine(state);
+    badge.hidden = !line;
+    if (line) {
+      badge.textContent = `${climateMark(state.season, state.weather)} ${seasonName(state.season)} · ${weatherName(state.weather)}`;
+      badge.title = line;
+    }
   }
   const fpsEl = document.querySelector<HTMLElement>('#fps');
   if (fpsEl) {
@@ -1408,7 +1748,7 @@ function syncHud() {
   }
 
   const resources = document.querySelector<HTMLElement>('#resources');
-  const stockSig = `${compact ? 'c' : 'd'}:${RESOURCES.map((res) => player.stocks[res]).join(',')}`;
+  const stockSig = `${land ? 'l' : compact ? 'c' : 'd'}:${[...landGroupsOpen].join('.')}:${RESOURCES.map((res) => player.stocks[res]).join(',')}`;
   const nowHud = performance.now();
   if (resources && (stockSig !== resourceSig || nowHud - resourceStamp > 150)) {
     resourceSig = stockSig;
@@ -1417,7 +1757,19 @@ function syncHud() {
       const amount = player.stocks[res];
       return `<span class="res ${amount > 0 ? '' : 'zero'}"><i style="background:${cargoColor(res)}"></i>${RESOURCE_NAME[res]} <b>${amount}</b></span>`;
     };
-    if (compact) {
+    if (land) {
+      const groups: { label: string; items: (typeof RESOURCES)[number][] }[] = [
+        { label: 'Материалы', items: ['wood', 'stone', 'iron', 'pitch'] },
+        { label: 'Еда', items: ['apples', 'cheese', 'meat', 'bread', 'beer'] },
+        { label: 'Войско', items: ['horses', 'weapons', 'armor', 'crossbows'] },
+      ];
+      resources.innerHTML = groups
+        .map((group) => {
+          const open = landGroupsOpen.has(group.label);
+          return `<div class="resgroup${open ? ' open' : ''}${group.label === 'Войско' ? ' troop' : ''}"><button type="button" class="glabel" data-resgroup="${group.label}">${group.label}</button><div class="gbody">${group.items.map(chip).join('')}</div></div>`;
+        })
+        .join('');
+    } else if (compact) {
       const order: (typeof RESOURCES)[number][] = ['wood', 'stone', 'iron', 'pitch', 'apples', 'cheese', 'meat', 'bread', 'beer'];
       resources.innerHTML = order.map(chip).join('');
     } else {
@@ -1434,7 +1786,9 @@ function syncHud() {
         )
         .join('');
     }
+    fitLandResources();
   }
+  syncRoadHud();
   const ration = document.querySelector<HTMLSelectElement>('#ration');
   if (ration && document.activeElement !== ration) ration.value = player.ration;
   updateHint();
@@ -1478,11 +1832,13 @@ function syncHud() {
   if (nextLog !== logSig) {
     logSig = nextLog;
     logEl.replaceChildren();
-    for (const line of state.log) {
+    const lines = phoneLandscape() ? state.log.slice(-1) : state.log;
+    for (const line of lines) {
       const row = document.createElement('button');
       row.type = 'button';
       row.className = 'log-line';
-      row.textContent = line;
+      row.title = line;
+      row.textContent = phoneLandscape() && line.length > 14 ? `${line.slice(0, 13)}…` : line;
       row.onclick = () => jumpToLine(line);
       logEl.append(row);
     }
@@ -1490,6 +1846,7 @@ function syncHud() {
   syncGuide();
   syncArmy();
   placeArmy();
+  syncPlaceChrome();
   if (state.message && state.message !== lastMessage) {
     lastMessage = state.message;
     flash(state.message);
@@ -2201,6 +2558,7 @@ function showEnd() {
     <canvas id="results-chart" width="840" height="140"></canvas>
     <p class="chart-note">Сплошная линия — население, пунктир — золото.</p>
     <p class="score-formula">${SCORE_TEXT}</p>
+    ${net.isRanked() ? '<p id="rating-line" data-testid="rating-line">Считаем рейтинг…</p>' : ''}
     <div class="actions">
       ${actionHtml}
     </div>
@@ -2252,10 +2610,279 @@ function showEnd() {
   };
 }
 
+function syncRoadHud() {
+  const noteEl = document.querySelector<HTMLElement>('#event-note');
+  const noteText = document.querySelector<HTMLElement>('#event-note-text');
+  const note = state.road?.notes.find((item) => item.until > state.tick);
+  if (noteEl && noteText) {
+    noteEl.hidden = !note;
+    noteText.textContent = note?.text ?? '';
+  }
+  const panel = document.querySelector<HTMLElement>('#caravan-box');
+  const stock = document.querySelector<HTMLElement>('#caravan-stock');
+  const caravan = state.road?.caravans.find((item) => item.alive && item.id === openCaravanId);
+  if (!caravan) openCaravanId = null;
+  if (panel && stock) {
+    panel.hidden = !caravan;
+    if (caravan) stock.textContent = `Дерево ${caravan.wood}, яблоки ${caravan.apples}, железо ${caravan.iron}, оружие ${caravan.weapons}. Золото купца ${caravan.gold}.`;
+  }
+}
+
+function climateMark(season: string | undefined, weather: string | undefined): string {
+  if (weather === 'snow' || season === 'winter') return '❄';
+  if (weather === 'storm') return '⛈';
+  if (weather === 'rain') return '🌧';
+  if (weather === 'heat' || weather === 'drought') return '☀';
+  if (season === 'autumn') return '🍂';
+  if (season === 'spring') return '❀';
+  if (season === 'summer') return '☀';
+  return '·';
+}
+
 function flash(text: string) {
   toast.hidden = false;
   toast.textContent = text;
   toastUntil = performance.now() + 2400;
+}
+
+let meta: MetaState = loadMeta();
+let pendingPlayMs = 0;
+let metaAt = 0;
+let lastMetaNow = 0;
+let seenSoldiers = new Set<number>();
+let seenRaids = new Set<number>();
+let wallBrokenMatch = false;
+let partyWasHere = false;
+let lastPop = -1;
+const seenKeeps = new Map<number, { hp: number; owner: number }>();
+const seenWalls = new Map<number, number>();
+
+function resetMetaWatch(net: boolean, countGame: boolean) {
+  if (countGame) meta = beginMatch(meta, net);
+  persistMeta(meta);
+  pendingPlayMs = 0;
+  seenSoldiers = new Set();
+  seenRaids = new Set();
+  wallBrokenMatch = false;
+  partyWasHere = false;
+  lastPop = -1;
+  seenKeeps.clear();
+  seenWalls.clear();
+}
+
+function showUnlock(title: string) {
+  toast.classList.add('toast-achieve');
+  flash(`Достижение: ${title}`);
+  audio.play('coins');
+}
+
+function openAchievements() {
+  const book = document.querySelector<HTMLElement>('#achieve-book');
+  if (!book) return;
+  book.hidden = false;
+  book.innerHTML = achievementsHtml(meta);
+  const applyFilter = (mode: string) => {
+    for (const button of book.querySelectorAll<HTMLButtonElement>('[data-filter]')) {
+      button.classList.toggle('on', button.dataset.filter === mode);
+    }
+    for (const row of book.querySelectorAll<HTMLElement>('.ach')) {
+      const done = row.dataset.done === '1';
+      row.hidden = mode === 'done' ? !done : mode === 'open' ? done : false;
+    }
+    for (const section of book.querySelectorAll<HTMLElement>('.ach-group')) {
+      section.hidden = [...section.querySelectorAll<HTMLElement>('.ach')].every((row) => row.hidden);
+    }
+  };
+  for (const button of book.querySelectorAll<HTMLButtonElement>('[data-filter]')) {
+    button.onclick = () => applyFilter(button.dataset.filter || 'all');
+  }
+  book.querySelector<HTMLButtonElement>('#achieve-close')!.onclick = () => {
+    book.hidden = true;
+  };
+}
+
+function ratingBook(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('#rating-book');
+}
+
+function showRatingBook(html: string, bind: (book: HTMLElement) => void) {
+  const book = ratingBook();
+  if (!book) return;
+  hideBooks();
+  book.hidden = false;
+  book.innerHTML = html;
+  bind(book);
+}
+
+async function openRating() {
+  title.hidden = false;
+  const stored = readStoredProfile();
+  let note = '';
+  if (stored) {
+    const remote = await publishProfile(stored);
+    if (remote.soon) note = SOON;
+  }
+  showRatingBook(profileHtml(readStoredProfile(), note), bindProfile);
+}
+
+function bindProfile(book: HTMLElement) {
+  let emblem: EmblemId = readStoredProfile()?.emblem ?? 'road';
+  const nickInput = book.querySelector<HTMLInputElement>('#rating-nick');
+  const paintTag = () => {
+    const nick = cleanNick(nickInput?.value || '');
+    const tag = readStoredProfile()?.tag || '0000';
+    const line = book.querySelector<HTMLElement>('[data-testid="rating-tag"]');
+    if (line) line.textContent = `На таблице: ${nickOk(nick) ? displayTag(nick, tag) : `имя#${tag}`}`;
+  };
+  nickInput?.addEventListener('input', paintTag);
+  for (const button of book.querySelectorAll<HTMLButtonElement>('[data-emblem]')) {
+    button.onclick = () => {
+      const picked = button.dataset.emblem || '';
+      if (!isEmblem(picked)) return;
+      emblem = picked;
+      for (const other of book.querySelectorAll<HTMLButtonElement>('[data-emblem]')) other.classList.toggle('on', other === button);
+    };
+  }
+  book.querySelector<HTMLButtonElement>('#rating-save')!.onclick = () => {
+    const nick = cleanNick(nickInput?.value || '');
+    if (!nickOk(nick)) {
+      flash('Имени нужно от 3 до 16 знаков');
+      return;
+    }
+    const previous = readStoredProfile();
+    const profile: LocalProfile = { nick, tag: previous?.tag || '1000', emblem };
+    void net.signIn().then(async () => {
+      profile.tag = previous?.tag || tagFromUid(net.uid);
+      const saved = await publishProfile(profile);
+      writeStoredProfile(saved.profile);
+      showRatingBook(profileHtml(saved.profile, saved.soon ? SOON : ''), bindProfile);
+      if (!saved.soon) flash(`Имя ${displayTag(saved.profile.nick, saved.profile.tag)}`);
+    }).catch(() => {
+      writeStoredProfile(profile);
+      showRatingBook(profileHtml(profile, SOON), bindProfile);
+    });
+  };
+  book.querySelector<HTMLButtonElement>('#rating-board')!.onclick = () => void openBoard();
+  book.querySelector<HTMLButtonElement>('#rating-close')!.onclick = () => {
+    book.hidden = true;
+  };
+}
+
+async function openBoard() {
+  await net.signIn().catch(() => {});
+  const loaded = net.uid ? await loadBoard(net.uid) : { rows: [], me: null, place: '—', soon: true };
+  const history = net.uid && !loaded.soon ? await loadHistory(net.uid) : [];
+  const soon = loaded.soon ? SOON : '';
+  showRatingBook(boardHtml(loaded.rows, loaded.me, loaded.place, soon).replace(
+    '<div data-testid="board-list">',
+    `<h3>Последние партии</h3><div data-testid="rating-history">${historyHtml(history)}</div><div data-testid="board-list">`,
+  ), (book) => {
+    book.querySelector<HTMLButtonElement>('#board-back')!.onclick = () => void openRating();
+    book.querySelector<HTMLButtonElement>('#rating-close')!.onclick = () => {
+      book.hidden = true;
+    };
+  });
+}
+
+function openStats() {
+  const book = document.querySelector<HTMLElement>('#stats-book');
+  if (!book) return;
+  book.hidden = false;
+  book.innerHTML = statsHtml(meta);
+  book.querySelector<HTMLButtonElement>('#stats-close')!.onclick = () => {
+    book.hidden = true;
+  };
+}
+
+function collectPulse(): ObservePulse {
+  const player = state.players[localPlayer];
+  const pop = state.people.filter((person) => person.playerId === localPlayer && person.hp > 0).length;
+  const troops = state.soldiers.filter((soldier) => soldier.playerId === localPlayer && soldier.hp > 0);
+  for (const soldier of troops) {
+    if (seenSoldiers.has(soldier.id)) continue;
+    seenSoldiers.add(soldier.id);
+    meta = noteUnit(meta, soldier.weapon);
+  }
+  let hadWall = false;
+  for (const building of state.buildings) {
+    if (building.playerId !== localPlayer || (building.type !== 'wall' && building.type !== 'gate')) continue;
+    const prev = seenWalls.get(building.id);
+    if (building.hp > 0) hadWall = true;
+    if (prev !== undefined && prev > 0 && building.hp <= 0) wallBrokenMatch = true;
+    seenWalls.set(building.id, building.hp);
+  }
+  let engineerKeep = false;
+  for (const building of state.buildings) {
+    if (building.type !== 'keep') continue;
+    const prev = seenKeeps.get(building.id);
+    const fell = Boolean(prev && prev.owner !== localPlayer && prev.hp > 0 && building.hp <= 0);
+    const taken = Boolean(prev && prev.owner !== localPlayer && building.playerId === localPlayer);
+    if ((fell || taken) && troops.some((soldier) => soldier.weapon === 'engineer' && Math.hypot(soldier.x - building.x, soldier.y - building.y) <= 8)) {
+      engineerKeep = true;
+    }
+    seenKeeps.set(building.id, { hp: building.hp, owner: building.playerId });
+  }
+  const raidIds = new Set(state.mobs.filter((mob) => mob.raid && mob.hp > 0).map((mob) => mob.id));
+  let raidDown = 0;
+  for (const id of seenRaids) if (!raidIds.has(id)) raidDown += 1;
+  seenRaids = raidIds;
+  const partyHere = Boolean(state.road?.party);
+  const partyJoined = partyWasHere && !partyHere && lastPop >= 0 && pop > lastPop;
+  partyWasHere = partyHere;
+  lastPop = pop;
+  let roads = 0;
+  const roadMap = state.roads;
+  if (roadMap) for (let i = 0; i < roadMap.length; i++) if (roadMap[i]) roads += 1;
+  const progress = loadProgress();
+  const cleared = Object.values(progress.stars).filter((stars) => stars > 0).length;
+  return {
+    gold: player?.gold ?? 0,
+    pop,
+    happy: (player?.popularity ?? 0) > 0,
+    wood: player?.stocks.wood ?? 0,
+    beer: player?.stocks.beer ?? 0,
+    bread: player?.stocks.bread ?? 0,
+    apples: player?.stocks.apples ?? 0,
+    market: state.buildings.some((building) => building.playerId === localPlayer && building.type === 'market' && building.complete && building.hp > 0),
+    soldiers: troops.length,
+    cavalry: troops.some((soldier) => soldier.weapon === 'light' || soldier.weapon === 'heavy' || soldier.weapon === 'horsebow'),
+    siege: troops.some((soldier) => soldier.weapon === 'ram' || soldier.weapon === 'catapult' || soldier.weapon === 'siegetower'),
+    spear: troops.some((soldier) => soldier.weapon === 'spear'),
+    razed: player?.stats?.razed ?? 0,
+    roads,
+    season: state.season,
+    hunger: Boolean(player?.hunger),
+    storm: state.weather === 'storm',
+    fair: Boolean(state.road?.fair && state.road.fair.playerId === localPlayer),
+    outcome: state.outcome,
+    hadWall,
+    wallBroken: wallBrokenMatch,
+    engineerKeep,
+    raidDown,
+    partyJoined,
+    net: netMode,
+    speed: uiSettings.speed,
+    cruel: state.players.some((other) => other.id !== localPlayer && other.difficulty === 'cruel'),
+    campaignFirst: (progress.stars.korm ?? 0) > 0,
+    campaignAll: cleared >= SCENARIOS.length,
+  };
+}
+
+function watchMeta(now: number) {
+  if (!playing) {
+    lastMetaNow = now;
+    return;
+  }
+  if (lastMetaNow) pendingPlayMs += Math.min(500, Math.max(0, now - lastMetaNow));
+  lastMetaNow = now;
+  if (now < metaAt) return;
+  metaAt = now + 400;
+  meta = addPlayMs(meta, pendingPlayMs);
+  pendingPlayMs = 0;
+  const result = observe(meta, collectPulse());
+  meta = result.meta;
+  persistMeta(meta);
+  for (const item of result.fresh) showUnlock(item.title);
 }
 
 function cargoColor(res: string): string {
@@ -2297,6 +2924,11 @@ function livingSelection() {
 
 function placeArmy() {
   if (!playing || armyEl.hidden) return;
+  if (phoneLandscape()) {
+    armyEl.style.top = '';
+    measureLandTrays();
+    return;
+  }
   if (compactLayout()) {
     armyEl.style.top = '';
     return;
@@ -2310,7 +2942,18 @@ function placeArmy() {
 
 function syncArmy() {
   armyEl.hidden = !playing || state.outcome !== 'playing';
-  armyBox.textContent = compactLayout() ? 'Войска' : 'Выделить войска';
+  armyBox.textContent = phoneLandscape() ? (boxMode ? 'Обводка' : 'Обвести') : compactLayout() ? 'Войска' : 'Выделить войска';
+  const holdBtn = document.querySelector<HTMLButtonElement>('#army-hold');
+  const homeBtn = document.querySelector<HTMLButtonElement>('#army-home');
+  if (phoneLandscape()) {
+    if (holdBtn) holdBtn.textContent = 'Стоять';
+    if (homeBtn) homeBtn.textContent = 'Отступить';
+    armyAttack.textContent = 'Атака';
+  } else {
+    if (holdBtn) holdBtn.textContent = 'Стоять';
+    if (homeBtn) homeBtn.textContent = 'Назад домой';
+    armyAttack.textContent = 'Атаковать область';
+  }
   livingSelection();
   const list = state.soldiers.filter((s) => selectedSoldiers.has(s.id));
   armyBody.hidden = list.length === 0;
@@ -2382,7 +3025,7 @@ function issueArmy(
 
 function ownSoldierAt(x: number, y: number) {
   let best: (typeof state.soldiers)[number] | null = null;
-  let bestD = 0.75;
+  let bestD = phoneLandscape() ? 1.15 : 0.75;
   for (const soldier of state.soldiers) {
     if (soldier.hp <= 0 || soldier.playerId !== localPlayer) continue;
     const d = Math.hypot(soldier.x - x, soldier.y - y);
@@ -2395,7 +3038,7 @@ function ownSoldierAt(x: number, y: number) {
 }
 
 function hostileAt(x: number, y: number, tileX: number, tileY: number) {
-  let bestD = 0.75;
+  let bestD = phoneLandscape() ? 1.15 : 0.75;
   let soldierHit: (typeof state.soldiers)[number] | null = null;
   for (const soldier of state.soldiers) {
     if (soldier.hp <= 0 || soldier.playerId === localPlayer) continue;
@@ -2408,7 +3051,7 @@ function hostileAt(x: number, y: number, tileX: number, tileY: number) {
   }
   if (soldierHit) return { target: 'soldier' as const, targetId: soldierHit.id, x: soldierHit.x, y: soldierHit.y };
   let mobHit: (typeof state.mobs)[number] | null = null;
-  bestD = 0.75;
+  bestD = phoneLandscape() ? 1.15 : 0.75;
   for (const mob of state.mobs) {
     if (!mob.alive || mob.kind === 'deer') continue;
     const d = Math.hypot(mob.x - x, mob.y - y);
@@ -2470,8 +3113,18 @@ function onMapClick(screenX: number, screenY: number, shift: boolean, touch: boo
   const { w, h } = viewSize();
   const world = screenToWorld(camera, w, h, screenX, screenY);
   const tile = screenToTile(camera, w, h, screenX, screenY);
-  if (placing) {
+  if (placing || roadMode) {
+    if (phoneLandscape()) {
+      hover = tile;
+      return;
+    }
     pick(screenX, screenY);
+    return;
+  }
+  const caravanHit = (state.road?.caravans ?? []).find((item) => item.alive && Math.hypot(item.x - world.x, item.y - world.y) < 1.8);
+  if (caravanHit && !shift) {
+    openCaravanId = caravanHit.id;
+    syncRoadHud();
     return;
   }
   if (attackArmed && selectedSoldiers.size) {
@@ -2605,7 +3258,11 @@ function frame(now: number) {
       done(sample);
     }
   }
-  if (toastUntil && now > toastUntil) toast.hidden = true;
+  if (toastUntil && now > toastUntil) {
+    toast.hidden = true;
+    toast.classList.remove('toast-achieve');
+  }
+  watchMeta(now);
 
   const pan = 520 / camera.zoom;
   if (playing && uiSettings.edgeScroll && lastMouse.mouse && pointers.size === 0) {
@@ -2658,6 +3315,7 @@ function frame(now: number) {
     markers.length = 0;
     markers.push(...liveMarkers);
   }
+  if (baked.climate !== climateStamp(state)) baked = bakeTerrain(state);
   renderWorld(ctx, state, camera, w, h, dpr, baked, ghost(), selectedId, now, selectedPersonId, {
     selected: selectedSoldiers,
     box:
@@ -2821,6 +3479,134 @@ function stageBatchScene(kind: string) {
   camera.zoom = kind === 'hud' ? 1.05 : ZOOM_MAX;
   clampView();
   silenceScene();
+}
+
+function stageRoad(kind: string) {
+  const keep = playerKeep(state, localPlayer);
+  if (!keep || !state.match) return;
+  silenceScene();
+  state.mobs = state.mobs.filter((mob) => !mob.raid);
+  dressTown(keep.x, keep.y);
+  state.match = { ...state.match, events: 'normal' };
+  const road = emptyRoad(state.players.length);
+  state.road = road;
+  const far = state.tick + 100000;
+  if (kind === 'event-raid') {
+    for (let i = 0; i < 3; i++) {
+      const mob = createMob(state, 'bandit', keep.x + 7 + i * 0.7, state.roadY + 1);
+      mob.raid = 1;
+      mob.respawn = 0;
+      mob.destX = keep.x + 2;
+      mob.destY = keep.y + 2;
+    }
+    road.notes = [{ id: 1, text: 'С опушки вышли разбойники', x: keep.x + 8, y: state.roadY, until: far }];
+    openCaravanId = null;
+    lookAtPoint(keep.x + 8, state.roadY + 0.4);
+  } else if (kind === 'event-fair') {
+    const market = createBuilding(state, localPlayer, 'market', keep.x + 4, keep.y + 3, true);
+    road.fair = { playerId: localPlayer, x: market.x + 1, y: market.y + 1, until: far };
+    road.notes = [{ id: 1, text: 'Ярмарка: настроение, золото и редкий товар', x: market.x + 1, y: market.y + 1, until: far }];
+    openCaravanId = null;
+    lookAtPoint(market.x + 1, market.y + 1);
+  } else {
+    const caravan = {
+      id: state.nextId++,
+      fromId: localPlayer,
+      toId: state.players.find((player) => player.id !== localPlayer)?.id ?? localPlayer,
+      x: keep.x + 5,
+      y: state.roadY + 0.15,
+      toX: keep.x + 36,
+      hp: 40,
+      gold: 36,
+      wood: 10,
+      apples: 8,
+      iron: 1,
+      weapons: 1,
+      alive: true,
+    };
+    road.caravans.push(caravan);
+    road.notes = [{ id: 1, text: 'По тракту идёт купеческий караван', x: caravan.x, y: caravan.y, until: far }];
+    openCaravanId = kind === 'event-note' ? null : caravan.id;
+    lookAtPoint(caravan.x - 1.6, caravan.y);
+  }
+  camera.zoom = kind === 'event-caravan' || kind === 'event-raid' ? 1.7 : 0.95;
+  clampView();
+  silenceScene();
+  syncRoadHud();
+}
+
+function stageSeason(kind: string) {
+  const keep = playerKeep(state, localPlayer);
+  if (!keep || !state.match) return;
+  silenceScene();
+  state.mobs = [];
+  dressTown(keep.x, keep.y);
+  state.match = { ...state.match, seasons: 'normal' };
+  const band = kind === 'season-autumn' ? 12 : kind === 'season-winter' ? 18 : kind === 'season-summer' ? 6 : 0;
+  const want =
+    kind === 'season-rain' ? 'rain' : kind === 'season-winter' ? 'snow' : kind === 'season-spring' ? 'clear' : 'clear';
+  let chosen = band;
+  let found = false;
+  for (let cycle = 0; cycle < 8 && !found; cycle++) {
+    for (let stepMin = 0; stepMin < 6; stepMin++) {
+      const minute = band + stepMin + cycle * 24;
+      state.tick = minute * TICKS_PER_GAME_MINUTE + 30;
+      syncClimate(state);
+      const mild = want === 'clear' && (state.weather === 'clear' || state.weather === 'heat');
+      if (state.weather === want || mild) {
+        chosen = minute;
+        found = true;
+        break;
+      }
+    }
+  }
+  state.tick = chosen * TICKS_PER_GAME_MINUTE + 30;
+  syncClimate(state);
+  selectedId = null;
+  panel.hidden = true;
+  panelSig = '';
+  cancelBuild();
+  selectedSoldiers.clear();
+  attackArmed = false;
+  lookAtPoint(keep.x + 1.5, keep.y + 1);
+  camera.zoom = 0.95;
+  clampView();
+  silenceScene();
+  state.tick = chosen * TICKS_PER_GAME_MINUTE + 30;
+  syncClimate(state);
+  syncHud();
+}
+
+function stageLandScene(kind: string) {
+  const keep = playerKeep(state, localPlayer);
+  if (!keep) return;
+  silenceScene();
+  state.mobs = [];
+  dressTown(keep.x, keep.y);
+  selectedId = null;
+  panel.hidden = true;
+  panelSig = '';
+  cancelBuild();
+  selectedSoldiers.clear();
+  attackArmed = false;
+  if (kind === 'land-ghost') {
+    placing = 'granary';
+    aimPlacement('granary');
+    worldCanvas.classList.add('placing');
+    syncPlaceChrome();
+  }
+  if (kind === 'land-army') {
+    for (let i = 0; i < 3; i++) {
+      const soldier = createSoldier(state, localPlayer, keep.x + 2.4 + i * 0.7, keep.y + 2.2, 'club');
+      soldier.order = 'hold';
+    }
+  }
+  lookAtPoint(keep.x + 1.5, keep.y + 1);
+  camera.zoom = 0.85;
+  clampView();
+  silenceScene();
+  syncArmy();
+  measureLandTrays();
 }
 
 function stageCraftScene(kind: string) {
@@ -3097,6 +3883,24 @@ function expose() {
         stageCraftScene(kind);
         return;
       }
+      if (kind === 'land' || kind === 'land-ghost' || kind === 'land-army') {
+        stageLandScene(kind);
+        return;
+      }
+      if (
+        kind === 'season-spring' ||
+        kind === 'season-summer' ||
+        kind === 'season-autumn' ||
+        kind === 'season-winter' ||
+        kind === 'season-rain'
+      ) {
+        stageSeason(kind);
+        return;
+      }
+      if (kind === 'event-caravan' || kind === 'event-raid' || kind === 'event-fair' || kind === 'event-note') {
+        stageRoad(kind);
+        return;
+      }
       const keep = playerKeep(state, localPlayer);
       if (!keep) return;
       state.buildings = state.buildings.filter((building) => building.id === keep.id);
@@ -3331,6 +4135,8 @@ function expose() {
     snapshot() {
       return {
         tick: state.tick,
+        season: state.season,
+        weather: state.weather,
         idle: idleCount(state, localPlayer),
         used: usedCount(state, localPlayer),
         cap: housingCap(state, localPlayer),
@@ -3441,6 +4247,116 @@ function expose() {
       clearTerrainChunks();
       baked = bakeTerrain(state);
     },
+    openAchievements() {
+      openAchievements();
+    },
+    openStats() {
+      openStats();
+    },
+    previewMeta() {
+      meta = {
+        ...loadMeta(),
+        games: 12,
+        wins: 5,
+        playMs: 95 * 60000,
+        units: { spear: 18, bow: 4 },
+        trades: 4,
+        best: { gold: 640, pop: 36, wood: 80, beer: 6, bread: 12, soldiers: 8, razed: 1, roads: 14, apples: 20 },
+        unlocked: { 'gold-400': 1, 'spear-1': 1, 'trade-1': 1 },
+      };
+      persistMeta(meta);
+      title.hidden = false;
+      openAchievements();
+    },
+    previewStats() {
+      const book = document.querySelector<HTMLElement>('#achieve-book');
+      if (book) book.hidden = true;
+      title.hidden = false;
+      openStats();
+    },
+    previewUnlock() {
+      const book = document.querySelector<HTMLElement>('#stats-book');
+      const achieve = document.querySelector<HTMLElement>('#achieve-book');
+      if (book) book.hidden = true;
+      if (achieve) achieve.hidden = true;
+      title.hidden = false;
+      showUnlock('Собрать 1000 золота');
+    },
+    previewProfile() {
+      title.hidden = false;
+      const profile: LocalProfile = { nick: 'Хозяин', tag: '2048', emblem: 'eagle' };
+      writeStoredProfile(profile);
+      showRatingBook(profileHtml(profile, ''), bindProfile);
+    },
+    previewBoard() {
+      title.hidden = false;
+      const rows: BoardEntry[] = [
+        { uid: 'a', nick: 'Ольха', tag: '1101', emblem: 'oak', rating: 1240, place: 1, self: false },
+        { uid: 'b', nick: 'Ковыль', tag: '1102', emblem: 'wolf', rating: 1188, place: 2, self: false },
+        { uid: 'me', nick: 'Хозяин', tag: '2048', emblem: 'eagle', rating: 1116, place: 3, self: true },
+        { uid: 'c', nick: 'Суходол', tag: '1104', emblem: 'keep', rating: 1044, place: 4, self: false },
+        { uid: 'd', nick: 'Путник', tag: '1105', emblem: 'road', rating: 980, place: 5, self: false },
+      ];
+      const me = { nick: 'Хозяин', tag: '2048', emblem: 'eagle' as const, rating: 1116, games: 4, wins: 3, last: '' };
+      const history = historyHtml([
+        { opp: 'Ковыль#1102', delta: 16, rating: 1116, winner: 'me', at: 2 },
+        { opp: 'Суходол#1104', delta: -12, rating: 1100, winner: 'c', at: 1 },
+      ]);
+      showRatingBook(boardHtml(rows, me, '3', '').replace(
+        '<div data-testid="board-list">',
+        `<h3>Последние партии</h3><div data-testid="rating-history">${history}</div><div data-testid="board-list">`,
+      ), (book) => {
+        book.querySelector<HTMLButtonElement>('#board-back')!.onclick = () => {};
+        book.querySelector<HTMLButtonElement>('#rating-close')!.onclick = () => {
+          book.hidden = true;
+        };
+      });
+    },
+    previewRanked() {
+      title.hidden = true;
+      netView.showList({ ranked: true, name: 'Рейтинговый тракт', map: 'normal' });
+    },
+    previewRatingChange() {
+      title.hidden = true;
+      endScreen.hidden = false;
+      endScreen.innerHTML = `<div class="card results-card">
+        <h1 data-testid="results-title">Победа</h1>
+        <p data-testid="results-detail">Условие «Завоевание» выполнено.</p>
+        <p id="rating-line" data-testid="rating-line">Рейтинг 1000 → 1016 (+16)</p>
+      </div>`;
+    },
+    previewEditor() {
+      openEditor();
+    },
+    previewEditorError() {
+      const bad = blankMap();
+      bad.starts[1] = { x: bad.starts[0].x + 2, y: bad.starts[0].y, team: 1 };
+      openEditor(bad);
+    },
+    previewEditorList() {
+      const north = blankMap();
+      north.name = 'Северный тракт';
+      const bend = blankMap('normal', 'bend');
+      bend.name = 'Изгиб у реки';
+      saveMap(north);
+      saveMap(bend);
+      openEditor();
+      editorShowList();
+    },
+    previewCustomPlay() {
+      const map = blankMap('small', 'cross');
+      map.name = 'Перекрёсток';
+      map.seasonStart = 'off';
+      const w = map.paint.length / 80;
+      for (let y = 2; y < 20; y++) {
+        for (let x = 52; x < 108; x++) map.paint[y * w + x] = Terrain.Water;
+      }
+      startGame(map);
+      lookAtTile(state.mapW / 2, state.mapH / 2);
+      camera.zoom = 0.05;
+      clampView();
+      setSpeed(0);
+    },
     stageRoad() {
       const keep = playerKeep(state, localPlayer);
       if (!keep) return;
@@ -3515,20 +4431,26 @@ worldCanvas.addEventListener('pointerdown', (event) => {
   const downTile = screenToTile(camera, viewSize().w, viewSize().h, event.clientX - downRect.left, event.clientY - downRect.top);
   const lineDrag = playing && !!placing && isLineBuilding(placing) && (event.button === 0 || touch);
   const roadDrag = playing && roadMode && (event.button === 0 || touch);
+  const ghostDrag = phoneLandscape() && playing && !!placing && !isLineBuilding(placing) && (event.button === 0 || touch);
   const selectDrag = playing && (event.button === 0 || touch) && (!touch || boxMode);
   if (lineDrag) {
     pointerMode = 'wall';
     wallAnchor = { x: downTile.x, y: downTile.y };
+    pendingLine = null;
   } else if (roadDrag) {
     pointerMode = 'road';
     wallAnchor = { x: downTile.x, y: downTile.y };
+    pendingLine = null;
+  } else if (ghostDrag) {
+    pointerMode = 'ghost';
+    hover = downTile;
   } else if (selectDrag) {
     pointerMode = 'box';
     boxAdditive = event.shiftKey;
     boxBase = boxAdditive ? [...selectedSoldiers] : [];
   } else {
     pointerMode = 'pan';
-    if (touch && playing && !boxMode) {
+    if (touch && playing && !boxMode && !phoneLandscape()) {
       window.clearTimeout(longTimer);
       longTimer = window.setTimeout(() => {
         if (dragDist >= 14 || pointers.size !== 1) return;
@@ -3593,6 +4515,8 @@ worldCanvas.addEventListener('pointermove', (event) => {
   boxNow = { x: localX, y: localY };
   if (pointerMode === 'box') {
     if (dragDist >= 8) paintBox();
+  } else if (pointerMode === 'ghost') {
+    hover = screenToTile(camera, w, h, localX, localY);
   } else if (pointerMode !== 'wall' && pointerMode !== 'road') {
     camera.x -= dx / camera.zoom;
     camera.y -= dy / camera.zoom;
@@ -3611,9 +4535,16 @@ worldCanvas.addEventListener('pointerup', (event) => {
   if (pointers.size === 0) {
     if (pointerMode === 'road' && wallAnchor && roadMode) {
       const end = hover ?? wallAnchor;
-      for (const cell of wallLine(wallAnchor.x, wallAnchor.y, end.x, end.y)) {
-        pushCmd({ kind: 'road', playerId: localPlayer, x: cell.x, y: cell.y });
+      const cells = wallLine(wallAnchor.x, wallAnchor.y, end.x, end.y);
+      if (phoneLandscape()) {
+        pendingLine = cells;
+        hover = end;
+        pointerMode = 'none';
+        dragging = false;
+        syncPlaceChrome();
+        return;
       }
+      for (const cell of cells) pushCmd({ kind: 'road', playerId: localPlayer, x: cell.x, y: cell.y });
       roadMode = false;
       wallAnchor = null;
       pointerMode = 'none';
@@ -3623,15 +4554,27 @@ worldCanvas.addEventListener('pointerup', (event) => {
     }
     if (pointerMode === 'wall' && wallAnchor && placing && isLineBuilding(placing)) {
       const end = hover ?? wallAnchor;
-      const type = placing;
-      for (const cell of wallLine(wallAnchor.x, wallAnchor.y, end.x, end.y)) {
-        pushCmd({ kind: 'place', playerId: localPlayer, building: type, x: cell.x, y: cell.y });
+      const cells = wallLine(wallAnchor.x, wallAnchor.y, end.x, end.y);
+      if (phoneLandscape()) {
+        pendingLine = cells;
+        hover = end;
+        pointerMode = 'none';
+        dragging = false;
+        syncPlaceChrome();
+        return;
       }
+      const type = placing;
+      for (const cell of cells) pushCmd({ kind: 'place', playerId: localPlayer, building: type, x: cell.x, y: cell.y });
       placing = null;
       wallAnchor = null;
       pointerMode = 'none';
       dragging = false;
       worldCanvas.classList.remove('placing');
+      return;
+    }
+    if (pointerMode === 'ghost') {
+      pointerMode = 'none';
+      dragging = false;
       return;
     }
     lastGesture = dragDist;
@@ -3665,6 +4608,7 @@ worldCanvas.addEventListener(
 );
 worldCanvas.addEventListener('contextmenu', (event) => {
   event.preventDefault();
+  if (phoneLandscape() && (placing != null || roadMode)) return;
   const wasPlacing = placing != null || roadMode;
   placing = null;
   roadMode = false;
@@ -3779,6 +4723,14 @@ window.addEventListener(
   { passive: false },
 );
 window.addEventListener('resize', resize);
+window.matchMedia(PHONE_LAND_QUERY).addEventListener('change', syncLandMode);
+window.matchMedia('(orientation: portrait)').addEventListener('change', syncLandMode);
+window.addEventListener('orientationchange', syncLandMode);
+syncLandMode();
+if (window.matchMedia('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone) {
+  const orientation = screen.orientation as ScreenOrientation & { lock?: (orientation: string) => Promise<void> };
+  void orientation.lock?.('landscape').catch(() => undefined);
+}
 document.addEventListener('pointerover', (event) => {
   if (event.target instanceof HTMLButtonElement) audio.play('ui-hover');
 });
@@ -3823,6 +4775,19 @@ declare global {
       focusTerrain: (kind: string, zoom?: number) => void;
       offerInstall: () => void;
       setGfxMode: (mode: 'high' | 'simple') => void;
+      openAchievements: () => void;
+      openStats: () => void;
+      previewMeta: () => void;
+      previewStats: () => void;
+      previewUnlock: () => void;
+      previewProfile: () => void;
+      previewBoard: () => void;
+      previewRanked: () => void;
+      previewRatingChange: () => void;
+      previewEditor: () => void;
+      previewEditorError: () => void;
+      previewEditorList: () => void;
+      previewCustomPlay: () => void;
       stageRoad: () => void;
     };
   }
@@ -3832,6 +4797,58 @@ armyBox.onclick = () => {
   boxMode = !boxMode;
   syncArmy();
 };
+document.querySelector<HTMLButtonElement>('#place-ok')!.onclick = () => confirmBuild();
+document.querySelector<HTMLButtonElement>('#place-cancel')!.onclick = () => cancelBuild();
+document.querySelector<HTMLButtonElement>('#land-full')!.onclick = () => void enterLandScreen();
+document.querySelector<HTMLButtonElement>('#turn-full')!.onclick = () => void enterLandScreen();
+document.querySelector<HTMLButtonElement>('#turn-dismiss')!.onclick = () => {
+  sessionStorage.setItem(TURN_HINT_KEY, '1');
+  const hint = document.querySelector<HTMLElement>('#turn-hint');
+  if (hint) hint.hidden = true;
+};
+document.addEventListener('click', (event) => {
+  const label = (event.target as HTMLElement).closest?.('[data-resgroup]');
+  if (!label || !phoneLandscape()) return;
+  const name = label.getAttribute('data-resgroup');
+  if (!name) return;
+  if (landGroupsOpen.has(name)) landGroupsOpen.delete(name);
+  else landGroupsOpen.add(name);
+  resourceSig = '';
+});
+for (const button of document.querySelectorAll<HTMLButtonElement>('.army-group')) {
+  const index = Number(button.dataset.group);
+  let timer = 0;
+  let held = false;
+  button.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    held = false;
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => {
+      held = true;
+      controlGroups[index] = [...selectedSoldiers];
+      flash(selectedSoldiers.size ? `Отряд ${index} назначен` : `Отряд ${index} снят`);
+    }, 480);
+  });
+  button.addEventListener('pointerup', () => {
+    window.clearTimeout(timer);
+    if (held) {
+      held = false;
+      return;
+    }
+    const living = controlGroups[index].filter((id) => state.soldiers.some((s) => s.id === id && s.hp > 0 && s.playerId === localPlayer));
+    if (!living.length) {
+      flash(`Отряд ${index} пуст`);
+      return;
+    }
+    selectedSoldiers.clear();
+    for (const id of living) selectedSoldiers.add(id);
+    centreSquad(living);
+    noteFirstSelection();
+    syncArmy();
+  });
+  button.addEventListener('pointercancel', () => window.clearTimeout(timer));
+  button.addEventListener('contextmenu', (event) => event.preventDefault());
+}
 document.querySelector<HTMLButtonElement>('#army-hold')!.onclick = () => issueArmy('hold', 0, 0);
 document.querySelector<HTMLButtonElement>('#army-home')!.onclick = () => {
   const keep = playerKeep(state, localPlayer);
@@ -3887,6 +4904,7 @@ function beginNet(next: GameState, playerId: number) {
   queue = [];
   acc = 0;
   resetArmy();
+  resetMetaWatch(true, true);
   title.hidden = true;
   endScreen.hidden = true;
   menu.hidden = true;
@@ -3937,35 +4955,79 @@ function netMessage(err: unknown, fallback: string) {
 }
 
 function lobbyPack(draft: LobbyDraft, worldSeed: number) {
-  const profiles = defaultProfiles().map((profile) => ({ ...profile, difficulty: draft.difficulty }));
-  const setup = normalizeSetup({
-    victory: draft.victory,
-    timeLimit: draft.timeLimit,
-    map: draft.map,
-    start: draft.start,
-    ai: draft.ai,
-    goldTarget: draft.goldTarget,
-    popTarget: draft.popTarget,
-    surviveMinutes: draft.surviveMinutes,
-    teams: draft.teams,
-    profiles,
-  });
-  return {
+  const profiles = defaultProfiles().map((profile) => ({ ...profile, difficulty: draft.ranked ? 'normal' : draft.difficulty }));
+  const setup = draft.ranked
+    ? rankedSetup(draft.map)
+    : normalizeSetup({
+        victory: draft.victory,
+        timeLimit: draft.timeLimit,
+        map: draft.map,
+        start: draft.start,
+        ai: draft.ai,
+        goldTarget: draft.goldTarget,
+        popTarget: draft.popTarget,
+        surviveMinutes: draft.surviveMinutes,
+        teams: draft.teams,
+        seasons: draft.seasons,
+        events: draft.events,
+        profiles,
+      });
+  const packed = {
     name: draft.name,
-    maxPlayers: draft.maxPlayers,
-    seed: packSeed(worldSeed, setup),
+    maxPlayers: draft.ranked ? 2 : draft.maxPlayers,
+    seed: packSeed(worldSeed, { ...setup, profiles }),
     profiles,
-    speed: draft.speed,
-    teams: draft.teams,
-    password: draft.password,
+    speed: draft.ranked ? 1 : draft.speed,
+    teams: draft.ranked ? 'ffa' : draft.teams,
+    seasons: draft.ranked ? 'off' : draft.seasons,
+    events: draft.ranked ? 'off' : draft.events,
+    password: draft.ranked ? '' : draft.password,
+    ranked: draft.ranked,
+    mapCode: '',
   };
+  if (!draft.ranked && draft.mapId) {
+    const loaded = loadMap(draft.mapId);
+    if (!loaded) {
+      flash('Карта не читается');
+      return null;
+    }
+    const errors = validateMap(loaded);
+    if (errors.length) {
+      flash(errors[0]);
+      return null;
+    }
+    const code = encodeShare(loaded);
+    if (code.length > MAP_SHARE_LIMIT || !/^[A-Za-z0-9_-]+$/.test(code)) {
+      flash('Карта слишком велика для сетевой комнаты');
+      return null;
+    }
+    packed.mapCode = code;
+  }
+  return packed;
+}
+
+function paintRatingLine(text: string) {
+  const line = document.querySelector<HTMLElement>('#rating-line');
+  if (line) line.textContent = text;
+}
+
+async function reportRanked(forfeit: boolean) {
+  const packet = net.resultPacket(forfeit);
+  if (!packet) return;
+  const result = await settleRanked(packet);
+  paintRatingLine(result.text);
 }
 
 const netView = new NetView(document.querySelector<HTMLElement>('#net')!, document.querySelector<HTMLElement>('#syncbox')!, {
   create: (draft) => {
+    if (draft.ranked && !readStoredProfile()) {
+      flash('Для рейтинговой партии нужно имя в «Рейтинг»');
+      return;
+    }
     rememberName();
     const world = Number(document.querySelector<HTMLInputElement>('#seed')?.value ?? '1') >>> 0;
     const packed = lobbyPack(draft, world);
+    if (!packed) return;
     void net.create(packed).catch((err) => netMessage(err, 'Не удалось создать лобби'));
   },
   join: (id, password) => {
@@ -4004,7 +5066,12 @@ net.hooks = {
     if (!playing) openNet();
   },
   onError: (message) => netView.error(message),
-  onEnded: () => {},
+  onEnded: () => {
+    void reportRanked(false);
+  },
+  onForfeit: () => {
+    void reportRanked(true);
+  },
 };
 
 function showInstallOffer() {

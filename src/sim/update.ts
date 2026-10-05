@@ -46,6 +46,7 @@ import { cruelMinute, planOneAi, reactionTicks } from './ai';
 import { consumeFood } from './economy';
 import { createMob, createOx, createPerson, createSoldier } from './entities';
 import { bloomKeepLevel, emptyStats, hostile, normalizeSetup, scoreOf, teamOf } from './match';
+import { climateMinute, farmWorkRate, isFarm, nextSeason, seasonName, seasonPace, stormMiss, syncClimate, weatherName } from './seasons';
 import { rngNext } from './rng';
 import type {
   Building,
@@ -79,6 +80,7 @@ import {
   trainSites,
   updateSiege,
 } from './siege';
+import { eventPace, moveRoad, raidStrike, roadMinute, sackCaravan, tradeCaravan } from './events';
 import { terrainAt } from './world';
 
 export function buildingCenter(building: Building): { x: number; y: number } {
@@ -442,6 +444,14 @@ export function applyCommand(state: GameState, command: Command): boolean {
     keep.buildProgress = 0;
     state.message = 'Улучшаем главное здание';
     return true;
+  }
+
+  if (command.kind === 'trade') {
+    return tradeCaravan(state, command.playerId, command.caravanId, command.resource, command.mode, command.qty);
+  }
+
+  if (command.kind === 'sack') {
+    return sackCaravan(state, command.playerId, command.caravanId);
   }
 
   if (command.kind === 'market') {
@@ -1015,8 +1025,11 @@ export function laborSpot(state: GameState, building: Building): { x: number; y:
     return porch;
   }
   if (building.type === 'quarry' || building.type === 'mine' || building.type === 'pitch') {
-    const terrain = building.type === 'quarry' ? Terrain.Limestone : building.type === 'mine' ? Terrain.Iron : Terrain.Swamp;
-    const node = nearestTerrainTile(state, porch.x, porch.y, terrain, 2.8);
+    const node =
+      building.type === 'quarry'
+        ? nearestTerrainTile(state, porch.x, porch.y, Terrain.Limestone, 2.8) ??
+          nearestTerrainTile(state, porch.x, porch.y, Terrain.Clay, 2.8)
+        : nearestTerrainTile(state, porch.x, porch.y, building.type === 'mine' ? Terrain.Iron : Terrain.Swamp, 2.8);
     if (node) return { x: node.x + 0.5, y: node.y + 0.5 };
     return porch;
   }
@@ -1030,7 +1043,13 @@ export function stallReason(state: GameState, building: Building): string | null
     return 'ждёт: нет леса рядом';
   }
   if (building.type === 'hunter' && !nearestDeer(state, porch.x, porch.y, 12)) return 'ждёт: нет оленей рядом';
-  if (building.type === 'quarry' && !nearestTerrainTile(state, porch.x, porch.y, Terrain.Limestone, 2.8)) return 'ждёт: нет камня рядом';
+  if (
+    building.type === 'quarry' &&
+    !nearestTerrainTile(state, porch.x, porch.y, Terrain.Limestone, 2.8) &&
+    !nearestTerrainTile(state, porch.x, porch.y, Terrain.Clay, 2.8)
+  ) {
+    return 'ждёт: нет камня рядом';
+  }
   if (building.type === 'mine' && !nearestTerrainTile(state, porch.x, porch.y, Terrain.Iron, 2.8)) return 'ждёт: нет железа рядом';
   if (building.type === 'pitch' && !nearestTerrainTile(state, porch.x, porch.y, Terrain.Swamp, 2.8)) return 'ждёт: нет болота рядом';
   if (def.output && (def.hauler === 'person' || def.hauler === 'ox')) {
@@ -1250,7 +1269,11 @@ function updateWorker(state: GameState, person: Person) {
   const cap = def.hauler === 'ox' ? OX_BUFFER_CAP : BUFFER_CAP;
   if (def.output && building.buffer >= cap) return;
 
-  building.work += 1;
+  if (isFarm(building.type)) {
+    const rate = farmWorkRate(state);
+    if (rate <= 0) return;
+    building.work += rate;
+  } else building.work += 1;
   if (building.work < def.cycle) return;
   building.work = 0;
   if (building.type === 'stable') {
@@ -1447,6 +1470,12 @@ function updateCombat(state: GameState) {
         mob.y = mob.homeY;
         mob.respawn = 0;
       }
+      continue;
+    }
+    if (mob.raid) {
+      const dist = Math.hypot(mob.destX - mob.x, mob.destY - mob.y);
+      if (dist >= 0.75) moveToward(mob, mob.destX, mob.destY, MOB_SPEED.bandit);
+      raidStrike(state, mob);
       continue;
     }
     if (mob.kind === 'deer') {
@@ -1853,7 +1882,16 @@ function strikeMob(state: GameState, soldier: Soldier, mob: Mob) {
   mob.hp -= soldier.dmg;
   if (mob.hp <= 0) {
     mob.alive = false;
-    mob.respawn = state.tick + 800;
+    if (mob.raid) {
+      mob.respawn = 0;
+      const owner = state.players[soldier.playerId];
+      if (owner) {
+        owner.gold += 8;
+        owner.stocks.wood = (owner.stocks.wood ?? 0) + 4;
+        if (owner.stats) owner.stats.goldEarned += 8;
+      }
+      note(state, 'Разбойники бросили добычу');
+    } else mob.respawn = state.tick + 800;
     if (mob.kind !== 'deer') noteKill(state, soldier.playerId);
   }
 }
@@ -1905,6 +1943,7 @@ function shieldAuraFactor(state: GameState, defender: Soldier): number {
 }
 
 function landBlow(state: GameState, soldier: Soldier, other: Soldier, kiting: boolean, gap = 0) {
+  if (isArrow(soldier.weapon) && stormMiss(state, soldier.id)) return;
   const mail = state.players[other.playerId]?.mail === 1;
   const aura = isArrow(soldier.weapon) ? shieldAuraFactor(state, other) : 1;
   let dealt = dealtToSoldier(soldier, other, mail, aura);
@@ -2209,6 +2248,7 @@ function recordSamples(state: GameState) {
 
 export function step(state: GameState, commands: Command[] = [], opts?: { shelter?: boolean }): void {
   if (state.outcome !== 'playing') return;
+  if (!state.season || !state.weather) syncClimate(state);
   if (!state.match) state.match = normalizeSetup(null, state.players.filter((player) => player.isAi).length);
   if (state.winnerId == null) state.winnerId = -1;
   for (const command of commands) applyCommand(state, command);
@@ -2223,10 +2263,18 @@ export function step(state: GameState, commands: Command[] = [], opts?: { shelte
   state.soldiers = state.soldiers.filter((s) => s.hp > 0);
   state.mobs = state.mobs.filter((m) => m.alive || m.respawn > 0);
   // Single-player onboarding only. Multiplayer never sets this, so every client still shares one economy.
-  if (!opts?.shelter) updateEconomy(state);
+    if (!opts?.shelter) updateEconomy(state);
+  climateMinute(state);
+  roadMinute(state);
+  moveRoad(state);
   finishOutcome(state);
   recordSamples(state);
+  const shown = state.season;
   state.tick += 1;
+  syncClimate(state);
+  if (shown && shown !== 'off' && state.season !== shown && state.season !== 'off') {
+    note(state, `${seasonName(state.season)}: ${weatherName(state.weather)}. Дальше — ${seasonName(nextSeason(state.season))}.`);
+  }
 }
 
 export function serialize(state: GameState): string {
@@ -2254,12 +2302,25 @@ export function serialize(state: GameState): string {
     outcome: state.outcome,
     message: state.message,
     log: state.log,
+    season: state.season ?? 'off',
+    weather: state.weather ?? 'clear',
+    road: state.road,
+    ...(state.mapHash ? { mapHash: state.mapHash } : {}),
   });
 }
 
 export function deserialize(raw: string): GameState {
   const data = JSON.parse(raw) as GameState & { terrain: number[]; roads?: number[] };
-  if (data.saveVersion !== 1 && data.saveVersion !== 2 && data.saveVersion !== 3 && data.saveVersion !== 4) throw new Error('Неизвестная версия сохранения');
+  if (
+    data.saveVersion !== 1 &&
+    data.saveVersion !== 2 &&
+    data.saveVersion !== 3 &&
+    data.saveVersion !== 4 &&
+    data.saveVersion !== 5 &&
+    data.saveVersion !== 6
+  ) {
+    throw new Error('Неизвестная версия сохранения');
+  }
   const terrain = Uint8Array.from(data.terrain);
   const roads =
     data.roads && data.roads.length === data.mapW * data.mapH
@@ -2278,6 +2339,9 @@ export function deserialize(raw: string): GameState {
     if (soldier.merc == null) soldier.merc = 0;
   }
   const ai = data.players.filter((player) => player.isAi).length;
+  const match = data.match ?? normalizeSetup(null, ai);
+  match.seasons = data.saveVersion < 5 && data.match?.seasons == null ? 'off' : seasonPace(match.seasons);
+  match.events = data.saveVersion < 6 && data.match?.events == null ? 'off' : eventPace(match.events);
   for (const player of data.players) {
     const stocks = emptyStocks();
     player.stocks = { ...stocks, ...player.stocks };
@@ -2287,14 +2351,19 @@ export function deserialize(raw: string): GameState {
     if (!player.personality) player.personality = 'strategist';
     if (player.mail == null) player.mail = 0;
   }
-  return {
+  const loaded: GameState = {
     ...data,
-    saveVersion: 4,
+    saveVersion: 6,
     terrain,
     roads,
     clouds,
-    match: data.match ?? normalizeSetup(null, ai),
+    match,
     samples: data.samples ?? [],
     winnerId: data.winnerId ?? (data.outcome === 'playing' ? -1 : 0),
+    season: data.season ?? 'off',
+    weather: data.weather ?? 'clear',
+    mapHash: typeof (data as { mapHash?: unknown }).mapHash === 'string' ? (data as { mapHash: string }).mapHash : undefined,
   };
+  syncClimate(loaded);
+  return loaded;
 }

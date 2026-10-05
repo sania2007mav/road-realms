@@ -1,11 +1,13 @@
 import { BUILDINGS } from './balance';
-import type { GameState } from './types';
+import { Terrain, type GameState } from './types';
 
 /** Open yards. Houses, the keep, and other roofed buildings block a soldier's steps. */
 const OPEN = new Set(['wheat', 'hop', 'orchard', 'quarry', 'stockpile', 'pitch']);
 
 export function tileBlocked(state: GameState, x: number, y: number): boolean {
   if (x < 0 || y < 0 || x >= state.mapW || y >= state.mapH) return true;
+  const ground = state.terrain[y * state.mapW + x];
+  if (ground === Terrain.Water || ground === Terrain.Rock) return true;
   for (const building of state.buildings) {
     if (building.hp <= 0 || OPEN.has(building.type)) continue;
     const def = BUILDINGS[building.type];
