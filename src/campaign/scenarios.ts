@@ -210,7 +210,7 @@ export const SCENARIOS: Scenario[] = [
     id: 'osada',
     title: 'Чужой посад',
     intro:
-      'За частоколом сидит чужой посад. Ворота закрыты, на башне лучник. Таран и люди с дубинами берут то, чего не берёт голая стена. Снесите их главное здание.',
+      'За частоколом сидит чужой посад. Ворота закрыты, на башне лучник. Таран бьёт в створки, лестницы и осадная башня переводят людей через частокол. Снесите их главное здание.',
     objective: 'Разрушьте главное здание соседа',
     bonus: 'Своё главное здание сохранило хотя бы половину прочности',
     goal: { kind: 'conquest' },
@@ -234,11 +234,14 @@ export const SCENARIOS: Scenario[] = [
         { type: 'orchard', max: 1 },
         { type: 'woodcutter', max: 1 },
         { type: 'guild', max: 1 },
+        { type: 'workshop', max: 1 },
         { type: 'barracks', max: 1 },
       ],
       train: [
         { weapon: 'ram', count: 1, keepPeople: 1 },
         { weapon: 'club', count: 4, keepPeople: 2 },
+        { weapon: 'ladder', count: 2, keepPeople: 1 },
+        { weapon: 'siegetower', count: 1, keepPeople: 1 },
       ],
       attack: 'raid',
       attackSoldiers: 2,

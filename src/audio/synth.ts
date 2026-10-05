@@ -216,9 +216,50 @@ export function speak(ctx: SynthContext, dest: AudioNode, id: SoundId, when: num
       burst(ctx, dest, noise, when, 0.08, 0.07 * v, 1800, 2);
       tone(ctx, dest, when, 210, 0.09, 'triangle', 0.05 * v, 0.5);
       break;
+    case 'spear':
+      burst(ctx, dest, noise, when, 0.05, 0.06 * v, 2400, 3);
+      tone(ctx, dest, when, 180, 0.07, 'triangle', 0.04 * v, 0.4);
+      break;
+    case 'hoof':
+      burst(ctx, dest, noise, when, 0.06, 0.05 * v, 220, 1);
+      burst(ctx, dest, noise, when + 0.08, 0.05, 0.04 * v, 180, 1);
+      break;
+    case 'charge':
+      tone(ctx, dest, when, 140, 0.16, 'sawtooth', 0.05 * v, 1.4);
+      burst(ctx, dest, noise, when, 0.1, 0.06 * v, 200, 1);
+      burst(ctx, dest, noise, when + 0.09, 0.08, 0.05 * v, 160, 1);
+      break;
     case 'bow':
       tone(ctx, dest, when, 620, 0.1, 'triangle', 0.05 * v, 0.35);
       burst(ctx, dest, noise, when, 0.05, 0.04 * v, 2400, 4);
+      break;
+    case 'crossbow':
+      burst(ctx, dest, noise, when, 0.04, 0.08 * v, 2800, 5);
+      tone(ctx, dest, when, 180, 0.06, 'square', 0.04 * v, 0.3);
+      tone(ctx, dest, when + 0.03, 90, 0.08, 'sine', 0.05 * v, 0.4);
+      break;
+    case 'shield':
+      burst(ctx, dest, noise, when, 0.09, 0.08 * v, 180, 0.7);
+      tone(ctx, dest, when, 95, 0.1, 'sine', 0.05 * v, 0.5);
+      break;
+    case 'volley':
+      tone(ctx, dest, when, 740, 0.06, 'triangle', 0.04 * v, 0.4);
+      tone(ctx, dest, when + 0.07, 680, 0.06, 'triangle', 0.035 * v, 0.4);
+      burst(ctx, dest, noise, when, 0.05, 0.04 * v, 200, 1);
+      burst(ctx, dest, noise, when + 0.08, 0.05, 0.035 * v, 160, 1);
+      break;
+    case 'ladder':
+      burst(ctx, dest, noise, when, 0.05, 0.06 * v, 900, 2);
+      burst(ctx, dest, noise, when + 0.06, 0.04, 0.05 * v, 700, 2);
+      tone(ctx, dest, when, 220, 0.07, 'square', 0.03 * v, 0.2);
+      break;
+    case 'tower':
+      tone(ctx, dest, when, 70, 0.22, 'sawtooth', 0.03 * v, 1.6);
+      tone(ctx, dest, when + 0.08, 54, 0.18, 'sine', 0.04 * v, 0.6);
+      break;
+    case 'heal':
+      tone(ctx, dest, when, 880, 0.12, 'sine', 0.04 * v, 0.3);
+      tone(ctx, dest, when + 0.08, 1174, 0.14, 'sine', 0.035 * v, 0.35);
       break;
     case 'arrow':
       burst(ctx, dest, noise, when, 0.04, 0.06 * v, 3200, 6);

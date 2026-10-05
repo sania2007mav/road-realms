@@ -1015,6 +1015,116 @@ test('настройки лобби видны до старта', async ({ page
   }
 });
 
+test('копейщики, конюшня и матрица контрударов', async ({ page }) => {
+  test.setTimeout(120_000);
+  mkdirSync(shots, { recursive: true });
+  await page.addInitScript(() => {
+    localStorage.setItem('dorozhnye-kraya-tutorial', '1');
+  });
+  const overlaps = (a: { x: number; y: number; r: number; b: number } | null, b: { x: number; y: number; r: number; b: number } | null) =>
+    !!a && !!b && a.x < b.r && a.r > b.x && a.y < b.b && a.b > b.y;
+  const hudBoxes = () =>
+    page.evaluate(() => {
+      const rect = (sel: string) => {
+        const el = document.querySelector(sel) as HTMLElement | null;
+        if (!el || el.hidden) return null;
+        const style = getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') return null;
+        const box = el.getBoundingClientRect();
+        if (box.width < 2 || box.height < 2) return null;
+        return { x: box.left, y: box.top, r: box.right, b: box.bottom };
+      };
+      return {
+        resources: rect('#resources'),
+        army: rect('#army-box'),
+        topbar: rect('#topbar'),
+        goals: rect('#goals'),
+      };
+    });
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/road-realms/');
+  await page.getByTestId('new-game').click();
+  for (const size of [
+    { width: 1280, height: 800 },
+    { width: 830, height: 755 },
+  ]) {
+    await page.setViewportSize(size);
+    await page.evaluate(() => window.__game!.debugScene('hud'));
+    await page.waitForTimeout(250);
+    const boxes = await hudBoxes();
+    expect(boxes.resources, `${size.width} resources`).not.toBeNull();
+    expect(boxes.army, `${size.width} army`).not.toBeNull();
+    expect(overlaps(boxes.resources, boxes.army), `${size.width} resources/army ${JSON.stringify(boxes)}`).toBe(false);
+    expect(overlaps(boxes.topbar, boxes.army), `${size.width} topbar/army`).toBe(false);
+    expect(overlaps(boxes.goals, boxes.army), `${size.width} goals/army`).toBe(false);
+  }
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.evaluate(() => window.__game!.debugScene('hud'));
+  await page.waitForTimeout(250);
+  await expect(page.getByText('Поставьте амбар')).toBeHidden();
+  await expect(page.locator('.log-line')).toHaveCount(0);
+  await page.screenshot({ path: `${shots}/hud_desktop.png` });
+  await page.evaluate(() => window.__game!.debugScene('cavalry-fight'));
+  await page.waitForTimeout(250);
+  await expect(page.getByText('Поставьте амбар')).toBeHidden();
+  await page.screenshot({ path: `${shots}/spear_cavalry.png` });
+  await page.evaluate(() => window.__game!.debugScene('supply'));
+  await page.waitForTimeout(250);
+  await expect(page.locator('#tutorial')).toBeHidden();
+  await page.screenshot({ path: `${shots}/stable_smith.png` });
+  await page.evaluate(() => window.__game!.debugScene('battle'));
+  await page.waitForTimeout(250);
+  await expect(page.locator('.log-line')).toHaveCount(0);
+  await page.screenshot({ path: `${shots}/battle_units.png` });
+  await page.evaluate(() => window.__game!.debugScene('ladders'));
+  await page.waitForTimeout(250);
+  await expect(page.getByText('Поставьте амбар')).toBeHidden();
+  await page.screenshot({ path: `${shots}/siege_ladders.png` });
+  await page.evaluate(() => window.__game!.debugScene('siege-tower'));
+  await page.waitForTimeout(250);
+  await page.screenshot({ path: `${shots}/siege_tower.png` });
+  await page.evaluate(() => window.__game!.debugScene('healer'));
+  await page.waitForTimeout(250);
+  await page.screenshot({ path: `${shots}/healer.png` });
+  await page.evaluate(() => window.__game!.debugScene('mercs'));
+  await page.waitForTimeout(250);
+  await expect(page.getByTestId('merc-panel')).toBeVisible();
+  await page.screenshot({ path: `${shots}/mercenary_panel.png` });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/road-realms/');
+  await page.getByTestId('help-open').click();
+  await expect(page.getByTestId('help-close')).toBeVisible();
+  await expect(page.getByTestId('help-units')).toBeVisible();
+  const phoneBg = await page.locator('#help-book').evaluate((el) => getComputedStyle(el).backgroundColor);
+  expect(phoneBg).toBe('rgb(28, 22, 18)');
+  await page.locator('#help-units').evaluate((el) => el.scrollIntoView({ block: 'start' }));
+  await page.locator('#help-book').screenshot({ path: `${shots}/encyclopedia_phone.png` });
+  await page.locator('#help-matrix').evaluate((el) => el.scrollIntoView({ block: 'start' }));
+  await page.locator('.matrix-scroll').evaluate((el) => {
+    el.scrollLeft = 140;
+  });
+  const stuck = await page.evaluate(() => {
+    const cell = document.querySelector('.counter-matrix tbody th');
+    const wrap = document.querySelector('.matrix-scroll');
+    if (!cell || !wrap) return null;
+    return { cell: cell.getBoundingClientRect().left, wrap: wrap.getBoundingClientRect().left };
+  });
+  expect(stuck).not.toBeNull();
+  expect(Math.abs((stuck?.cell ?? 0) - (stuck?.wrap ?? 0))).toBeLessThan(3);
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/road-realms/');
+  await page.getByTestId('help-open').click();
+  const deskBg = await page.locator('#help-book').evaluate((el) => getComputedStyle(el).backgroundColor);
+  expect(deskBg).toBe('rgb(28, 22, 18)');
+  await expect(page.getByTestId('help-close')).toBeVisible();
+  await page.getByTestId('help-units').screenshot({ path: `${shots}/encyclopedia_units.png` });
+  await page.getByTestId('help-matrix').screenshot({ path: `${shots}/counter_matrix.png` });
+});
+
 function letterboxPhone(raw: string, out: string): string {
   return `
 from PIL import Image, ImageDraw, ImageFont

@@ -1,15 +1,18 @@
 import {
+  AXE_GOLD,
   BUILDINGS,
   KEEP_UPGRADE_COST,
   PRICES,
+  RAIDER_GOLD,
   TICKS_PER_GAME_MINUTE,
   TRAIN_COST,
+  TRAIN_GOLD,
   foodTypesIn,
 } from './balance';
 import { totalFood } from './economy';
 import { bloomKeepLevel, hostile, personalityName, scoreOf } from './match';
 import { nextAiSiege } from './siege';
-import type { Building, BuildingType, Command, DifficultyId, GameState, Player, TaxId, Weapon } from './types';
+import type { Building, BuildingType, Command, DifficultyId, GameState, Player, Soldier, TaxId, Weapon } from './types';
 import { canPlace, housingCap, idleCount, playerKeep, suggestedTile } from './update';
 
 /**
@@ -298,6 +301,18 @@ function economyCommand(state: GameState, player: Player): Command | null {
     const walls = wallCommand(state, player);
     if (walls) return walls;
   }
+  return supplyCommand(state, player);
+}
+
+function supplyCommand(state: GameState, player: Player): Command | null {
+  if (player.personality !== 'warlord' && player.personality !== 'strategist') return null;
+  if (soldiersOf(state, player.id).length < 3) return null;
+  if ((playerKeep(state, player.id)?.level ?? 1) < 2) return null;
+  if (countOf(state, player.id, 'armoury') === 0) return place(state, player.id, 'armoury');
+  const ironReady = (player.stocks.iron ?? 0) > 0 || countOf(state, player.id, 'mine') > 0;
+  if (ironReady && countOf(state, player.id, 'smith') === 0) return place(state, player.id, 'smith');
+  const fodder = (player.stocks.apples ?? 0) > 8 || (player.stocks.wheat ?? 0) > 0;
+  if (fodder && countOf(state, player.id, 'stable') === 0) return place(state, player.id, 'stable');
   return null;
 }
 
@@ -365,6 +380,7 @@ function repairWall(state: GameState, player: Player): boolean {
 }
 
 function groupSize(player: Player): number {
+  if (player.personality === 'merchant') return 2;
   if (player.personality === 'warlord') {
     if (player.difficulty === 'hard' || player.difficulty === 'cruel') return 4;
     return 3;
@@ -383,24 +399,71 @@ function enemyWeapons(state: GameState, victim: number) {
   let infantry = 0;
   let archers = 0;
   let walls = 0;
+  let cavalry = 0;
+  let spears = 0;
+  let swords = 0;
+  let heavies = 0;
+  let crossbows = 0;
   for (const soldier of state.soldiers) {
     if (soldier.playerId !== victim || soldier.hp <= 0) continue;
     if (soldier.weapon === 'bow') archers += 1;
-    else if (soldier.weapon !== 'ram' && soldier.weapon !== 'catapult') infantry += 1;
+    else if (soldier.weapon === 'horsebow') {
+      archers += 1;
+      cavalry += 1;
+    } else if (soldier.weapon === 'crossbow') crossbows += 1;
+    else if (soldier.weapon === 'spear') spears += 1;
+    else if (soldier.weapon === 'light') cavalry += 1;
+    else if (soldier.weapon === 'heavy') {
+      cavalry += 1;
+      heavies += 1;
+    } else if (soldier.weapon === 'sword') {
+      swords += 1;
+      infantry += 1;
+    } else if (soldier.weapon !== 'ram' && soldier.weapon !== 'catapult') infantry += 1;
   }
   for (const building of state.buildings) {
     if (building.playerId !== victim || building.hp <= 0) continue;
     if (building.type === 'palisade' || building.type === 'wall' || building.type === 'gate' || building.type === 'stonetower') walls += 1;
   }
-  return { infantry, archers, walls };
+  return { infantry, archers, walls, cavalry, spears, swords, heavies, crossbows };
+}
+
+function canTrain(player: Player, weapon: Weapon): boolean {
+  return afford(player.stocks, TRAIN_COST[weapon]) && player.gold >= (TRAIN_GOLD[weapon] ?? 0);
+}
+
+/** What this personality would train against the army it can see. */
+export function pickWeapon(state: GameState, player: Player, victim: number): Weapon {
+  return desiredWeapon(state, player, victim);
 }
 
 function desiredWeapon(state: GameState, player: Player, victim: number): Weapon {
   const seen = enemyWeapons(state, victim);
+  if (player.personality === 'merchant') {
+    if (seen.cavalry >= 2 && canTrain(player, 'spear')) return 'spear';
+    return 'club';
+  }
+  if (player.personality === 'warlord' && (player.stocks.horses ?? 0) >= 1 && soldiersOf(state, player.id).length >= 2) {
+    if (seen.spears >= 2 && canTrain(player, 'bow')) return 'bow';
+    if (seen.crossbows >= 2 && canTrain(player, 'spear')) return 'spear';
+    if (seen.spears < 2 && (seen.swords >= 2 || seen.archers >= 2) && canTrain(player, 'horsebow')) return 'horsebow';
+    if (seen.spears < 2 && canTrain(player, 'heavy')) return 'heavy';
+    if (canTrain(player, 'light')) return 'light';
+  }
+  if (seen.cavalry >= 2 && seen.spears < seen.cavalry && canTrain(player, 'spear')) return 'spear';
+  if (player.personality === 'strategist') {
+    if (seen.swords + seen.heavies >= 2 && canTrain(player, 'crossbow')) return 'crossbow';
+    if ((seen.archers >= 2 || seen.crossbows >= 2) && canTrain(player, 'shield')) return 'shield';
+    if (seen.spears > seen.archers && seen.spears > 0 && canTrain(player, 'bow')) return 'bow';
+    if (seen.archers > seen.infantry && seen.archers > 0 && canTrain(player, 'sword')) return 'sword';
+  }
   const have = (weapon: Weapon) => soldiersOf(state, player.id).some((soldier) => soldier.weapon === weapon);
   if (seen.walls >= 6) {
+    if ((player.personality === 'builder' || player.personality === 'strategist') && !have('engineer') && canTrain(player, 'engineer')) return 'engineer';
     if (!have('ram')) return 'ram';
     if (!have('catapult')) return 'catapult';
+    if ((player.personality === 'builder' || player.personality === 'strategist') && !have('ladder') && canTrain(player, 'ladder')) return 'ladder';
+    if ((player.personality === 'builder' || player.personality === 'strategist') && !have('siegetower') && canTrain(player, 'siegetower')) return 'siegetower';
   }
   if (seen.archers > seen.infantry && seen.archers > 0) return 'sword';
   if (seen.infantry > seen.archers) return 'bow';
@@ -433,9 +496,10 @@ function trainCommand(state: GameState, player: Player, victim: number): Command
     return place(state, player.id, 'barracks');
   }
   if (idleCount(state, player.id) < 1) return freeHand(state, player);
-  if (soldiersOf(state, player.id).length >= trainCap(player)) return null;
+  const cap = player.personality === 'merchant' ? Math.min(2, trainCap(player)) : trainCap(player);
+  if (soldiersOf(state, player.id).length >= cap) return null;
   const weapon = desiredWeapon(state, player, victim);
-  if (!afford(player.stocks, TRAIN_COST[weapon])) {
+  if (!canTrain(player, weapon)) {
     if (weapon !== 'club' && afford(player.stocks, TRAIN_COST.club)) {
       return { kind: 'train', playerId: player.id, weapon: 'club' };
     }
@@ -486,6 +550,13 @@ function army(playerId: number, ids: number[], mode: 'move' | 'home' | 'attack',
   };
 }
 
+function readyHealer(state: GameState, player: Player, mine: Soldier[]): boolean {
+  if (player.personality !== 'warlord' || state.tick < 2400 || mine.length < 4) return false;
+  const chapel = state.buildings.find((building) => building.playerId === player.id && building.type === 'chapel' && building.hp > 0);
+  const healers = mine.filter((soldier) => soldier.weapon === 'healer').length;
+  return Boolean(chapel?.complete && healers < 1 && idleCount(state, player.id) >= 1 && canTrain(player, 'healer'));
+}
+
 function militaryCommand(state: GameState, player: Player): Command | null {
   const id = player.id;
   if (state.match?.victory === 'bloom' && player.personality !== 'warlord') {
@@ -516,6 +587,8 @@ function militaryCommand(state: GameState, player: Player): Command | null {
     return nextAiSiege(state, player, canPlace, afford, idleCount(state, id));
   }
 
+  if (readyHealer(state, player, mine)) return { kind: 'train', playerId: id, weapon: 'healer' };
+
   if (state.tick < attackTick(player)) {
     return trainCommand(state, player, victim) ?? wallCommand(state, player);
   }
@@ -545,15 +618,36 @@ function militaryCommand(state: GameState, player: Player): Command | null {
 
   const target = weakBuilding(state, victim);
   if (!target) return trainCommand(state, player, victim);
-  if (mine.every((soldier) => soldier.order === 'attack' && soldier.targetId === target.id)) return null;
+  if (mine.every((soldier) => soldier.order === 'attack' && soldier.targetId === target.id)) {
+    if (player.personality === 'warlord' && state.tick >= 2400 && mine.length >= 4) {
+      const chapel = state.buildings.find((building) => building.playerId === id && building.type === 'chapel' && building.hp > 0);
+      if (!chapel) return place(state, id, 'chapel');
+    }
+    return null;
+  }
   const spot = centerOf(target);
   threaten(state, player, victim);
   return army(id, mine.map((soldier) => soldier.id), 'attack', spot.x, spot.y, target.id);
 }
 
+function mercHire(state: GameState, player: Player): Command | null {
+  const camp = state.buildings.find((building) => building.playerId === player.id && building.type === 'merccamp' && building.complete && building.hp > 0);
+  if (!camp) {
+    if (state.tick >= 2400) return place(state, player.id, 'merccamp');
+    return null;
+  }
+  if (camp.buffer > 0 && player.gold >= RAIDER_GOLD) return { kind: 'hire', playerId: player.id, weapon: 'raider' };
+  if (camp.input > 0 && player.gold >= AXE_GOLD) return { kind: 'hire', playerId: player.id, weapon: 'axe' };
+  return null;
+}
+
 function emergency(state: GameState, player: Player): Command | null | 'spent' {
   const mine = soldiersOf(state, player.id);
   if (threatened(state, player)) {
+    if (player.personality === 'merchant') {
+      const hired = mercHire(state, player);
+      if (hired) return hired;
+    }
     if (repairWall(state, player)) return 'spent';
     if (mine.some((soldier) => soldier.order !== 'defend')) return { kind: 'order', playerId: player.id, order: 'defend' };
     return 'spent';

@@ -52,6 +52,10 @@ const CARGO: Partial<Record<Resource, string>> = {
   flour: '#f4efe2',
   hops: '#6a8f3a',
   beer: '#e0a11b',
+  horses: '#8a5a32',
+  weapons: '#c5ccd2',
+  armor: '#7d8ea3',
+  crossbows: '#6e5134',
 };
 
 type Pt = { x: number; y: number };
@@ -843,7 +847,22 @@ export function renderWorld(
         if (picked) drawFeetRing(ctx, soldier.x, soldier.y);
         if (soldier.weapon === 'ram') drawRam(ctx, soldier.x, soldier.y, color);
         else if (soldier.weapon === 'catapult') drawCatapult(ctx, soldier.x, soldier.y, color, time);
-        else {
+        else if (soldier.weapon === 'light' || soldier.weapon === 'heavy' || soldier.weapon === 'horsebow' || soldier.weapon === 'raider') {
+          const kind = soldier.weapon === 'heavy' ? 'heavy' : soldier.weapon === 'horsebow' || soldier.weapon === 'raider' ? (soldier.weapon === 'raider' ? 'raider' : 'steppe') : 'light';
+          drawCavalry(ctx, soldier.x, soldier.y, color, moving(soldier), time, kind);
+        } else if (soldier.weapon === 'siegetower') drawSiegeTower(ctx, soldier.x, soldier.y, color, moving(soldier), time);
+        else if (soldier.weapon === 'ladder' && (soldier.dock ?? 0) === 1) drawPlantedLadder(ctx, soldier.x, soldier.y, color);
+        else if (soldier.weapon === 'spear' || soldier.weapon === 'shield' || soldier.weapon === 'crossbow' || soldier.weapon === 'axe') {
+          const lift = standLift(state, soldier.x, soldier.y);
+          const tool = soldier.weapon === 'crossbow' ? 'club' : 'spear';
+          drawScaled(ctx, soldier.x, soldier.y, lift, soldier.weapon === 'spear' ? 1.38 : 1.28, () => {
+            drawFigure(ctx, soldier.x, soldier.y, color, moving(soldier), time, tool, null, false, lift);
+            if (soldier.weapon === 'spear') drawSpearHead(ctx, soldier.x, soldier.y, lift, time, moving(soldier));
+            if (soldier.weapon === 'shield') drawKiteShield(ctx, soldier.x, soldier.y, lift, color);
+            if (soldier.weapon === 'crossbow') drawCrossbow(ctx, soldier.x, soldier.y, lift, time);
+            if (soldier.weapon === 'axe') drawAxe(ctx, soldier.x, soldier.y, lift);
+          });
+        } else {
           const tool =
             soldier.weapon === 'sword'
               ? 'sword'
@@ -853,8 +872,12 @@ export function renderWorld(
                   ? 'pick'
                   : 'club';
           const lift = standLift(state, soldier.x, soldier.y);
-          drawFigure(ctx, soldier.x, soldier.y, color, moving(soldier), time, tool, null, false, lift);
+          const robe = soldier.weapon === 'healer';
+          drawFigure(ctx, soldier.x, soldier.y, robe ? '#f4efe4' : color, moving(soldier), time, tool, null, false, lift);
           if (soldier.weapon === 'bow') drawBow(ctx, soldier.x, soldier.y, lift);
+          if (soldier.weapon === 'ladder') drawCarriedLadder(ctx, soldier.x, soldier.y, lift);
+          if (soldier.weapon === 'engineer') drawRolledLadder(ctx, soldier.x, soldier.y, lift);
+          if (soldier.weapon === 'healer') drawHealStaff(ctx, soldier.x, soldier.y, lift, time);
         }
         if (picked) drawHpBar(ctx, soldier.x, soldier.y, soldier.maxHp > 0 ? soldier.hp / soldier.maxHp : 0);
       },
@@ -1179,7 +1202,12 @@ function wallHeight(building: Building): number {
     case 'oil':
       return 16;
     case 'guild':
-      return 24;
+    case 'workshop':
+      return 26;
+    case 'chapel':
+      return 36;
+    case 'merccamp':
+      return 18;
     default:
       return 18;
   }
@@ -1201,7 +1229,8 @@ function buildingBounds(type: BuildingType, w: number, h: number, wall: number, 
     minY = Math.min(minY, p.y);
     maxY = Math.max(maxY, p.y);
   }
-  const extra = type === 'keep' ? 52 + level * 6 : type === 'highrise' ? 40 : type === 'shack' ? 24 : 26;
+  const extra =
+    type === 'keep' ? 52 + level * 6 : type === 'highrise' ? 40 : type === 'smith' ? 48 : type === 'stable' ? 36 : type === 'shack' ? 24 : 26;
   return { minX: minX - 22, minY: minY - wall - extra, maxX: maxX + 28, maxY: maxY + 20 };
 }
 
@@ -1243,6 +1272,520 @@ function drawRuin(ctx: CanvasRenderingContext2D, building: Building) {
   ctx.fillRect(right.x - 6, right.y - 7, 14, 6);
   ctx.fillStyle = '#8a7b6a';
   ctx.fillRect(right.x + 4, right.y - 18, 4, 12);
+}
+
+function drawScaled(ctx: CanvasRenderingContext2D, tx: number, ty: number, lift: number, scale: number, draw: () => void) {
+  const p = tileToIso(tx, ty);
+  ctx.save();
+  ctx.translate(p.x, p.y - lift);
+  ctx.scale(scale, scale);
+  ctx.translate(-p.x, -(p.y - lift));
+  draw();
+  ctx.restore();
+}
+
+function drawSpearHead(ctx: CanvasRenderingContext2D, tx: number, ty: number, lift: number, time: number, walk: boolean) {
+  const base = tileToIso(tx, ty);
+  const swing = walk ? Math.sin(time / 90 + tx * 3) : 0;
+  const x = base.x + 16;
+  const y = base.y - 34 + swing * 4 - lift;
+  ctx.fillStyle = '#eef2f4';
+  ctx.beginPath();
+  ctx.moveTo(x, y - 12);
+  ctx.lineTo(x + 4.4, y);
+  ctx.lineTo(x - 4.4, y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#6b4a2c';
+  ctx.fillRect(x - 1.5, y, 3, 20);
+}
+
+function drawKiteShield(ctx: CanvasRenderingContext2D, tx: number, ty: number, lift: number, color: string) {
+  const p = tileToIso(tx, ty);
+  const x = p.x - 12;
+  const y = p.y - 22 - lift;
+  ctx.fillStyle = '#d7c4a2';
+  ctx.beginPath();
+  ctx.moveTo(x, y - 10);
+  ctx.lineTo(x + 11, y - 6);
+  ctx.lineTo(x + 9, y + 8);
+  ctx.lineTo(x, y + 16);
+  ctx.lineTo(x - 9, y + 8);
+  ctx.lineTo(x - 11, y - 6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#6e5134';
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x, y + 1, 3.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.lineWidth = 1;
+}
+
+function drawCrossbow(ctx: CanvasRenderingContext2D, tx: number, ty: number, lift: number, time: number) {
+  const p = tileToIso(tx, ty);
+  const kick = Math.sin(time / 220) * 1.2;
+  const x = p.x + 8;
+  const y = p.y - 16 - lift + kick;
+  ctx.strokeStyle = '#4a3424';
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.moveTo(x - 2, y);
+  ctx.lineTo(x + 14, y - 4);
+  ctx.stroke();
+  ctx.strokeStyle = '#c4a574';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x + 10, y - 10);
+  ctx.quadraticCurveTo(x + 16, y - 4, x + 10, y + 2);
+  ctx.stroke();
+  ctx.strokeStyle = '#efe6d4';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x + 10, y - 9);
+  ctx.lineTo(x + 10, y + 1);
+  ctx.stroke();
+}
+
+function drawCavalry(
+  ctx: CanvasRenderingContext2D,
+  tx: number,
+  ty: number,
+  color: string,
+  walk: boolean,
+  time: number,
+  kind: 'light' | 'heavy' | 'steppe' | 'raider',
+) {
+  const base = tileToIso(tx, ty);
+  const swing = walk ? Math.sin(time / 80 + tx * 2) : 0;
+  const y = base.y + (walk ? Math.sin(time / 80 + ty) * 1.4 : 0);
+  const x = base.x;
+  const heavy = kind === 'heavy';
+  const steppe = kind === 'steppe' || kind === 'raider';
+  const raider = kind === 'raider';
+  const body = heavy ? 16 : 14;
+  ctx.fillStyle = 'rgba(20,14,10,0.32)';
+  ctx.beginPath();
+  ctx.ellipse(x, base.y + 4, body + 2, 4.2, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#2a2018';
+  ctx.lineWidth = 2.6;
+  ctx.beginPath();
+  ctx.moveTo(x - body * 0.55, y - 4);
+  ctx.lineTo(x - body * 0.72, y + 8 + swing * 2);
+  ctx.moveTo(x - 3, y - 3);
+  ctx.lineTo(x - 5, y + 8 - swing * 2);
+  ctx.moveTo(x + 5, y - 3);
+  ctx.lineTo(x + 4, y + 8 + swing * 2);
+  ctx.moveTo(x + body * 0.42, y - 4);
+  ctx.lineTo(x + body * 0.55, y + 8 - swing * 2);
+  ctx.stroke();
+  ctx.fillStyle = heavy ? '#4a3828' : raider ? '#8a5a32' : steppe ? '#e2c48a' : '#c49a62';
+  ctx.beginPath();
+  ctx.ellipse(x, y - 8, body, heavy ? 7.4 : 6.4, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = heavy ? '#2e261f' : steppe ? '#f4e2bc' : '#f0e2c4';
+  ctx.beginPath();
+  ctx.ellipse(x + body * 0.78, y - 14, 4.6, 3.2, 0.35, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = steppe ? '#1c1612' : '#2a2018';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(x + body * 0.95, y - 16);
+  ctx.lineTo(x + body, y - 21);
+  ctx.moveTo(x - body * 0.85, y - 10);
+  ctx.quadraticCurveTo(x - body - 4, y - 16, x - body * 0.4, y - 8);
+  ctx.stroke();
+  if (heavy) {
+    ctx.strokeStyle = '#c5ccd2';
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.arc(x, y - 8, 9, Math.PI * 0.1, Math.PI * 0.9);
+    ctx.stroke();
+  }
+  if (steppe) {
+    ctx.strokeStyle = '#8a3a2a';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x - 6, y - 6);
+    ctx.lineTo(x + 8, y - 9);
+    ctx.stroke();
+  }
+  ctx.fillStyle = steppe ? '#8a3a2a' : color;
+  ctx.fillRect(x - 5, y - 28, 10, 14);
+  ctx.fillStyle = color;
+  ctx.fillRect(x - 5, y - 22, 10, 3);
+  ctx.fillStyle = '#f0c7a0';
+  ctx.beginPath();
+  ctx.arc(x, y - 32, 4.2, 0, Math.PI * 2);
+  ctx.fill();
+  if (steppe) {
+    ctx.fillStyle = '#c45a32';
+    ctx.beginPath();
+    ctx.moveTo(x - 4, y - 34);
+    ctx.lineTo(x, y - 42);
+    ctx.lineTo(x + 4, y - 34);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#3a2414';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    if (raider) {
+      ctx.moveTo(x + 6, y - 18);
+      ctx.lineTo(x + 16, y - 34);
+      ctx.stroke();
+      ctx.fillStyle = '#d7dde2';
+      ctx.beginPath();
+      ctx.moveTo(x + 14, y - 36);
+      ctx.lineTo(x + 22, y - 30);
+      ctx.lineTo(x + 12, y - 28);
+      ctx.fill();
+    } else {
+      ctx.arc(x + 8, y - 24, 7, -1.2, 0.8);
+      ctx.stroke();
+    }
+  } else {
+    ctx.strokeStyle = heavy ? '#e8eef2' : '#efe6d4';
+    ctx.lineWidth = heavy ? 2.8 : 2.2;
+    ctx.beginPath();
+    ctx.moveTo(x + 4, y - 22);
+    ctx.lineTo(x + (heavy ? 22 : 16), y - (heavy ? 40 : 32) + swing * 3);
+    ctx.stroke();
+    if (heavy) {
+      ctx.fillStyle = '#eef2f4';
+      ctx.beginPath();
+      ctx.moveTo(x + 20, y - 44);
+      ctx.lineTo(x + 24, y - 36);
+      ctx.lineTo(x + 16, y - 36);
+      ctx.fill();
+    }
+  }
+  ctx.lineWidth = 1;
+}
+
+function drawPaddockHorse(ctx: CanvasRenderingContext2D, tx: number, ty: number, coat: string) {
+  const p = tileToIso(tx, ty);
+  ctx.fillStyle = coat;
+  ctx.beginPath();
+  ctx.ellipse(p.x, p.y - 8, 11, 5, -0.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(p.x + 10, p.y - 12, 3.4, 2.4, 0.4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#3a2a22';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(p.x - 6, p.y - 6);
+  ctx.lineTo(p.x - 7, p.y);
+  ctx.moveTo(p.x + 4, p.y - 6);
+  ctx.lineTo(p.x + 5, p.y);
+  ctx.moveTo(p.x - 12, p.y - 8);
+  ctx.quadraticCurveTo(p.x - 16, p.y - 12, p.x - 8, p.y - 7);
+  ctx.stroke();
+  ctx.lineWidth = 1;
+}
+
+function drawStable(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, wall: number) {
+  drawFence(ctx, x + 0.15, y + h * 0.55, w - 0.3, h * 0.42);
+  drawPaddockHorse(ctx, x + 0.7, y + h * 0.72, '#c49a62');
+  drawPaddockHorse(ctx, x + w * 0.62, y + h * 0.78, '#8a5a32');
+  const box = drawVolume(ctx, x, y, w * 0.62, h * 0.7, wall, '#c4a574', '#8a6230', '#6e4428', true, 'log');
+  dressRoof(ctx, flatRoof(box, wall), 'shingle');
+  const hay = tileToIso(x + 0.4, y + h * 0.4);
+  ctx.fillStyle = '#e2c15a';
+  ctx.beginPath();
+  ctx.ellipse(hay.x, hay.y - wall * 0.15, 6, 3, 0.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#8a6230';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(hay.x - 4, hay.y - wall * 0.15);
+  ctx.lineTo(hay.x + 5, hay.y - wall * 0.2);
+  ctx.stroke();
+  ctx.lineWidth = 1;
+}
+
+function drawForgeGlow(ctx: CanvasRenderingContext2D, tx: number, ty: number, wall: number, time: number) {
+  const p = tileToIso(tx, ty);
+  const glow = 0.45 + Math.sin(time / 140) * 0.25;
+  ctx.fillStyle = `rgba(224, 90, 28, ${glow})`;
+  ctx.beginPath();
+  ctx.arc(p.x, p.y - wall * 0.38, 5.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#f2d15a';
+  ctx.beginPath();
+  ctx.arc(p.x, p.y - wall * 0.38, 2.4, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawSmith(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, wall: number, time: number) {
+  const box = drawVolume(ctx, x, y, w, h, wall, '#a33b3b', '#6a564c', '#3a2a22', true, 'brick');
+  dressRoof(ctx, flatRoof(box, wall), 'tile');
+  const stack = tileToIso(x + w * 0.78, y + 0.28);
+  ctx.fillStyle = '#4a4540';
+  ctx.fillRect(stack.x - 4, stack.y - wall - 18, 8, 20);
+  ctx.fillStyle = '#2a241f';
+  ctx.fillRect(stack.x - 6, stack.y - wall - 22, 12, 5);
+  drawForgeGlow(ctx, x + w * 0.42, y + h * 0.62, wall, time);
+  const anvil = tileToIso(x + w * 0.55, y + h * 0.78);
+  ctx.fillStyle = '#2a241f';
+  ctx.fillRect(anvil.x - 2, anvil.y - wall * 0.22, 4, wall * 0.22);
+  ctx.fillStyle = '#8d877c';
+  ctx.fillRect(anvil.x - 8, anvil.y - wall * 0.32, 16, 5);
+  ctx.fillStyle = '#c5ccd2';
+  ctx.fillRect(anvil.x - 7, anvil.y - wall * 0.36, 8, 3);
+  ctx.strokeStyle = '#6e5134';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(anvil.x + 6, anvil.y - wall * 0.34);
+  ctx.lineTo(anvil.x + 6, anvil.y - wall * 0.52);
+  ctx.stroke();
+  ctx.lineWidth = 1;
+  if (!gfxHigh()) drawSmoke(ctx, x + w * 0.78, y + 0.22, wall + 16, time);
+}
+
+function drawArmoury(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, wall: number) {
+  const box = drawVolume(ctx, x, y, w, h, wall, '#d7c4a2', '#8a6230', '#6e4428', true, 'log');
+  dressRoof(ctx, flatRoof(box, wall), 'shingle');
+  const rack = tileToIso(x + 0.45, y + h * 0.55);
+  ctx.strokeStyle = '#3a2414';
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 3; i++) {
+    ctx.beginPath();
+    ctx.moveTo(rack.x + i * 5, rack.y - wall * 0.15);
+    ctx.lineTo(rack.x + i * 5 + 2, rack.y - wall * 0.72);
+    ctx.stroke();
+  }
+  ctx.fillStyle = '#eef2f4';
+  ctx.beginPath();
+  ctx.moveTo(rack.x + 2, rack.y - wall * 0.78);
+  ctx.lineTo(rack.x + 6, rack.y - wall * 0.66);
+  ctx.lineTo(rack.x - 1, rack.y - wall * 0.66);
+  ctx.fill();
+  const sign = tileToIso(x + w * 0.72, y + h * 0.48);
+  ctx.fillStyle = '#8a3a2a';
+  ctx.beginPath();
+  ctx.moveTo(sign.x, sign.y - wall * 0.78);
+  ctx.lineTo(sign.x + 12, sign.y - wall * 0.42);
+  ctx.lineTo(sign.x, sign.y - wall * 0.18);
+  ctx.lineTo(sign.x - 12, sign.y - wall * 0.42);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#e6b15a';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.fillStyle = '#c5ccd2';
+  ctx.fillRect(sign.x + 8, sign.y - wall * 0.7, 4, wall * 0.28);
+  ctx.lineWidth = 1;
+}
+
+function drawPlantedLadder(ctx: CanvasRenderingContext2D, tx: number, ty: number, color: string) {
+  const p = tileToIso(tx, ty);
+  ctx.strokeStyle = '#c4a574';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(p.x - 8, p.y + 2);
+  ctx.lineTo(p.x - 2, p.y - 28);
+  ctx.moveTo(p.x + 4, p.y + 2);
+  ctx.lineTo(p.x + 10, p.y - 28);
+  ctx.stroke();
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 5; i++) {
+    const t = i / 4;
+    ctx.beginPath();
+    ctx.moveTo(p.x - 8 + t * 6, p.y + 2 - t * 30);
+    ctx.lineTo(p.x + 4 + t * 6, p.y + 2 - t * 30);
+    ctx.stroke();
+  }
+  ctx.fillStyle = color;
+  ctx.fillRect(p.x - 3, p.y - 8, 6, 8);
+  ctx.lineWidth = 1;
+}
+
+function drawCarriedLadder(ctx: CanvasRenderingContext2D, tx: number, ty: number, lift: number) {
+  const p = tileToIso(tx, ty);
+  const y = p.y - lift;
+  ctx.strokeStyle = '#c4a574';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(p.x - 8, y - 8);
+  ctx.lineTo(p.x + 8, y - 26);
+  ctx.moveTo(p.x - 4, y - 6);
+  ctx.lineTo(p.x + 12, y - 24);
+  ctx.moveTo(p.x - 6, y - 14);
+  ctx.lineTo(p.x + 2, y - 18);
+  ctx.moveTo(p.x - 1, y - 20);
+  ctx.lineTo(p.x + 7, y - 24);
+  ctx.stroke();
+  ctx.lineWidth = 1;
+}
+
+function drawRolledLadder(ctx: CanvasRenderingContext2D, tx: number, ty: number, lift: number) {
+  const p = tileToIso(tx, ty);
+  ctx.strokeStyle = '#8a6230';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(p.x - 7, p.y - lift - 16, 4, 0.4, 2.4);
+  ctx.stroke();
+  ctx.lineWidth = 1;
+}
+
+function drawHealStaff(ctx: CanvasRenderingContext2D, tx: number, ty: number, lift: number, time: number) {
+  const p = tileToIso(tx, ty);
+  const y = p.y - lift;
+  ctx.strokeStyle = '#6b4426';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(p.x + 6, y - 6);
+  ctx.lineTo(p.x + 8, y - 28);
+  ctx.stroke();
+  const glow = 0.45 + Math.sin(time / 280) * 0.2;
+  ctx.fillStyle = `rgba(126, 184, 122, ${glow})`;
+  ctx.fillRect(p.x + 5, y - 30, 7, 2);
+  ctx.fillRect(p.x + 7, y - 33, 3, 8);
+  ctx.lineWidth = 1;
+}
+
+function drawAxe(ctx: CanvasRenderingContext2D, tx: number, ty: number, lift: number) {
+  const p = tileToIso(tx, ty);
+  const y = p.y - lift;
+  ctx.strokeStyle = '#3a2414';
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.moveTo(p.x + 4, y - 10);
+  ctx.lineTo(p.x + 14, y - 28);
+  ctx.stroke();
+  ctx.fillStyle = '#d5dbe0';
+  ctx.beginPath();
+  ctx.moveTo(p.x + 12, y - 30);
+  ctx.lineTo(p.x + 22, y - 22);
+  ctx.lineTo(p.x + 10, y - 20);
+  ctx.closePath();
+  ctx.fill();
+  ctx.lineWidth = 1;
+}
+
+function drawSiegeTower(ctx: CanvasRenderingContext2D, tx: number, ty: number, color: string, walk: boolean, time: number) {
+  const p = tileToIso(tx, ty);
+  const bob = walk ? Math.sin(time / 160) * 1.2 : 0;
+  ctx.fillStyle = 'rgba(20,14,10,0.35)';
+  ctx.beginPath();
+  ctx.ellipse(p.x, p.y + 4, 16, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#2a2018';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.arc(p.x - 10, p.y + 2, 4, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(p.x + 10, p.y + 2, 4, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = '#6b4426';
+  ctx.fillRect(p.x - 12, p.y - 34 + bob, 24, 32);
+  ctx.strokeStyle = '#3a2414';
+  ctx.strokeRect(p.x - 12, p.y - 34 + bob, 24, 32);
+  ctx.fillStyle = '#8a6230';
+  ctx.fillRect(p.x - 14, p.y - 38 + bob, 28, 5);
+  ctx.fillStyle = '#1c1612';
+  ctx.fillRect(p.x - 3, p.y - 22 + bob, 5, 8);
+  ctx.fillStyle = color;
+  ctx.fillRect(p.x - 2, p.y - 40 + bob, 4, 8);
+  ctx.lineWidth = 1;
+}
+
+function drawWorkshop(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, wall: number) {
+  const box = drawVolume(ctx, x, y, w, h, wall, '#c4a574', '#6b4426', '#5c4632', true, 'log');
+  dressRoof(ctx, flatRoof(box, wall), 'thatch');
+  const lean = tileToIso(x + 0.4, y + h * 0.72);
+  ctx.strokeStyle = '#e6d3a1';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(lean.x - 6, lean.y);
+  ctx.lineTo(lean.x + 2, lean.y - wall * 0.85);
+  ctx.moveTo(lean.x + 2, lean.y);
+  ctx.lineTo(lean.x + 10, lean.y - wall * 0.85);
+  ctx.stroke();
+  ctx.lineWidth = 1.6;
+  for (let i = 0; i < 4; i++) {
+    const t = 0.2 + i * 0.2;
+    ctx.beginPath();
+    ctx.moveTo(lean.x - 6 + t * 8, lean.y - t * wall * 0.85);
+    ctx.lineTo(lean.x + 2 + t * 8, lean.y - t * wall * 0.85);
+    ctx.stroke();
+  }
+  const wheel = tileToIso(x + w * 0.72, y + h * 0.55);
+  ctx.strokeStyle = '#3a2414';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(wheel.x, wheel.y - wall * 0.25, 7, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(wheel.x - 6, wheel.y - wall * 0.25);
+  ctx.lineTo(wheel.x + 6, wheel.y - wall * 0.25);
+  ctx.moveTo(wheel.x, wheel.y - wall * 0.25 - 6);
+  ctx.lineTo(wheel.x, wheel.y - wall * 0.25 + 6);
+  ctx.stroke();
+  ctx.lineWidth = 1;
+}
+
+function drawChapel(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, wall: number) {
+  const box = drawVolume(ctx, x, y, w, h, wall, '#d9d3c6', '#8d877c', '#b7b1a4', true, 'stone');
+  dressRoof(ctx, flatRoof(box, wall), 'shingle');
+  const peak = tileToIso(x + w * 0.5, y + h * 0.42);
+  ctx.fillStyle = '#6e4428';
+  ctx.beginPath();
+  ctx.moveTo(peak.x, peak.y - wall - 16);
+  ctx.lineTo(peak.x + 10, peak.y - wall);
+  ctx.lineTo(peak.x - 10, peak.y - wall);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#e6b15a';
+  ctx.fillRect(peak.x - 1.5, peak.y - wall - 22, 3, 12);
+  ctx.fillRect(peak.x - 4, peak.y - wall - 18, 8, 3);
+  const window = tileToIso(x + w * 0.5, y + h * 0.62);
+  ctx.fillStyle = '#f2d48a';
+  ctx.beginPath();
+  ctx.arc(window.x, window.y - wall * 0.45, 4, Math.PI, 0);
+  ctx.fill();
+  ctx.fillRect(window.x - 4, window.y - wall * 0.45, 8, 7);
+  ctx.lineWidth = 1;
+}
+
+function drawMercCamp(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, wall: number) {
+  const ground = diamond(x, y, w, h);
+  poly(ctx, ground, '#c4a574');
+  const tent = tileToIso(x + 0.7, y + 0.85);
+  ctx.fillStyle = '#8a3a2a';
+  ctx.beginPath();
+  ctx.moveTo(tent.x, tent.y - 22);
+  ctx.lineTo(tent.x + 16, tent.y);
+  ctx.lineTo(tent.x - 16, tent.y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#6b4426';
+  ctx.fillRect(tent.x - 3, tent.y - 10, 6, 10);
+  const banner = tileToIso(x + w * 0.72, y + h * 0.4);
+  ctx.strokeStyle = '#3a2414';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(banner.x, banner.y);
+  ctx.lineTo(banner.x, banner.y - wall - 8);
+  ctx.stroke();
+  ctx.fillStyle = '#e0a11b';
+  ctx.beginPath();
+  ctx.moveTo(banner.x, banner.y - wall - 8);
+  ctx.lineTo(banner.x + 12, banner.y - wall - 2);
+  ctx.lineTo(banner.x, banner.y - wall + 2);
+  ctx.closePath();
+  ctx.fill();
+  const chest = tileToIso(x + w * 0.55, y + h * 0.78);
+  ctx.fillStyle = '#5c4632';
+  ctx.fillRect(chest.x - 7, chest.y - 8, 14, 8);
+  ctx.fillStyle = '#e6b15a';
+  ctx.fillRect(chest.x - 2, chest.y - 5, 4, 3);
+  ctx.lineWidth = 1;
 }
 
 function drawBuilding(ctx: CanvasRenderingContext2D, building: Building, time: number) {
@@ -1340,6 +1883,24 @@ function drawBuilding(ctx: CanvasRenderingContext2D, building: Building, time: n
     case 'oil':
     case 'guild':
       drawDefence(ctx, building, wall);
+      break;
+    case 'stable':
+      drawStable(ctx, building.x, building.y, def.w, def.h, wall);
+      break;
+    case 'smith':
+      drawSmith(ctx, building.x, building.y, def.w, def.h, wall, time);
+      break;
+    case 'armoury':
+      drawArmoury(ctx, building.x, building.y, def.w, def.h, wall);
+      break;
+    case 'workshop':
+      drawWorkshop(ctx, building.x, building.y, def.w, def.h, wall);
+      break;
+    case 'chapel':
+      drawChapel(ctx, building.x, building.y, def.w, def.h, wall);
+      break;
+    case 'merccamp':
+      drawMercCamp(ctx, building.x, building.y, def.w, def.h, wall);
       break;
     default:
       drawVolume(ctx, building.x, building.y, def.w, def.h, wall, '#ccc', '#999', '#777', true);
@@ -2197,6 +2758,10 @@ function drawLiveAnims(ctx: CanvasRenderingContext2D, building: Building, time: 
       break;
     case 'bakery':
       drawSmoke(ctx, x + w * 0.72, y + 0.25, wall, time);
+      break;
+    case 'smith':
+      drawSmoke(ctx, x + w * 0.78, y + 0.22, wall + 16, time);
+      drawForgeGlow(ctx, x + w * 0.42, y + h * 0.62, wall, time);
       break;
     case 'brewery':
       drawSmoke(ctx, x + w * 0.7, y + 0.3, wall, time);

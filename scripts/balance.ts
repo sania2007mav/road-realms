@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { BUILDINGS, KEEP_UPGRADE_COST, KEEP_UPGRADE_TICKS, PRICES, TAXES } from '../src/sim/balance';
+import { BUILDINGS, KEEP_UPGRADE_COST, KEEP_UPGRADE_TICKS, PRICES, TAXES, counterFactor } from '../src/sim/balance';
 import {
   CHAINS,
   craftMargins,
@@ -101,6 +101,19 @@ const duels: DuelResult[] = [
   measureDuel('club', 'catapult', 4, 3),
   measureDuel('engineer', 'sword', 4, 2),
   measureDuel('ladder', 'sword', 4, 2),
+  measureDuel('spear', 'light', 4, 1.2),
+  measureDuel('spear', 'heavy', 4, 1.2),
+  measureDuel('light', 'spear', 4, 1.2),
+  measureDuel('heavy', 'spear', 4, 1.2),
+  measureDuel('sword', 'spear', 4, 1.2),
+  measureDuel('bow', 'spear', 4, 6),
+  measureDuel('light', 'ram', 4, 2),
+  measureDuel('crossbow', 'heavy', 4, 5),
+  measureDuel('crossbow', 'sword', 4, 5),
+  measureDuel('sword', 'shield', 4, 1.2),
+  measureDuel('bow', 'shield', 4, 5),
+  measureDuel('spear', 'horsebow', 4, 1.2),
+  measureDuel('crossbow', 'horsebow', 4, 5),
 ];
 
 const walls: WallResult[] = [
@@ -243,6 +256,37 @@ lines.push('');
 lines.push('## Войско и стены');
 lines.push('');
 lines.push('До правок вплотную мечи и дубины били лучников, а таран бил лучников. Сейчас атакующие лучники отходят, пока пехота дальше 3.4 клетки, и стреляют. Ближе этого пехота их догоняет. Таран живёт под стрелами и ломает стены. Катапульта ломает стены и проигрывает в поле.');
+lines.push('');
+lines.push('Копейщик дешёвый: 8 дерева, 1 оружие и 6 золота. Мечник берёт 1 оружие и 1 доспех вместо двух железа. Лёгкая конница — лошадь, 4 дерева и 10 золота. Тяжёлая — лошадь, оружие, доспехи и 24 золота, первый удар множится на 1.8. Арбалетчик берёт арбалет из кузницы (железо и дерево) и 12 золота, стреляет раз в 28 тактов и не смотрит на доспех. Щитоносец медленный: стрелы по нему режутся до 0.32, соседний щит режет стрелы друзьям до 0.72. Степной лучник — лошадь, лук и 14 золота, стреляет на скаку. Доспех на мечнике и тяжёлой коннице, и кольчуга из оружейной, режут урон стрел до 0.75. Рудник кормит кузницу, кузница по очереди выдаёт оружие, доспехи и арбалет, оружейная их принимает. Конюшня на траве или в оазисе съедает 2 яблока или 2 пшеницы и выводит лошадь.');
+lines.push('');
+const matrixWeapons = ['club', 'spear', 'sword', 'bow', 'crossbow', 'shield', 'light', 'heavy', 'horsebow', 'engineer', 'ladder', 'siegetower', 'healer', 'raider', 'axe', 'ram', 'catapult'] as const;
+const matrixName: Record<(typeof matrixWeapons)[number], string> = {
+  club: 'ополченец',
+  spear: 'копейщик',
+  sword: 'мечник',
+  bow: 'лучник',
+  crossbow: 'арбалет',
+  shield: 'щит',
+  light: 'лёгкая',
+  heavy: 'тяжёлая',
+  horsebow: 'степь',
+  engineer: 'инженер',
+  ladder: 'лестница',
+  siegetower: 'башня',
+  healer: 'лекарь',
+  raider: 'налёт',
+  axe: 'топор',
+  ram: 'таран',
+  catapult: 'катапульта',
+};
+lines.push('| Бьёт ↓ / кого → | ' + matrixWeapons.map((weapon) => matrixName[weapon]).join(' | ') + ' |');
+lines.push('| --- | ' + matrixWeapons.map(() => '---:').join(' | ') + ' |');
+for (const row of matrixWeapons) {
+  const cells = matrixWeapons.map((col) => (row === col ? '—' : String(counterFactor(row, col))));
+  lines.push(`| ${matrixName[row]} | ${cells.join(' | ')} |`);
+}
+lines.push('');
+lines.push('Число — множитель урона бьющего по цели. Копьё выше 2 против обеих конниц и ниже 0.7 против лука и меча. Арбалет выше 1.5 по мечу и тяжёлой коннице и не режется доспехом. Щит слаб против меча и катапульты. Степь ниже 0.5 по копью и арбалету. Инженер и лестница слабы в поле. Осадная башня не получает урон от стрел. Лекарь не бьёт. Налётчик слаб против копий, топорник силён против щита. Воевода, когда уже есть лошади, берёт тяжёлую конницу, против копий — лук, против мечей и лучников — степного, а к большому войску после сороковой минуты берёт лекаря. Стратег и зодчий на стену отвечают инженером, лестницей и башней, на конницу — копьём, на мечи и тяжёлую — арбалетом, на лучников — щитом. Купец держит не больше двух солдат и, если на посад напали, нанимает наёмника за золото.');
 lines.push('');
 lines.push('| Бой | Победитель | Оставшиеся hp (левые / правые) |');
 lines.push('| --- | --- | --- |');

@@ -59,7 +59,7 @@ export {
   victoryName,
   viewerWon,
 } from './match';
-export { planOneAi, reactionTicks } from './ai';
+export { pickWeapon, planOneAi, reactionTicks } from './ai';
 export { createMob, createSoldier } from './entities';
 export { formationPoints } from './formation';
 export {

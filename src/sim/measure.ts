@@ -55,6 +55,16 @@ export function craftMargins(): CraftMargin[] {
     link('мука → хлеб', 'flour', 'bread'),
     link('пшеница → хлеб', 'wheat', 'bread'),
     link('хмель → пиво', 'hops', 'beer'),
+    link('железо → оружие', 'iron', 'weapons'),
+    link('железо → доспехи', 'iron', 'armor'),
+    {
+      name: 'железо и дерево → арбалет',
+      input: 'iron',
+      inputQty: 1,
+      output: 'crossbows',
+      outputQty: 1,
+      margin: PRICES.crossbows.sell - PRICES.iron.buy - PRICES.wood.buy,
+    },
   ];
 }
 

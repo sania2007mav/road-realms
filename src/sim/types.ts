@@ -11,6 +11,10 @@ export const RESOURCES = [
   'flour',
   'hops',
   'beer',
+  'horses',
+  'weapons',
+  'armor',
+  'crossbows',
 ] as const;
 
 export type Resource = (typeof RESOURCES)[number];
@@ -44,6 +48,9 @@ export type BuildingType =
   | 'mine'
   | 'pitch'
   | 'market'
+  | 'stable'
+  | 'smith'
+  | 'armoury'
   | 'barracks'
   | 'palisade'
   | 'wall'
@@ -55,9 +62,29 @@ export type BuildingType =
   | 'pitchditch'
   | 'brazier'
   | 'oil'
-  | 'guild';
+  | 'guild'
+  | 'workshop'
+  | 'chapel'
+  | 'merccamp';
 
-export type Weapon = 'club' | 'sword' | 'bow' | 'engineer' | 'ladder' | 'ram' | 'catapult';
+export type Weapon =
+  | 'club'
+  | 'sword'
+  | 'bow'
+  | 'spear'
+  | 'light'
+  | 'heavy'
+  | 'crossbow'
+  | 'shield'
+  | 'horsebow'
+  | 'engineer'
+  | 'ladder'
+  | 'siegetower'
+  | 'healer'
+  | 'raider'
+  | 'axe'
+  | 'ram'
+  | 'catapult';
 
 export type Terrain = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
@@ -95,6 +122,8 @@ export interface Player {
   tax: TaxId;
   hunger: boolean;
   beerMood: number;
+  /** 1 after the armoury hardens mail. Arrow hits on this player's soldiers are weaker. */
+  mail: number;
   migrate: number;
   stats: PlayerStats;
   difficulty: DifficultyId;
@@ -164,6 +193,8 @@ export interface Building {
   work: number;
   plague: number;
   upgrading: boolean;
+  /** Smith cycle. 0 weapon, 1 armour, 2 crossbow (iron and one wood). */
+  gear: number;
   /** 1 when a fort wall has cut this building off from the keep. */
   seal: number;
   /** 1 after the owner's keep falls and the building is left as rubble. */
@@ -209,6 +240,14 @@ export interface Soldier {
   /** Flat [x, y, x, y, ...] tile centres. */
   waypoints: number[];
   waypointI: number;
+  /** 1 until a heavy cavalryman's first blow. */
+  charge: number;
+  /** 1 when the soldier was trained in armour. Lowers arrow damage. */
+  armor: number;
+  /** 1 when a ladder is set against a wall, 2 when a siege tower is docked. */
+  dock: number;
+  /** 1 when the soldier was hired for gold and draws upkeep. */
+  merc: number;
 }
 
 export interface Ox {
@@ -254,7 +293,7 @@ export interface Cloud {
 }
 
 export interface GameState {
-  saveVersion: 1;
+  saveVersion: number;
   seed: number;
   tick: number;
   rng: number;
@@ -289,6 +328,8 @@ export type Command =
   | { kind: 'upgrade'; playerId: number; buildingId: number }
   | { kind: 'market'; playerId: number; resource: Resource; mode: 'buy' | 'sell'; qty: number }
   | { kind: 'train'; playerId: number; weapon: Weapon }
+  | { kind: 'hire'; playerId: number; weapon: 'raider' | 'axe' }
+  | { kind: 'mail'; playerId: number }
   | { kind: 'cow'; playerId: number; soldierId: number; x: number; y: number }
   | { kind: 'order'; playerId: number; order: 'defend' | 'raid' }
   | {

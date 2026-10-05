@@ -91,6 +91,8 @@ function nearestFoeKeep(state: GameState) {
 }
 
 function hallOf(weapon: Weapon): BuildingType {
+  if (weapon === 'healer') return 'chapel';
+  if (weapon === 'siegetower') return 'workshop';
   if (weapon === 'ram' || weapon === 'catapult' || weapon === 'engineer' || weapon === 'ladder') return 'guild';
   return 'barracks';
 }

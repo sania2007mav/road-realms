@@ -109,7 +109,7 @@ const TUTORIAL = [
   },
   {
     title: 'Оазис и тракт',
-    body: 'Сады, пшеница и хмель растут только на зелёной траве. Лес даёт дерево, светлые скалы — камень, ржавые — железо, чёрные болота — смолу. Между посадами вдоль тракта бродят волки, медведи и разбойники.',
+    body: 'Сады, пшеница, хмель и конюшня встают на зелёную траву или в оазис. Лес даёт дерево, светлые скалы — камень, ржавые — железо, чёрные болота — смолу. Кузница переделывает железо в оружие и доспехи, а железо с деревом — в арбалет. Оружейная их хранит.',
   },
   {
     title: 'Настроение',
@@ -187,7 +187,7 @@ function pushCmd(command: Command) {
     const check = canPlace(state, command.playerId, command.building, command.x, command.y);
     if (check.ok) audio.play('place', command.x, command.y);
     else audio.play('ui-error');
-  } else if (command.kind === 'market') audio.play('coins');
+  } else if (command.kind === 'market' || command.kind === 'hire') audio.play('coins');
   else if (command.kind === 'army' || command.kind === 'train') audio.play('order');
   if (netMode) net.submit(command);
   else queue.push(command);
@@ -1424,10 +1424,14 @@ function syncHud() {
       const groups: { label: string; items: (typeof RESOURCES)[number][] }[] = [
         { label: 'Еда', items: ['apples', 'cheese', 'meat', 'bread'] },
         { label: 'Материалы', items: ['wood', 'stone', 'iron', 'pitch'] },
+        { label: 'Войско', items: ['horses', 'weapons', 'armor', 'crossbows'] },
         { label: 'Пиво', items: ['beer'] },
       ];
       resources.innerHTML = groups
-        .map((group) => `<div class="resgroup"><span class="glabel">${group.label}</span>${group.items.map(chip).join('')}</div>`)
+        .map(
+          (group) =>
+            `<div class="resgroup${group.label === 'Войско' ? ' troop' : ''}"><span class="glabel">${group.label}</span>${group.items.map(chip).join('')}</div>`,
+        )
         .join('');
     }
   }
@@ -1485,6 +1489,7 @@ function syncHud() {
   }
   syncGuide();
   syncArmy();
+  placeArmy();
   if (state.message && state.message !== lastMessage) {
     lastMessage = state.message;
     flash(state.message);
@@ -1882,20 +1887,42 @@ function syncPanel() {
     mine && building.type === 'barracks' && building.complete
       ? `<div class="row">
           <button type="button" data-testid="train-club">Ополченец (2 дерева)</button>
-          <button type="button" data-testid="train-sword">Мечник (2 железа)</button>
+          <button type="button" data-testid="train-spear">Копейщик (8 дерева, оружие, 6 золота)</button>
+          <button type="button" data-testid="train-sword">Мечник (оружие и доспехи)</button>
           <button type="button" data-testid="train-bow">Лучник (4 дерева)</button>
+          <button type="button" data-testid="train-crossbow">Арбалетчик (арбалет, 12 золота)</button>
+          <button type="button" data-testid="train-shield">Щитоносец (6 дерева, доспех, 8 золота)</button>
+          <button type="button" data-testid="train-light">Лёгкая конница (лошадь, 4 дерева, 10 золота)</button>
+          <button type="button" data-testid="train-heavy">Тяжёлая конница (лошадь, оружие, доспехи, 24 золота)</button>
+          <button type="button" data-testid="train-horsebow">Степной лучник (лошадь, 4 дерева, 14 золота)</button>
           <button type="button" data-testid="order-defend">Оборона</button>
           <button type="button" data-testid="order-raid">Набег</button>
         </div>`
       : mine && building.type === 'guild' && building.complete
         ? `<div class="row">
-          <button type="button" data-testid="train-engineer">Инженер (3 дерева, 1 железо)</button>
+          <button type="button" data-testid="train-engineer">Инженер (3 дерева, 1 железо, 10 золота)</button>
           <button type="button" data-testid="train-ladder">Лестничник (8 дерева)</button>
           <button type="button" data-testid="train-ram">Таран (16 дерева, 4 камня)</button>
           <button type="button" data-testid="train-catapult">Катапульта (18 дерева, 10 камня, 4 железа)</button>
           <button type="button" data-testid="launch-cow">Пустить корову</button>
         </div>`
-        : '';
+        : mine && building.type === 'workshop' && building.complete
+          ? `<div class="row">
+          <button type="button" data-testid="train-engineer">Инженер (3 дерева, 1 железо, 10 золота)</button>
+          <button type="button" data-testid="train-ladder">Лестничник (8 дерева)</button>
+          <button type="button" data-testid="train-siegetower">Осадная башня (12 дерева, 6 камня, 8 золота)</button>
+        </div>`
+          : mine && building.type === 'chapel' && building.complete
+            ? `<div class="row"><button type="button" data-testid="train-healer">Лекарь (4 дерева, 8 золота)</button></div>`
+            : mine && building.type === 'merccamp' && building.complete
+              ? `<div class="row" data-testid="merc-panel">
+          <p>В лагере: налётчики ${building.buffer}, топорники ${building.input}. Содержание: 2 и 3 золота в минуту.</p>
+          <button type="button" data-testid="hire-raider">Степной налётчик (40 золота)</button>
+          <button type="button" data-testid="hire-axe">Топорник (56 золота)</button>
+        </div>`
+        : mine && building.type === 'armoury' && building.complete && state.players[localPlayer].mail !== 1
+          ? `<div class="row"><button type="button" data-testid="train-mail">Укрепить доспехи (4)</button></div>`
+          : '';
   const market =
     mine && building.type === 'market'
       ? RESOURCES.map((res) => {
@@ -1965,12 +1992,24 @@ function syncPanel() {
     selectedPersonId = null;
     panelSig = '';
   });
-  for (const weapon of ['club', 'sword', 'bow', 'engineer', 'ladder', 'ram', 'catapult'] as const) {
+  for (const weapon of ['club', 'spear', 'sword', 'bow', 'crossbow', 'shield', 'light', 'heavy', 'horsebow', 'engineer', 'ladder', 'siegetower', 'healer', 'ram', 'catapult'] as const) {
     panel.querySelector<HTMLButtonElement>(`[data-testid="train-${weapon}"]`)?.addEventListener('click', () => {
       pushCmd({ kind: 'train', playerId: localPlayer, weapon });
       panelSig = '';
     });
   }
+  panel.querySelector<HTMLButtonElement>('[data-testid="hire-raider"]')?.addEventListener('click', () => {
+    pushCmd({ kind: 'hire', playerId: localPlayer, weapon: 'raider' });
+    panelSig = '';
+  });
+  panel.querySelector<HTMLButtonElement>('[data-testid="hire-axe"]')?.addEventListener('click', () => {
+    pushCmd({ kind: 'hire', playerId: localPlayer, weapon: 'axe' });
+    panelSig = '';
+  });
+  panel.querySelector<HTMLButtonElement>('[data-testid="train-mail"]')?.addEventListener('click', () => {
+    pushCmd({ kind: 'mail', playerId: localPlayer });
+    panelSig = '';
+  });
   panel.querySelector<HTMLButtonElement>('[data-testid="launch-cow"]')?.addEventListener('click', () => {
     const catapult = state.soldiers.find((s) => s.playerId === localPlayer && s.hp > 0 && s.weapon === 'catapult');
     const dairy = state.buildings.some((b) => b.playerId === localPlayer && b.type === 'dairy' && b.complete && b.hp > 0);
@@ -2230,6 +2269,10 @@ function cargoColor(res: string): string {
     iron: '#9a4e32',
     pitch: '#111',
     beer: '#e0a11b',
+    horses: '#8a5a32',
+    weapons: '#c0c6cc',
+    armor: '#7d8ea3',
+    crossbows: '#6e5134',
   };
   return map[res] ?? '#ccc';
 }
@@ -2252,6 +2295,19 @@ function livingSelection() {
   }
 }
 
+function placeArmy() {
+  if (!playing || armyEl.hidden) return;
+  if (compactLayout()) {
+    armyEl.style.top = '';
+    return;
+  }
+  const bar = document.querySelector<HTMLElement>('#topbar');
+  if (!bar) return;
+  const ui = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ui')) || 1;
+  const below = (bar.getBoundingClientRect().bottom + 10) / (ui || 1);
+  armyEl.style.top = `${below}px`;
+}
+
 function syncArmy() {
   armyEl.hidden = !playing || state.outcome !== 'playing';
   armyBox.textContent = compactLayout() ? 'Войска' : 'Выделить войска';
@@ -2261,7 +2317,26 @@ function syncArmy() {
   const clubs = list.filter((s) => s.weapon === 'club').length;
   const swords = list.filter((s) => s.weapon === 'sword').length;
   const bows = list.filter((s) => s.weapon === 'bow').length;
-  armyCount.textContent = `Всего ${list.length} · ополченцы ${clubs} · мечники ${swords}${bows ? ` · лучники ${bows}` : ''}`;
+  const spears = list.filter((s) => s.weapon === 'spear').length;
+  const light = list.filter((s) => s.weapon === 'light').length;
+  const heavy = list.filter((s) => s.weapon === 'heavy').length;
+  const crossbows = list.filter((s) => s.weapon === 'crossbow').length;
+  const shields = list.filter((s) => s.weapon === 'shield').length;
+  const horsebows = list.filter((s) => s.weapon === 'horsebow').length;
+  const bits = [`Всего ${list.length}`, `ополченцы ${clubs}`, `копейщики ${spears}`, `мечники ${swords}`];
+  if (bows) bits.push(`лучники ${bows}`);
+  if (crossbows) bits.push(`арбалетчики ${crossbows}`);
+  if (shields) bits.push(`щитоносцы ${shields}`);
+  if (light) bits.push(`лёгкая конница ${light}`);
+  if (heavy) bits.push(`тяжёлая конница ${heavy}`);
+  if (horsebows) bits.push(`степные ${horsebows}`);
+  const healers = list.filter((s) => s.weapon === 'healer').length;
+  const raiders = list.filter((s) => s.weapon === 'raider').length;
+  const axes = list.filter((s) => s.weapon === 'axe').length;
+  if (healers) bits.push(`лекари ${healers}`);
+  if (raiders) bits.push(`налётчики ${raiders}`);
+  if (axes) bits.push(`топорники ${axes}`);
+  armyCount.textContent = bits.join(' · ');
   armyAttack.setAttribute('aria-pressed', attackArmed ? 'true' : 'false');
   armyBox.setAttribute('aria-pressed', boxMode ? 'true' : 'false');
   worldCanvas.classList.toggle('attacking', attackArmed);
@@ -2611,6 +2686,220 @@ function frame(now: number) {
   requestAnimationFrame(frame);
 }
 
+function ensureFoe(x: number, y: number): number {
+  const found = state.players.find((player) => player.id !== localPlayer && player.alive);
+  if (found) return found.id;
+  const id = state.players.length;
+  state.players.push({
+    id,
+    name: 'Чужой посад',
+    isAi: true,
+    alive: true,
+    side: 'south',
+    spawnX: x,
+    spawnY: y,
+    color: '#d6453d',
+    gold: 0,
+    stocks: emptyStocks(),
+    popularity: 0,
+    ration: 'normal',
+    tax: 'low',
+    hunger: false,
+    beerMood: 0,
+    mail: 0,
+    migrate: 0,
+    stats: emptyStats(0),
+    difficulty: 'normal',
+    personality: 'warlord',
+  });
+  return id;
+}
+
+function silenceScene() {
+  guideOn = false;
+  const tutorialEl = document.querySelector<HTMLElement>('#tutorial');
+  if (tutorialEl) {
+    tutorialEl.hidden = true;
+    tutorialEl.replaceChildren();
+  }
+  state.log = [];
+  state.message = '';
+  if (state.tick < 10 * TICKS_PER_GAME_MINUTE) state.tick = 10 * TICKS_PER_GAME_MINUTE;
+  banner.hidden = true;
+  lastMessage = '';
+  logEl.replaceChildren();
+  logSig = '';
+  hintEl.hidden = true;
+  hintEl.textContent = '';
+}
+
+function dressTown(keepX: number, keepY: number) {
+  const granary = createBuilding(state, localPlayer, 'granary', keepX + 4, keepY - 1, true);
+  const orchard = createBuilding(state, localPlayer, 'orchard', keepX + 4, keepY + 2, true);
+  createBuilding(state, localPlayer, 'woodcutter', keepX - 3, keepY + 1, true);
+  createBuilding(state, localPlayer, 'barracks', keepX + 1, keepY + 4, true);
+  createBuilding(state, localPlayer, 'cabin', keepX - 3, keepY - 1, true);
+  granary.buffer = 2;
+  granary.bufferRes = 'apples';
+  orchard.workerIds = [];
+  const stocks = state.players[localPlayer].stocks;
+  stocks.apples = 80;
+  stocks.wood = 48;
+  stocks.stone = 20;
+  stocks.iron = 8;
+  stocks.horses = 4;
+  stocks.weapons = 5;
+  stocks.armor = 3;
+  stocks.crossbows = 2;
+  keepLevelUp(keepX, keepY);
+}
+
+function keepLevelUp(keepX: number, keepY: number) {
+  const keep = state.buildings.find((building) => building.type === 'keep' && building.x === keepX && building.y === keepY);
+  if (keep) keep.level = 3;
+}
+
+function stageBatchScene(kind: string) {
+  const keep = playerKeep(state, localPlayer);
+  if (!keep) return;
+  silenceScene();
+  state.mobs = [];
+  state.soldiers = [];
+  const foe = ensureFoe(keep.x + 18, keep.y + 10);
+  const foePlayer = state.players[foe];
+  if (foePlayer) foePlayer.isAi = false;
+  if (kind === 'supply' || kind === 'hud') dressTown(keep.x, keep.y);
+  if (kind === 'supply') {
+    const stable = createBuilding(state, localPlayer, 'stable', keep.x + 8, keep.y, true);
+    const smith = createBuilding(state, localPlayer, 'smith', keep.x + 8, keep.y + 3, true);
+    const armoury = createBuilding(state, localPlayer, 'armoury', keep.x + 11, keep.y + 1, true);
+    stable.buffer = 1;
+    stable.bufferRes = 'horses';
+    smith.buffer = 1;
+    smith.bufferRes = 'weapons';
+    armoury.buffer = 1;
+    armoury.bufferRes = 'armor';
+    selectedId = null;
+    panel.hidden = true;
+    panelSig = '';
+    lookAtPoint(keep.x + 9, keep.y + 2);
+    camera.zoom = 1.45;
+    clampView();
+    silenceScene();
+    return;
+  }
+  const ax = keep.x + (kind === 'hud' ? 5 : 7);
+  const ay = keep.y + (kind === 'hud' ? 2 : 3);
+  const line = (owner: number, weapons: Array<'spear' | 'light' | 'heavy' | 'crossbow' | 'shield' | 'horsebow' | 'sword'>, ox: number, oy: number) => {
+    weapons.forEach((weapon, i) => {
+      const col = i % 3;
+      const row = Math.floor(i / 3);
+      const soldier = createSoldier(state, owner, ax + ox + col * 0.7, ay + oy + row * 0.65, weapon);
+      soldier.order = 'attack';
+      soldier.targetKind = 'soldier';
+      if (weapon === 'heavy') soldier.charge = 1;
+    });
+  };
+  if (kind === 'battle') {
+    line(localPlayer, ['spear', 'spear', 'shield', 'crossbow', 'crossbow', 'sword'], 0, 0);
+    line(foe, ['heavy', 'light', 'horsebow', 'horsebow', 'sword', 'horsebow'], 0.15, 1.15);
+  } else {
+    line(localPlayer, ['spear', 'spear', 'spear', 'spear', 'spear', 'spear'], 0, 0);
+    line(foe, ['light', 'light', 'heavy', 'heavy', 'light', 'heavy'], 0.1, 1.05);
+  }
+  const ours = state.soldiers.filter((soldier) => soldier.playerId === localPlayer);
+  const theirs = state.soldiers.filter((soldier) => soldier.playerId === foe);
+  ours.forEach((soldier, i) => {
+    soldier.targetId = theirs[i % theirs.length].id;
+  });
+  theirs.forEach((soldier, i) => {
+    soldier.targetId = ours[i % ours.length].id;
+  });
+  const steps = kind === 'hud' ? 6 : 10;
+  for (let i = 0; i < steps; i++) step(state, []);
+  lookAtPoint(ax + 0.7, ay + (kind === 'hud' ? 1.2 : 0.7));
+  camera.zoom = kind === 'hud' ? 1.05 : ZOOM_MAX;
+  clampView();
+  silenceScene();
+}
+
+function stageCraftScene(kind: string) {
+  const keep = playerKeep(state, localPlayer);
+  if (!keep) return;
+  silenceScene();
+  state.mobs = [];
+  state.soldiers = [];
+  const foe = ensureFoe(keep.x + 16, keep.y + 8);
+  const foePlayer = state.players[foe];
+  if (foePlayer) foePlayer.isAi = false;
+  const x0 = keep.x + 6;
+  const y0 = keep.y + 4;
+  if (kind === 'mercs') {
+    dressTown(keep.x, keep.y);
+    const camp = createBuilding(state, localPlayer, 'merccamp', keep.x + 6, keep.y + 1, true);
+    camp.buffer = 2;
+    camp.input = 1;
+    camp.gear = 1;
+    camp.work = 90;
+    state.players[localPlayer].gold = 180;
+    selectedId = camp.id;
+    selectedPersonId = null;
+    panel.hidden = false;
+    panelSig = '';
+    lookAtPoint(camp.x + 1.2, camp.y + 1);
+    camera.zoom = 1.35;
+    clampView();
+    silenceScene();
+    panel.hidden = false;
+    panelSig = '';
+    return;
+  }
+  for (let x = x0; x <= x0 + 5; x++) createBuilding(state, foe, 'wall', x, y0, true);
+  if (kind === 'ladders') {
+    for (let i = 0; i < 3; i++) {
+      const ladder = createSoldier(state, localPlayer, x0 + 1 + i * 1.6, y0 + 0.45, 'ladder');
+      ladder.dock = 1;
+      ladder.order = 'hold';
+      ladder.anchorX = ladder.x;
+      ladder.anchorY = ladder.y;
+    }
+    for (let i = 0; i < 4; i++) {
+      const climber = createSoldier(state, localPlayer, x0 + 0.8 + (i % 2) * 1.5, y0 + 0.15 + Math.floor(i / 2) * 0.35, i % 2 === 0 ? 'spear' : 'club');
+      climber.order = 'hold';
+    }
+    const engineer = createSoldier(state, localPlayer, x0 + 0.4, y0 + 1.35, 'engineer');
+    engineer.order = 'hold';
+    lookAtPoint(x0 + 2.2, y0 + 0.6);
+  } else if (kind === 'siege-tower') {
+    const tower = createSoldier(state, localPlayer, x0 + 2.2, y0 + 0.85, 'siegetower');
+    tower.dock = 2;
+    tower.order = 'hold';
+    for (let i = 0; i < 3; i++) {
+      const man = createSoldier(state, localPlayer, x0 + 1.6 + i * 0.45, y0 + 0.15, 'club');
+      man.order = 'hold';
+    }
+    lookAtPoint(x0 + 2.2, y0 + 0.45);
+  } else {
+    const wounded = [];
+    for (let i = 0; i < 4; i++) {
+      const man = createSoldier(state, localPlayer, x0 + i * 0.7, y0 + 1.2, 'club');
+      man.hp = 12 + i * 3;
+      man.order = 'hold';
+      wounded.push(man);
+    }
+    const healer = createSoldier(state, localPlayer, x0 + 1.1, y0 + 0.45, 'healer');
+    healer.order = 'hold';
+    selectedSoldiers.clear();
+    for (const man of wounded) selectedSoldiers.add(man.id);
+    selectedSoldiers.add(healer.id);
+    for (let i = 0; i < 12; i++) step(state, []);
+    lookAtPoint(x0 + 1.2, y0 + 0.9);
+  }
+  camera.zoom = ZOOM_MAX;
+  clampView();
+  silenceScene();
+}
+
 function stageAiScene(kind: string) {
   const foe = state.players.find((player) => player.isAi && player.personality === (kind === 'ai-walls' ? 'builder' : 'warlord')) ?? state.players[1];
   const home = playerKeep(state, localPlayer);
@@ -2800,6 +3089,14 @@ function expose() {
         stageAiScene(kind);
         return;
       }
+      if (kind === 'cavalry-fight' || kind === 'supply' || kind === 'battle' || kind === 'hud') {
+        stageBatchScene(kind);
+        return;
+      }
+      if (kind === 'ladders' || kind === 'siege-tower' || kind === 'healer' || kind === 'mercs') {
+        stageCraftScene(kind);
+        return;
+      }
       const keep = playerKeep(state, localPlayer);
       if (!keep) return;
       state.buildings = state.buildings.filter((building) => building.id === keep.id);
@@ -2914,6 +3211,7 @@ function expose() {
               tax: 'low',
               hunger: false,
               beerMood: 0,
+              mail: 0,
               migrate: 0,
               stats: emptyStats(0),
               difficulty: 'hard',
