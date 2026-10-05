@@ -99,3 +99,5 @@ App Check (необязательно, по умолчанию выключен)
 4. В правилах Realtime Database enforcement App Check включается отдельно и в эту копию `firebase/database.rules.json` не входит.
 
 Правила по-прежнему в `firebase/database.rules.json`. Корень закрыт на чтение и запись. Проверка: `firebase/rules-test/rules.test.mjs` против эмулятора на `127.0.0.1:9000`.
+
+Рейтинг (ещё не выложен): к тем же правилам добавлены `matches/$id/reports`, `matches/$id/settled`, `players`, `claims` и `history`. Пока эта копия не опубликована в консоли, клиент пишет «Рейтинг скоро» и не трогает живую базу сам. Публикует владелец.

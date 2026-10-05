@@ -30,7 +30,7 @@ html, body, #app {
 input, textarea, select { user-select: text; -webkit-user-select: text; }
 
 #topbar, #dock, #panel, #menu, #goals, #army, #tutorial, #end, #title, #popbox, #peoplebox,
-#help-book, #achieve-book, #stats-book, #settings-panel, #save-panel, #audio-panel, #banner, #tip {
+#help-book, #achieve-book, #stats-book, #rating-book, #settings-panel, #save-panel, #audio-panel, #banner, #tip {
   zoom: var(--ui, 1);
 }
 
@@ -450,18 +450,32 @@ details.advanced summary {
   max-width: min(420px, calc(100% - 24px));
   white-space: nowrap;
 }
+#achieve-book h2, #rating-book h2, #stats-book h2 { font-family: inherit; }
+#achieve-book .ach-head { padding: 8px 16px; }
+#achieve-book .ach-head h2 { margin: 0; }
+.ach-filters { display: flex; gap: 8px; padding: 0 16px 8px; }
+.ach-filters button { flex: 1; }
+.ach-filters button.on { border-color: var(--gold); color: var(--gold); }
 .ach {
-  display: flex;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 160px;
   gap: 10px;
-  align-items: flex-start;
+  align-items: center;
   padding: 8px 0;
   border-bottom: 1px solid var(--line);
 }
-.ach-ico { width: 36px; flex: none; font-size: 22px; line-height: 1.2; text-align: center; }
+.ach-ico { width: 36px; font-size: 22px; line-height: 1.2; text-align: center; }
 .ach b { display: block; }
-.ach p { margin: 2px 0 6px; color: var(--muted); font-size: 13px; }
-.ach-bar { height: 8px; background: #2b241d; border-radius: 99px; overflow: hidden; }
+.ach p { margin: 2px 0 4px; color: var(--muted); font-size: 13px; }
+.ach-bar { width: 160px; height: 8px; background: #2b241d; border-radius: 99px; overflow: hidden; }
 .ach-bar span { display: block; height: 100%; background: var(--gold); }
+.rating-soon { color: var(--gold); }
+.emblem-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.emblem-row button { width: 52px; min-width: 52px; padding: 4px; font-size: 22px; }
+.emblem-row button.on { border-color: var(--gold); }
+.board-row, .history-row { display: grid; grid-template-columns: 36px 1fr auto; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.board-row b, .history-row b { font-variant-numeric: tabular-nums; }
+.rating-me { color: var(--gold); }
 .ach.done b { color: var(--gold); }
 .ach.secret { opacity: 0.72; }
 .stat-list { margin: 0; display: flex; flex-direction: column; gap: 8px; }
@@ -613,20 +627,20 @@ details.advanced summary {
   padding: 6px 10px;
   font-size: 13px;
 }
-#help-book, #achieve-book, #stats-book, #settings-panel, #save-panel {
+#help-book, #achieve-book, #stats-book, #rating-book, #settings-panel, #save-panel {
   position: absolute;
   z-index: 12;
   inset: 24px;
   overflow: auto;
 }
-#help-book, #achieve-book, #stats-book {
+#help-book, #achieve-book, #stats-book, #rating-book {
   overflow: hidden;
   display: flex;
   flex-direction: column;
   background: #1c1612;
   border-radius: 16px;
 }
-#help-book .help-card, #achieve-book .help-card, #stats-book .help-card {
+#help-book .help-card, #achieve-book .help-card, #stats-book .help-card, #rating-book .help-card {
   width: 100%;
   max-width: none;
   height: 100%;

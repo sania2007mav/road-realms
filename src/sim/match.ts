@@ -181,8 +181,9 @@ export function unpackConfig(raw: number | null | undefined): LobbyConfig {
   };
 }
 
-export function lobbySummary(setup: MatchSetup, config: LobbyConfig): string {
+export function lobbySummary(setup: MatchSetup, config: LobbyConfig, ranked = false): string {
   const map = setup.map === 'small' ? 'малая' : setup.map === 'large' ? 'большая' : 'обычная';
+  if (ranked) return `Рейтинговая · завоевание · ${map} · 1×`;
   const start = setup.start === 'low' ? 'скудные' : setup.start === 'high' ? 'богатые' : 'обычные';
   const teams = config.teams === 'pairs' ? '2×2' : 'каждый сам';
   const year = setup.seasons && setup.seasons !== 'off' ? ` · сезоны ${paceName(setup.seasons)}` : '';
@@ -231,7 +232,7 @@ export function normalizeProfiles(list?: AiProfile[] | null): AiProfile[] {
   });
 }
 
-const LOBBY_TAIL = /~([0-3]{6})(?:([012])([01])([012])?([0-3])?(?:([0-9a-f]{8}|-{8}))?)?$/;
+const LOBBY_TAIL = /~([0-3]{6})(?:([012])([01])([012])?([0-3])?(r)?(?:([0-9a-f]{8}|-{8}))?)?$/;
 
 export interface LobbyTail {
   speed: 1 | 2 | 3;
@@ -240,6 +241,22 @@ export interface LobbyTail {
   lock: string;
   seasons: SeasonPace;
   events: EventPace;
+  /** Ranked 1v1. The letter sits in the name because the seed's high bits are already full. */
+  ranked: boolean;
+}
+
+/** Fixed 1v1. Only the map size stays open. */
+export function rankedSetup(map: MatchSetup['map']): MatchSetup {
+  return normalizeSetup({
+    victory: 'conquest',
+    timeLimit: 0,
+    map,
+    start: 'normal',
+    ai: 0,
+    teams: 'ffa',
+    seasons: 'off',
+    events: 'off',
+  });
 }
 
 /** The lobby name is an existing 1–32 string. Profiles, speed, teams and a password tag share its suffix. */
@@ -250,13 +267,17 @@ export function packLobbyName(name: string, profiles?: AiProfile[] | null, tail?
     list.map((profile) => String(PERSONALITIES.indexOf(profile.personality))).join('');
   const shown = displayLobbyName(name).replace(/~/g, '').trim();
   if (!tail) return `${shown.slice(0, 25) || 'Тракт'}~${digits}`;
-  const speed = tail.speed === 2 ? '1' : tail.speed === 3 ? '2' : '0';
-  const teams = tail.teams === 'pairs' ? '1' : '0';
+  const speed = tail.ranked ? '0' : tail.speed === 2 ? '1' : tail.speed === 3 ? '2' : '0';
+  const teams = tail.ranked ? '0' : tail.teams === 'pairs' ? '1' : '0';
   let season = tail.seasons === 'normal' ? '1' : tail.seasons === 'long' ? '2' : tail.seasons === 'off' ? '0' : '';
-  const events = tail.events === 'rare' ? '1' : tail.events === 'normal' ? '2' : tail.events === 'often' ? '3' : '';
-  if (events && !season) season = '0';
-  const lock = tail.lock && /^[0-9a-f]{8}$/.test(tail.lock) ? tail.lock : '';
-  const suffix = `${digits}${speed}${teams}${season}${events}${lock}`;
+  let events = tail.events === 'rare' ? '1' : tail.events === 'normal' ? '2' : tail.events === 'often' ? '3' : '';
+  if (tail.ranked) {
+    season = '0';
+    events = '0';
+  } else if (events && !season) season = '0';
+  const lock = !tail.ranked && tail.lock && /^[0-9a-f]{8}$/.test(tail.lock) ? tail.lock : '';
+  const ranked = tail.ranked ? 'r' : '';
+  const suffix = `${digits}${speed}${teams}${season}${events}${ranked}${lock}`;
   const cap = Math.max(1, 32 - suffix.length - 1);
   return `${shown.slice(0, cap) || 'Тракт'}~${suffix}`;
 }
@@ -279,13 +300,15 @@ export function tailFromLobbyName(name: string): LobbyTail {
   const found = name.match(LOBBY_TAIL);
   const seasons = found?.[4] === '1' ? 'normal' : found?.[4] === '2' ? 'long' : 'off';
   const events = found?.[5] === '1' ? 'rare' : found?.[5] === '2' ? 'normal' : found?.[5] === '3' ? 'often' : 'off';
-  if (!found || found[2] == null) return { speed: 1, teams: 'ffa', lock: '', seasons: 'off', events: 'off' };
+  const ranked = found?.[6] === 'r';
+  if (!found || found[2] == null) return { speed: 1, teams: 'ffa', lock: '', seasons: 'off', events: 'off', ranked: false };
   return {
-    speed: found[2] === '1' ? 2 : found[2] === '2' ? 3 : 1,
-    teams: found[3] === '1' ? 'pairs' : 'ffa',
-    lock: found[6] && !found[6].startsWith('-') ? found[6] : '',
-    seasons,
-    events,
+    speed: ranked ? 1 : found[2] === '1' ? 2 : found[2] === '2' ? 3 : 1,
+    teams: ranked ? 'ffa' : found[3] === '1' ? 'pairs' : 'ffa',
+    lock: ranked ? '' : found[7] && !found[7].startsWith('-') ? found[7] : '',
+    seasons: ranked ? 'off' : seasons,
+    events: ranked ? 'off' : events,
+    ranked,
   };
 }
 

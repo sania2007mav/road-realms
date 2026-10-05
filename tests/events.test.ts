@@ -150,7 +150,7 @@ describe('события на тракте', () => {
       lock: '0ab12cd3',
     });
     expect(legacy.length).toBeLessThanOrEqual(32);
-    expect(tailFromLobbyName(legacy)).toEqual({ speed: 2, teams: 'pairs', lock: '0ab12cd3', seasons: 'off', events: 'off' });
+    expect(tailFromLobbyName(legacy)).toEqual({ speed: 2, teams: 'pairs', lock: '0ab12cd3', seasons: 'off', events: 'off', ranked: false });
   });
 
   it('старое сохранение остаётся без событий и хэш сходится', () => {

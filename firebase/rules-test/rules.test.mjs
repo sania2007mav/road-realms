@@ -192,3 +192,80 @@ test('cleanup: host deletes; stale lobbies/matches deletable by anyone authed', 
   await assertSucceeds(remove(ref(db('alice'), 'matches/START_OLD')));  // host
   await assertFails(remove(ref(db(null), 'lobbies/START_OLD')));
 });
+
+const RANKED = 'Тракт~1111110000r';
+const HASH = 'abcd1234';
+
+function player(nick, tag, extra = {}) {
+  return { nick, tag, emblem: 'eagle', rating: 1000, games: 0, wins: 0, last: '', ...extra };
+}
+
+async function rankedRoom() {
+  await set(ref(db('alice'), 'lobbies/R1'), newLobby('alice', { name: RANKED, maxPlayers: 2 }));
+  await join('bob', 'R1', 1, 'Путник');
+  await update(ref(db('alice'), 'lobbies/R1'), { status: 'started', startedAt: TS });
+  await set(ref(db('alice'), 'players/alice'), player('Хозяин', '2048'));
+  await set(ref(db('bob'), 'players/bob'), player('Путник', '3391'));
+}
+
+test('profile, claim and leaderboard query', async () => {
+  await assertFails(set(ref(db('alice'), 'players/alice'), player('аб', '2048')));
+  await assertFails(set(ref(db('alice'), 'players/alice'), player('Хозяин', '2048', { rating: 1400 })));
+  await assertSucceeds(set(ref(db('alice'), 'players/alice'), player('Хозяин', '2048')));
+  await assertFails(remove(ref(db('alice'), 'players/alice')));
+  await assertFails(set(ref(db('bob'), 'players/alice'), player('Чужой', '2048', { rating: 1000 })));
+  await assertSucceeds(set(ref(db('alice'), 'players/alice'), player('Хозяйка', '2048')));
+  await assertFails(set(ref(db('alice'), 'players/alice'), player('Хозяйка', '9999')));
+  await assertSucceeds(set(ref(db('alice'), 'claims/abc_2048'), 'alice'));
+  await assertFails(set(ref(db('bob'), 'claims/abc_2048'), 'bob'));
+  await assertFails(set(ref(db('bob'), 'players/bob'), player('Путник', '3391', { rating: 1100, games: 2, wins: 1 })));
+  await assertSucceeds(set(ref(db('bob'), 'players/bob'), player('Путник', '3391')));
+  await assertSucceeds(get(query(ref(db('alice'), 'players'), orderByChild('rating'), limitToLast(100))));
+  await assertFails(get(ref(db('alice'), 'players')));
+  await assertFails(get(query(ref(db('alice'), 'players'), orderByChild('rating'), limitToLast(101))));
+  await assertSucceeds(get(ref(db('bob'), 'players/alice')));
+});
+
+test('ranked reports agree before a rating moves, and a forfeit waits out the timeout', async () => {
+  await rankedRoom();
+  const report = (delta, extra = {}) => ({ winner: 'alice', hash: HASH, delta, at: TS, ...extra });
+  await assertFails(set(ref(db('alice'), 'matches/R1/reports/alice'), report(40)));
+  await assertSucceeds(set(ref(db('alice'), 'matches/R1/reports/alice'), report(16)));
+  await assertFails(set(ref(db('alice'), 'matches/R1/reports/alice'), report(16)));
+  const settled = {
+    winner: 'alice', hash: HASH, a: 'alice', b: 'bob',
+    oldA: 1000, oldB: 1000, nextA: 1016, nextB: 984, deltaA: 16, deltaB: -16, mode: 'agree',
+  };
+  await assertFails(set(ref(db('alice'), 'matches/R1/settled'), settled));
+  await assertSucceeds(set(ref(db('bob'), 'matches/R1/reports/bob'), { winner: 'alice', hash: HASH, delta: -16, at: TS }));
+  await assertFails(set(ref(db('alice'), 'matches/R1/settled'), { ...settled, nextA: 1032, deltaA: 32, deltaB: -32, nextB: 968 }));
+  await assertSucceeds(set(ref(db('alice'), 'matches/R1/settled'), settled));
+  await assertFails(set(ref(db('bob'), 'matches/R1/settled'), settled));
+  const up = (uid, rating, wins) => player(uid === 'alice' ? 'Хозяин' : 'Путник', uid === 'alice' ? '2048' : '3391', {
+    rating, games: 1, wins, last: 'R1',
+  });
+  await assertFails(set(ref(db('alice'), 'players/alice'), up('alice', 1032, 1)));
+  await assertSucceeds(set(ref(db('alice'), 'players/alice'), up('alice', 1016, 1)));
+  await assertSucceeds(set(ref(db('alice'), 'players/bob'), up('bob', 984, 0)));
+  await assertFails(set(ref(db('alice'), 'players/alice'), up('alice', 1032, 2)));
+  await assertSucceeds(set(ref(db('alice'), `history/alice/R1`), { opp: 'bob', delta: 16, rating: 1016, winner: 'alice', at: TS }));
+  await assertFails(set(ref(db('bob'), `history/alice/R1`), { opp: 'bob', delta: 16, rating: 1016, winner: 'alice', at: TS }));
+  await assertFails(get(ref(db('bob'), 'history/alice')));
+
+  await set(ref(db('alice'), 'lobbies/R2'), newLobby('alice', { name: 'Обычная~1111110000', maxPlayers: 2 }));
+  await join('bob', 'R2', 1);
+  await update(ref(db('alice'), 'lobbies/R2'), { status: 'started', startedAt: TS });
+  await set(ref(db('alice'), 'matches/R2/reports/alice'), report(16));
+  await set(ref(db('bob'), 'matches/R2/reports/bob'), { winner: 'alice', hash: HASH, delta: -16, at: TS });
+  await assertFails(set(ref(db('alice'), 'matches/R2/settled'), { ...settled, mode: 'agree' }));
+
+  await seed('players/alice', player('Хозяин', '2048'));
+  await seed('players/bob', player('Путник', '3391'));
+  await set(ref(db('alice'), 'lobbies/R3'), newLobby('alice', { name: RANKED, maxPlayers: 2 }));
+  await join('bob', 'R3', 1);
+  await update(ref(db('alice'), 'lobbies/R3'), { status: 'started', startedAt: TS });
+  await set(ref(db('alice'), 'matches/R3/reports/alice'), report(16, { forfeit: true }));
+  await assertFails(set(ref(db('alice'), 'matches/R3/settled'), { ...settled, mode: 'forfeit' }));
+  await seed('matches/R3/presence/bob', { online: false, at: Date.now() - 120000 });
+  await assertSucceeds(set(ref(db('alice'), 'matches/R3/settled'), { ...settled, mode: 'forfeit' }));
+});

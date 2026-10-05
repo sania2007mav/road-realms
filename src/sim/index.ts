@@ -53,6 +53,7 @@ export {
   teamOf,
   personalityName,
   profilesFromLobbyName,
+  rankedSetup,
   resultCopy,
   scoreOf,
   unpackConfig,

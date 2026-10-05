@@ -969,7 +969,7 @@ test('кадры для витрины 1280×720', async ({ page, browser }) => 
 test('кнопки заставки внутри карточки', async ({ page }) => {
   test.setTimeout(120_000);
   mkdirSync(shots, { recursive: true });
-  const ids = ['new-game', 'net-game', 'continue-game', 'campaign-open', 'load-game', 'help-open', 'settings-open', 'know-game', 'about-open'];
+  const ids = ['new-game', 'net-game', 'continue-game', 'campaign-open', 'load-game', 'help-open', 'settings-open', 'know-game', 'about-open', 'achieve-open', 'rating-open', 'stats-open'];
   const viewports = [
     { width: 1280, height: 800 },
     { width: 830, height: 755 },
@@ -1340,7 +1340,26 @@ test('достижения и статистика', async ({ page }) => {
   await expect(page.getByTestId('achieve-count')).toHaveText('3 / 32');
   await expect(page.getByTestId('ach-gold-1000')).toBeVisible();
   await expect(page.getByTestId('ach-secret-road')).toContainText('Скрытое');
+  const titleFont = await page.locator('#achieve-book h2').evaluate((node) => getComputedStyle(node).fontFamily);
+  expect(titleFont.toLowerCase()).not.toContain('georgia');
+  const headPad = await page.locator('#achieve-book .ach-head').evaluate((node) => getComputedStyle(node).padding);
+  const bodyPad = await page.locator('#achieve-book .help-body').evaluate((node) => getComputedStyle(node).padding);
+  expect(headPad).toBe('8px 16px');
+  expect(bodyPad.startsWith('8px 16px')).toBe(true);
+  const barWidths = await page.locator('.ach-bar').evaluateAll((nodes) => nodes.map((node) => Math.round(node.getBoundingClientRect().width)));
+  expect(barWidths.length).toBeGreaterThan(10);
+  expect(new Set(barWidths).size).toBe(1);
+  expect(barWidths[0]).toBe(160);
   await page.screenshot({ path: `${shots}/achievements.png` });
+  await page.getByTestId('ach-filter-done').click();
+  await expect(page.getByTestId('ach-gold-400')).toBeVisible();
+  await expect(page.getByTestId('ach-gold-1000')).toBeHidden();
+  await page.getByTestId('ach-filter-open').click();
+  await expect(page.getByTestId('ach-gold-1000')).toBeVisible();
+  await expect(page.getByTestId('ach-gold-400')).toBeHidden();
+  await page.getByTestId('ach-filter-all').click();
+  await expect(page.getByTestId('ach-gold-400')).toBeVisible();
+  await expect(page.getByTestId('ach-gold-1000')).toBeVisible();
   await page.getByTestId('achieve-close').click();
   await page.evaluate(() => window.__game!.previewStats());
   await expect(page.getByTestId('stats-games')).toHaveText('12');
@@ -1352,6 +1371,36 @@ test('достижения и статистика', async ({ page }) => {
   await page.evaluate(() => window.__game!.previewUnlock());
   await expect(page.locator('#toast')).toContainText('Собрать 1000 золота');
   await page.screenshot({ path: `${shots}/achieve_toast.png` });
+});
+
+test('рейтинг: профиль, таблица, лобби и итог', async ({ page }) => {
+  test.setTimeout(60_000);
+  mkdirSync(shots, { recursive: true });
+  await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/road-realms/');
+  await page.evaluate(() => window.__game!.previewProfile());
+  await expect(page.getByTestId('rating-nick')).toHaveValue('Хозяин');
+  await expect(page.getByTestId('rating-tag')).toContainText('Хозяин#2048');
+  await expect(page.getByTestId('emblem-eagle')).toHaveClass(/on/);
+  await page.screenshot({ path: `${shots}/rating_profile.png` });
+  await page.evaluate(() => window.__game!.previewBoard());
+  await expect(page.getByTestId('board-place')).toContainText('3');
+  await expect(page.getByTestId('season-reset')).toBeDisabled();
+  await expect(page.getByTestId('rating-history')).toContainText('Ковыль#1102');
+  await expect(page.getByTestId('board-list')).toContainText('1116');
+  await page.screenshot({ path: `${shots}/rating_board.png` });
+  await page.evaluate(() => window.__game!.previewRanked());
+  await expect(page.getByTestId('lobby-ranked')).toBeChecked();
+  await expect(page.getByTestId('lobby-map')).toBeEnabled();
+  await expect(page.getByTestId('lobby-victory')).toBeDisabled();
+  await expect(page.getByTestId('lobby-speed')).toBeDisabled();
+  await expect(page.getByTestId('lobby-pass')).toBeDisabled();
+  await page.getByTestId('lobby-ranked-label').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${shots}/ranked_lobby.png` });
+  await page.evaluate(() => window.__game!.previewRatingChange());
+  await expect(page.getByTestId('rating-line')).toHaveText('Рейтинг 1000 → 1016 (+16)');
+  await page.screenshot({ path: `${shots}/rating_change.png` });
 });
 
 function letterboxPhone(raw: string, out: string): string {

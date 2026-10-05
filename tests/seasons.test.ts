@@ -160,7 +160,7 @@ describe('сезоны', () => {
       lock: 'ab12cd34',
     });
     expect(packed.length).toBeLessThanOrEqual(32);
-    expect(tailFromLobbyName(packed)).toEqual({ speed: 3, teams: 'pairs', lock: 'ab12cd34', seasons: 'long', events: 'off' });
+    expect(tailFromLobbyName(packed)).toEqual({ speed: 3, teams: 'pairs', lock: 'ab12cd34', seasons: 'long', events: 'off', ranked: false });
     const quiet = packLobbyName('Посад', profiles, { speed: 1, teams: 'ffa', seasons: 'off' });
     expect(quiet.length).toBeLessThanOrEqual(32);
     expect(tailFromLobbyName(quiet).seasons).toBe('off');

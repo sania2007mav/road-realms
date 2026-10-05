@@ -31,6 +31,7 @@ import {
   personalityName,
   normalizeSetup,
   packSeed,
+  rankedSetup,
   resultCopy,
   scoreOf,
   victoryName,
@@ -77,6 +78,22 @@ import {
   type MetaState,
   type ObservePulse,
 } from './meta/achievements';
+import {
+  boardHtml,
+  cleanNick,
+  displayTag,
+  historyHtml,
+  isEmblem,
+  nickOk,
+  profileHtml,
+  readStoredProfile,
+  tagFromUid,
+  writeStoredProfile,
+  type BoardEntry,
+  type EmblemId,
+  type LocalProfile,
+} from './meta/rating';
+import { loadBoard, loadHistory, publishProfile, settleRanked, SOON } from './net/rank';
 import { bakeTerrain, climateStamp, clearTerrainChunks, minimapToTile, renderMinimap, renderWorld, setTerrainChunks, type Ghost, type OrderMarker } from './render/draw';
 import { net } from './net/session';
 import { NetView, type LobbyDraft } from './net/screens';
@@ -649,7 +666,7 @@ async function restoreSlot(slot: SlotId) {
 }
 
 function hideBooks() {
-  for (const id of ['#help-book', '#settings-panel', '#save-panel', '#achieve-book', '#stats-book']) {
+  for (const id of ['#help-book', '#settings-panel', '#save-panel', '#achieve-book', '#stats-book', '#rating-book']) {
     const node = document.querySelector<HTMLElement>(id);
     if (node) node.hidden = true;
   }
@@ -1013,6 +1030,7 @@ function buildTitle() {
         <button type="button" id="know-game" data-testid="know-game">Я умею играть</button>
         <button type="button" id="about-title" data-testid="about-open">Об игре</button>
         <button type="button" id="achieve-title" data-testid="achieve-open">Достижения</button>
+        <button type="button" id="rating-title" data-testid="rating-open">Рейтинг</button>
         <button type="button" id="stats-title" data-testid="stats-open">Статистика</button>
       </div>
       <p class="fineprint"><a href="privacy.html">Политика конфиденциальности</a></p>
@@ -1052,6 +1070,7 @@ function buildTitle() {
   document.querySelector<HTMLButtonElement>('#campaign-title')!.onclick = () => showCampaignMap();
   document.querySelector<HTMLButtonElement>('#about-title')!.onclick = () => openAbout();
   document.querySelector<HTMLButtonElement>('#achieve-title')!.onclick = () => openAchievements();
+  document.querySelector<HTMLButtonElement>('#rating-title')!.onclick = () => void openRating();
   document.querySelector<HTMLButtonElement>('#stats-title')!.onclick = () => openStats();
 }
 
@@ -2490,6 +2509,7 @@ function showEnd() {
     <canvas id="results-chart" width="840" height="140"></canvas>
     <p class="chart-note">Сплошная линия — население, пунктир — золото.</p>
     <p class="score-formula">${SCORE_TEXT}</p>
+    ${net.isRanked() ? '<p id="rating-line" data-testid="rating-line">Считаем рейтинг…</p>' : ''}
     <div class="actions">
       ${actionHtml}
     </div>
@@ -2612,9 +2632,107 @@ function openAchievements() {
   if (!book) return;
   book.hidden = false;
   book.innerHTML = achievementsHtml(meta);
+  const applyFilter = (mode: string) => {
+    for (const button of book.querySelectorAll<HTMLButtonElement>('[data-filter]')) {
+      button.classList.toggle('on', button.dataset.filter === mode);
+    }
+    for (const row of book.querySelectorAll<HTMLElement>('.ach')) {
+      const done = row.dataset.done === '1';
+      row.hidden = mode === 'done' ? !done : mode === 'open' ? done : false;
+    }
+    for (const section of book.querySelectorAll<HTMLElement>('.ach-group')) {
+      section.hidden = [...section.querySelectorAll<HTMLElement>('.ach')].every((row) => row.hidden);
+    }
+  };
+  for (const button of book.querySelectorAll<HTMLButtonElement>('[data-filter]')) {
+    button.onclick = () => applyFilter(button.dataset.filter || 'all');
+  }
   book.querySelector<HTMLButtonElement>('#achieve-close')!.onclick = () => {
     book.hidden = true;
   };
+}
+
+function ratingBook(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('#rating-book');
+}
+
+function showRatingBook(html: string, bind: (book: HTMLElement) => void) {
+  const book = ratingBook();
+  if (!book) return;
+  hideBooks();
+  book.hidden = false;
+  book.innerHTML = html;
+  bind(book);
+}
+
+async function openRating() {
+  title.hidden = false;
+  const stored = readStoredProfile();
+  let note = '';
+  if (stored) {
+    const remote = await publishProfile(stored);
+    if (remote.soon) note = SOON;
+  }
+  showRatingBook(profileHtml(readStoredProfile(), note), bindProfile);
+}
+
+function bindProfile(book: HTMLElement) {
+  let emblem: EmblemId = readStoredProfile()?.emblem ?? 'road';
+  const nickInput = book.querySelector<HTMLInputElement>('#rating-nick');
+  const paintTag = () => {
+    const nick = cleanNick(nickInput?.value || '');
+    const tag = readStoredProfile()?.tag || '0000';
+    const line = book.querySelector<HTMLElement>('[data-testid="rating-tag"]');
+    if (line) line.textContent = `На таблице: ${nickOk(nick) ? displayTag(nick, tag) : `имя#${tag}`}`;
+  };
+  nickInput?.addEventListener('input', paintTag);
+  for (const button of book.querySelectorAll<HTMLButtonElement>('[data-emblem]')) {
+    button.onclick = () => {
+      const picked = button.dataset.emblem || '';
+      if (!isEmblem(picked)) return;
+      emblem = picked;
+      for (const other of book.querySelectorAll<HTMLButtonElement>('[data-emblem]')) other.classList.toggle('on', other === button);
+    };
+  }
+  book.querySelector<HTMLButtonElement>('#rating-save')!.onclick = () => {
+    const nick = cleanNick(nickInput?.value || '');
+    if (!nickOk(nick)) {
+      flash('Имени нужно от 3 до 16 знаков');
+      return;
+    }
+    const previous = readStoredProfile();
+    const profile: LocalProfile = { nick, tag: previous?.tag || '1000', emblem };
+    void net.signIn().then(async () => {
+      profile.tag = previous?.tag || tagFromUid(net.uid);
+      const saved = await publishProfile(profile);
+      writeStoredProfile(saved.profile);
+      showRatingBook(profileHtml(saved.profile, saved.soon ? SOON : ''), bindProfile);
+      if (!saved.soon) flash(`Имя ${displayTag(saved.profile.nick, saved.profile.tag)}`);
+    }).catch(() => {
+      writeStoredProfile(profile);
+      showRatingBook(profileHtml(profile, SOON), bindProfile);
+    });
+  };
+  book.querySelector<HTMLButtonElement>('#rating-board')!.onclick = () => void openBoard();
+  book.querySelector<HTMLButtonElement>('#rating-close')!.onclick = () => {
+    book.hidden = true;
+  };
+}
+
+async function openBoard() {
+  await net.signIn().catch(() => {});
+  const loaded = net.uid ? await loadBoard(net.uid) : { rows: [], me: null, place: '—', soon: true };
+  const history = net.uid && !loaded.soon ? await loadHistory(net.uid) : [];
+  const soon = loaded.soon ? SOON : '';
+  showRatingBook(boardHtml(loaded.rows, loaded.me, loaded.place, soon).replace(
+    '<div data-testid="board-list">',
+    `<h3>Последние партии</h3><div data-testid="rating-history">${historyHtml(history)}</div><div data-testid="board-list">`,
+  ), (book) => {
+    book.querySelector<HTMLButtonElement>('#board-back')!.onclick = () => void openRating();
+    book.querySelector<HTMLButtonElement>('#rating-close')!.onclick = () => {
+      book.hidden = true;
+    };
+  });
 }
 
 function openStats() {
@@ -4115,6 +4233,49 @@ function expose() {
       title.hidden = false;
       showUnlock('Собрать 1000 золота');
     },
+    previewProfile() {
+      title.hidden = false;
+      const profile: LocalProfile = { nick: 'Хозяин', tag: '2048', emblem: 'eagle' };
+      writeStoredProfile(profile);
+      showRatingBook(profileHtml(profile, ''), bindProfile);
+    },
+    previewBoard() {
+      title.hidden = false;
+      const rows: BoardEntry[] = [
+        { uid: 'a', nick: 'Ольха', tag: '1101', emblem: 'oak', rating: 1240, place: 1, self: false },
+        { uid: 'b', nick: 'Ковыль', tag: '1102', emblem: 'wolf', rating: 1188, place: 2, self: false },
+        { uid: 'me', nick: 'Хозяин', tag: '2048', emblem: 'eagle', rating: 1116, place: 3, self: true },
+        { uid: 'c', nick: 'Суходол', tag: '1104', emblem: 'keep', rating: 1044, place: 4, self: false },
+        { uid: 'd', nick: 'Путник', tag: '1105', emblem: 'road', rating: 980, place: 5, self: false },
+      ];
+      const me = { nick: 'Хозяин', tag: '2048', emblem: 'eagle' as const, rating: 1116, games: 4, wins: 3, last: '' };
+      const history = historyHtml([
+        { opp: 'Ковыль#1102', delta: 16, rating: 1116, winner: 'me', at: 2 },
+        { opp: 'Суходол#1104', delta: -12, rating: 1100, winner: 'c', at: 1 },
+      ]);
+      showRatingBook(boardHtml(rows, me, '3', '').replace(
+        '<div data-testid="board-list">',
+        `<h3>Последние партии</h3><div data-testid="rating-history">${history}</div><div data-testid="board-list">`,
+      ), (book) => {
+        book.querySelector<HTMLButtonElement>('#board-back')!.onclick = () => {};
+        book.querySelector<HTMLButtonElement>('#rating-close')!.onclick = () => {
+          book.hidden = true;
+        };
+      });
+    },
+    previewRanked() {
+      title.hidden = true;
+      netView.showList({ ranked: true, name: 'Рейтинговый тракт', map: 'normal' });
+    },
+    previewRatingChange() {
+      title.hidden = true;
+      endScreen.hidden = false;
+      endScreen.innerHTML = `<div class="card results-card">
+        <h1 data-testid="results-title">Победа</h1>
+        <p data-testid="results-detail">Условие «Завоевание» выполнено.</p>
+        <p id="rating-line" data-testid="rating-line">Рейтинг 1000 → 1016 (+16)</p>
+      </div>`;
+    },
     stageRoad() {
       const keep = playerKeep(state, localPlayer);
       if (!keep) return;
@@ -4538,6 +4699,10 @@ declare global {
       previewMeta: () => void;
       previewStats: () => void;
       previewUnlock: () => void;
+      previewProfile: () => void;
+      previewBoard: () => void;
+      previewRanked: () => void;
+      previewRatingChange: () => void;
       stageRoad: () => void;
     };
   }
@@ -4705,36 +4870,55 @@ function netMessage(err: unknown, fallback: string) {
 }
 
 function lobbyPack(draft: LobbyDraft, worldSeed: number) {
-  const profiles = defaultProfiles().map((profile) => ({ ...profile, difficulty: draft.difficulty }));
-  const setup = normalizeSetup({
-    victory: draft.victory,
-    timeLimit: draft.timeLimit,
-    map: draft.map,
-    start: draft.start,
-    ai: draft.ai,
-    goldTarget: draft.goldTarget,
-    popTarget: draft.popTarget,
-    surviveMinutes: draft.surviveMinutes,
-    teams: draft.teams,
-    seasons: draft.seasons,
-    events: draft.events,
-    profiles,
-  });
+  const profiles = defaultProfiles().map((profile) => ({ ...profile, difficulty: draft.ranked ? 'normal' : draft.difficulty }));
+  const setup = draft.ranked
+    ? rankedSetup(draft.map)
+    : normalizeSetup({
+        victory: draft.victory,
+        timeLimit: draft.timeLimit,
+        map: draft.map,
+        start: draft.start,
+        ai: draft.ai,
+        goldTarget: draft.goldTarget,
+        popTarget: draft.popTarget,
+        surviveMinutes: draft.surviveMinutes,
+        teams: draft.teams,
+        seasons: draft.seasons,
+        events: draft.events,
+        profiles,
+      });
   return {
     name: draft.name,
-    maxPlayers: draft.maxPlayers,
-    seed: packSeed(worldSeed, setup),
+    maxPlayers: draft.ranked ? 2 : draft.maxPlayers,
+    seed: packSeed(worldSeed, { ...setup, profiles }),
     profiles,
-    speed: draft.speed,
-    teams: draft.teams,
-    seasons: draft.seasons,
-    events: draft.events,
-    password: draft.password,
-  };
+    speed: draft.ranked ? 1 : draft.speed,
+    teams: draft.ranked ? 'ffa' : draft.teams,
+    seasons: draft.ranked ? 'off' : draft.seasons,
+    events: draft.ranked ? 'off' : draft.events,
+    password: draft.ranked ? '' : draft.password,
+    ranked: draft.ranked,
+  } as const;
+}
+
+function paintRatingLine(text: string) {
+  const line = document.querySelector<HTMLElement>('#rating-line');
+  if (line) line.textContent = text;
+}
+
+async function reportRanked(forfeit: boolean) {
+  const packet = net.resultPacket(forfeit);
+  if (!packet) return;
+  const result = await settleRanked(packet);
+  paintRatingLine(result.text);
 }
 
 const netView = new NetView(document.querySelector<HTMLElement>('#net')!, document.querySelector<HTMLElement>('#syncbox')!, {
   create: (draft) => {
+    if (draft.ranked && !readStoredProfile()) {
+      flash('Для рейтинговой партии нужно имя в «Рейтинг»');
+      return;
+    }
     rememberName();
     const world = Number(document.querySelector<HTMLInputElement>('#seed')?.value ?? '1') >>> 0;
     const packed = lobbyPack(draft, world);
@@ -4776,7 +4960,12 @@ net.hooks = {
     if (!playing) openNet();
   },
   onError: (message) => netView.error(message),
-  onEnded: () => {},
+  onEnded: () => {
+    void reportRanked(false);
+  },
+  onForfeit: () => {
+    void reportRanked(true);
+  },
 };
 
 function showInstallOffer() {

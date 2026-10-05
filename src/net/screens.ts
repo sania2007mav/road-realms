@@ -14,6 +14,7 @@ export interface LobbyDraft {
   seasons: 'off' | 'normal' | 'long';
   events: 'off' | 'rare' | 'normal' | 'often';
   difficulty: RoomView['draft']['difficulty'];
+  ranked: boolean;
   goldTarget: number;
   popTarget: number;
   surviveMinutes: number;
@@ -44,6 +45,7 @@ const DEFAULT_DRAFT: LobbyDraft = {
   seasons: 'normal',
   events: 'normal',
   difficulty: 'normal',
+  ranked: false,
   goldTarget: 2000,
   popTarget: 20,
   surviveMinutes: 20,
@@ -227,6 +229,7 @@ function readDraft(root: ParentNode, prefix: string, fallback: LobbyDraft): Lobb
     seasons: seasons === 'off' || seasons === 'normal' || seasons === 'long' ? seasons : fallback.seasons,
     events: events === 'off' || events === 'rare' || events === 'normal' || events === 'often' ? events : fallback.events,
     difficulty: difficulty === 'easy' || difficulty === 'hard' || difficulty === 'cruel' ? difficulty : 'normal',
+    ranked: root.querySelector<HTMLInputElement>('[data-testid="lobby-ranked"]')?.checked === true,
     goldTarget: [1000, 2000, 4000].includes(Number(value('gold'))) ? Number(value('gold')) : 2000,
     popTarget: [12, 20, 30].includes(Number(value('pop'))) ? Number(value('pop')) : 20,
     surviveMinutes: [10, 20, 30].includes(Number(value('survive'))) ? Number(value('survive')) : 20,
@@ -283,6 +286,10 @@ export class NetView {
       ['4', '4 игрока'],
     ]);
     max.id = 'lobby-max';
+    const ranked = el('input');
+    ranked.type = 'checkbox';
+    ranked.dataset.testid = 'lobby-ranked';
+    ranked.checked = this.prefill.ranked;
     const pass = el('input');
     pass.type = 'password';
     pass.dataset.testid = 'lobby-pass';
@@ -290,6 +297,31 @@ export class NetView {
     pass.placeholder = 'Пароль, если нужен';
     pass.autocomplete = 'off';
     const grid = setupGrid(this.prefill, 'lobby');
+    const applyRanked = () => {
+      const on = ranked.checked;
+      max.disabled = on;
+      pass.disabled = on;
+      if (on) {
+        max.value = '2';
+        pass.value = '';
+      }
+      for (const control of grid.querySelectorAll<HTMLSelectElement>('select')) {
+        const keep = control.dataset.testid === 'lobby-map';
+        control.disabled = on && !keep;
+        if (!on || keep) continue;
+        if (control.dataset.testid === 'lobby-victory') control.value = 'conquest';
+        if (control.dataset.testid === 'lobby-time') control.value = '0';
+        if (control.dataset.testid === 'lobby-speed') control.value = '1';
+        if (control.dataset.testid === 'lobby-start') control.value = 'normal';
+        if (control.dataset.testid === 'lobby-ai') control.value = '0';
+        if (control.dataset.testid === 'lobby-diff') control.value = 'normal';
+        if (control.dataset.testid === 'lobby-teams') control.value = 'ffa';
+        if (control.dataset.testid === 'lobby-seasons') control.value = 'off';
+        if (control.dataset.testid === 'lobby-events') control.value = 'off';
+      }
+    };
+    ranked.addEventListener('change', applyRanked);
+    applyRanked();
     const buttons = el('div', 'actions');
     const create = el('button');
     create.type = 'button';
@@ -305,7 +337,9 @@ export class NetView {
     err.id = 'net-error';
     err.dataset.testid = 'net-error';
     buttons.append(create, back);
-    form.append(labeled('Название', name), labeled('Игроков в комнате', max), labeled('Пароль комнаты', pass), grid, buttons);
+    const rankedLabel = labeled('Рейтинговая', ranked);
+    rankedLabel.dataset.testid = 'lobby-ranked-label';
+    form.append(labeled('Название', name), rankedLabel, labeled('Игроков в комнате', max), labeled('Пароль комнаты', pass), grid, buttons);
     card.append(title, note, list, form, err);
     this.root.append(card);
     const empty = el('p');

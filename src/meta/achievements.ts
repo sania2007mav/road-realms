@@ -499,22 +499,27 @@ export function achievementsHtml(meta: MetaState): string {
       const cards = items
         .map((row) => {
           const width = row.goal > 0 ? Math.round((row.value / row.goal) * 100) : 0;
-          return `<article class="ach${row.done ? ' done' : ''}${row.hidden ? ' secret' : ''}" data-testid="ach-${row.id}">
+          return `<article class="ach${row.done ? ' done' : ''}${row.hidden ? ' secret' : ''}" data-done="${row.done ? '1' : '0'}" data-testid="ach-${row.id}">
             <span class="ach-ico" aria-hidden="true">${escapeHtml(row.icon)}</span>
-            <div>
+            <div class="ach-copy">
               <b>${escapeHtml(row.title)}</b>
               <p>${escapeHtml(row.detail)}</p>
-              <div class="ach-bar" role="progressbar" aria-valuenow="${row.value}" aria-valuemax="${row.goal}"><span style="width:${width}%"></span></div>
               <small>${row.hidden ? '???' : `${row.value} / ${row.goal}`}</small>
             </div>
+            <div class="ach-bar" role="progressbar" aria-valuenow="${row.value}" aria-valuemax="${row.goal}"><span style="width:${width}%"></span></div>
           </article>`;
         })
         .join('');
-      return `<section><h3>${group}</h3>${cards}</section>`;
+      return `<section class="ach-group"><h3>${group}</h3>${cards}</section>`;
     })
     .join('');
   return `<div class="card help-card">
-    <h2>Достижения <span data-testid="achieve-count">${count.done} / ${count.total}</span></h2>
+    <header class="help-head ach-head"><h2>Достижения <span data-testid="achieve-count">${count.done} / ${count.total}</span></h2></header>
+    <div class="ach-filters" role="tablist">
+      <button type="button" data-filter="all" data-testid="ach-filter-all" class="on">Все</button>
+      <button type="button" data-filter="done" data-testid="ach-filter-done">Полученные</button>
+      <button type="button" data-filter="open" data-testid="ach-filter-open">В процессе</button>
+    </div>
     <div class="help-body">${body}</div>
     <div class="actions"><button type="button" id="achieve-close" data-testid="achieve-close">Закрыть</button></div>
   </div>`;
