@@ -361,6 +361,12 @@ function syncLandMode() {
     hint.hidden = !phonePortrait() || dismissed;
   }
   parkLand();
+  const home = document.querySelector<HTMLButtonElement>('#home');
+  if (home) {
+    home.textContent = land ? 'Дом' : 'К себе';
+    home.title = 'К себе';
+    home.setAttribute('aria-label', 'К себе');
+  }
   syncPlaceChrome();
   measureLandTrays();
   if (changed) resourceSig = '';
@@ -1640,11 +1646,13 @@ function syncHud() {
   if (nextLog !== logSig) {
     logSig = nextLog;
     logEl.replaceChildren();
-    for (const line of state.log) {
+    const lines = phoneLandscape() ? state.log.slice(-1) : state.log;
+    for (const line of lines) {
       const row = document.createElement('button');
       row.type = 'button';
       row.className = 'log-line';
-      row.textContent = line;
+      row.title = line;
+      row.textContent = phoneLandscape() && line.length > 14 ? `${line.slice(0, 13)}…` : line;
       row.onclick = () => jumpToLine(line);
       logEl.append(row);
     }

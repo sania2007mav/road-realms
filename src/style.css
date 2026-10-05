@@ -1301,6 +1301,7 @@ html.phone-land #topbar {
   gap: 4px;
   padding: 4px;
   overflow: hidden;
+  min-width: 0;
   pointer-events: auto;
   background: #1c1612;
   border-right: 1px solid var(--line);
@@ -1334,12 +1335,14 @@ html.phone-land #resources {
   flex-wrap: nowrap;
   align-items: stretch;
   width: 100%;
+  min-width: 0;
   flex: 1 1 auto;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
   gap: 4px;
-  padding: 0;
+  padding: 0 0 6px;
   touch-action: pan-y;
 }
 html.phone-land .resgroup {
@@ -1347,6 +1350,8 @@ html.phone-land .resgroup {
   flex-direction: column;
   align-items: stretch;
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   border-radius: 10px;
   padding: 0;
   background: transparent;
@@ -1361,15 +1366,28 @@ html.phone-land .resgroup .glabel {
   background: #2b241d;
   border-radius: 8px;
 }
-html.phone-land .resgroup .gbody { display: none; flex-direction: column; gap: 2px; padding-top: 2px; }
+html.phone-land .resgroup .gbody {
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 2px;
+  min-width: 0;
+  max-width: 100%;
+}
 html.phone-land .resgroup.open .gbody { display: flex; }
 html.phone-land .res {
   width: 100%;
-  min-height: 24px;
-  justify-content: space-between;
-  font-size: 12px;
-  padding: 2px 6px;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 22px;
+  justify-content: flex-start;
+  font-size: 11px;
+  padding: 1px 4px;
+  gap: 3px;
+  overflow: hidden;
 }
+html.phone-land .res i { width: 8px; height: 8px; flex: none; }
+html.phone-land .res b { margin-left: auto; flex: none; }
 
 html.phone-land #land-tray {
   display: flex;
@@ -1399,8 +1417,11 @@ html.phone-land #land-full {
   position: static;
   min-height: 44px;
   min-width: 44px;
-  padding: 4px;
-  font-size: 13px;
+  padding: 4px 2px;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
 }
 html.phone-land #land-row { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
 html.phone-land #land-full:not([hidden]) { display: inline-flex; align-items: center; justify-content: center; }
@@ -1414,7 +1435,7 @@ html.phone-land #dock {
   width: var(--land-right);
   display: grid;
   grid-template-columns: 1fr 1fr;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: 44px minmax(0, 1fr) auto;
   align-content: stretch;
   gap: 4px;
   padding: 4px;
@@ -1426,15 +1447,28 @@ html.phone-land #dock {
 html.phone-land #dock > * { pointer-events: auto; }
 html.phone-land #econ { display: none !important; }
 html.phone-land #econ.in-menu { display: flex !important; }
-html.phone-land #home { grid-column: 1; grid-row: 1; position: static; bottom: auto; right: auto; min-height: 44px; }
+html.phone-land #home,
+html.phone-land #map-toggle {
+  position: static !important;
+  top: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  left: auto !important;
+  min-height: 44px;
+  max-height: 44px;
+  min-width: 0;
+  padding: 4px 2px;
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html.phone-land #home { grid-column: 1; grid-row: 1; }
 html.phone-land #map-toggle {
   display: inline-flex !important;
   grid-column: 2;
   grid-row: 1;
-  position: static;
-  bottom: auto;
-  right: auto;
-  min-height: 44px;
   align-items: center;
   justify-content: center;
 }
@@ -1497,21 +1531,46 @@ html.phone-land #army {
   z-index: 7;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 4px;
+  gap: 2px;
+  padding: 0;
   background: #1c1612;
+  overflow: hidden;
 }
-html.phone-land #army-groups { display: flex; gap: 4px; }
+html.phone-land #army-groups {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+}
 html.phone-land #army-groups button,
 html.phone-land #army-box,
 html.phone-land #army-actions button {
   min-height: 44px;
-  min-width: 44px;
-  flex: 1;
-  padding: 4px;
+  min-width: 0;
+  width: 100%;
+  flex: none;
+  padding: 2px 4px;
+  font-size: 13px;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-html.phone-land #army-body { position: static; width: auto; }
-html.phone-land #army-count { margin: 0; font-size: 11px; }
+html.phone-land #army-groups button { min-width: 44px; padding: 0; }
+html.phone-land #army-box { min-width: 44px; }
+html.phone-land #army-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+html.phone-land #army-home { grid-column: 1 / -1; }
+html.phone-land #army-body { position: static; width: auto; min-width: 0; }
+html.phone-land #army-count {
+  margin: 0;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 html.phone-land #army-clear,
 html.phone-land #army-hint { display: none; }
 html.placing-build #army { display: none !important; }
@@ -1560,6 +1619,24 @@ html.phone-land #log {
   max-height: 22px;
   margin: 0;
   z-index: 5;
+  overflow: hidden;
+  pointer-events: auto;
+}
+html.phone-land #log .log-line {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  height: 18px;
+  margin: 0;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 html.phone-land #hint,
 html.phone-land #tutorial {

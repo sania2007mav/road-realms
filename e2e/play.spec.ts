@@ -1015,6 +1015,92 @@ test('настройки лобби видны до старта', async ({ page
   }
 });
 
+test('живая партия: пароль, условия, минута локстепа', async ({ browser }) => {
+  test.setTimeout(180_000);
+  const lobbyName = `Жив ${Date.now().toString(36)}`.slice(0, 12);
+  const host = await browser.newContext();
+  const guest = await browser.newContext();
+  await host.addInitScript(() => {
+    localStorage.setItem('dorozhnye-kraya-name', 'Хозяин');
+    localStorage.setItem('dorozhnye-kraya-tutorial', '1');
+  });
+  await guest.addInitScript(() => {
+    localStorage.setItem('dorozhnye-kraya-name', 'Путник');
+    localStorage.setItem('dorozhnye-kraya-tutorial', '1');
+  });
+  const a = await host.newPage();
+  const b = await guest.newPage();
+  const errors: string[] = [];
+  for (const page of [a, b]) {
+    page.on('pageerror', (err) => errors.push(err.message));
+  }
+  try {
+    await a.goto('/road-realms/');
+    await a.getByTestId('net-game').click();
+    await expect(a.getByTestId('lobby-setup')).toBeVisible();
+    await expect(a.locator('#net-error')).toHaveText('', { timeout: 20_000 });
+    await a.getByTestId('lobby-max').selectOption('2');
+    await a.getByTestId('lobby-map').selectOption('large');
+    await a.getByTestId('lobby-speed').selectOption('2');
+    await a.getByTestId('lobby-start').selectOption('high');
+    await a.getByTestId('lobby-ai').selectOption('1');
+    await a.getByTestId('lobby-diff').selectOption('hard');
+    await a.getByTestId('lobby-teams').selectOption('pairs');
+    await a.getByTestId('lobby-pass').fill('тракт');
+    await a.getByTestId('lobby-name').fill(lobbyName);
+    await a.getByTestId('lobby-create').click({ timeout: 15_000 });
+    await expect(a.getByTestId('lobby-room')).toBeVisible({ timeout: 20_000 });
+    await expect(a.getByTestId('lobby-settings')).toContainText('2×');
+    await expect(a.getByTestId('lobby-settings')).toContainText('2×2');
+    await expect(a.getByTestId('lobby-settings')).toContainText('богатые');
+
+    await b.goto('/road-realms/');
+    await b.getByTestId('net-game').click();
+    const row = b.locator('.lobby-row', { hasText: lobbyName });
+    await expect(row).toBeVisible({ timeout: 20_000 });
+    await expect(row.getByTestId('lobby-lock')).toBeVisible();
+    await row.getByTestId('lobby-join').click();
+    await expect(b.getByTestId('net-error')).toContainText('парол', { timeout: 15_000 });
+    await b.getByTestId('lobby-pass').fill('тракт');
+    await row.getByTestId('lobby-join').click();
+    await expect(b.getByTestId('lobby-room')).toContainText('Хозяин', { timeout: 20_000 });
+    await expect(a.getByTestId('lobby-room')).toContainText('Путник');
+
+    await a.getByTestId('lobby-ready').click();
+    await b.getByTestId('lobby-ready').click();
+    await expect(a.getByTestId('lobby-start')).toBeEnabled({ timeout: 15_000 });
+    await a.getByTestId('lobby-start').click();
+    await expect(a.getByTestId('speed-1')).toBeDisabled({ timeout: 20_000 });
+    await expect(b.getByTestId('speed-1')).toBeDisabled({ timeout: 20_000 });
+    await a.locator('#ration').selectOption('feast');
+
+    const started = Date.now();
+    let matched = 0;
+    let maxTurn = 0;
+    while (Date.now() - started < 60_000) {
+      const left = await a.evaluate(() => window.__game?.mp() ?? null);
+      const right = await b.evaluate(() => window.__game?.mp() ?? null);
+      expect(left && right, JSON.stringify({ left, right, errors })).toBeTruthy();
+      await expect(a.locator('#syncbox')).not.toContainText('Рассинхронизация');
+      await expect(b.locator('#syncbox')).not.toContainText('Рассинхронизация');
+      if (left!.turn === right!.turn) {
+        expect(left!.hash, JSON.stringify({ left, right })).toBe(right!.hash);
+        matched += 1;
+        maxTurn = Math.max(maxTurn, left!.turn);
+      }
+      await a.waitForTimeout(1000);
+    }
+    expect(maxTurn, JSON.stringify({ maxTurn, matched, errors })).toBeGreaterThan(40);
+    expect(matched, 'хотя бы одна общая сверка хеша').toBeGreaterThan(0);
+    expect(errors, errors.join('\n')).toEqual([]);
+  } finally {
+    await a.evaluate(() => window.__game?.cleanupNet()).catch(() => {});
+    await b.evaluate(() => window.__game?.cleanupNet()).catch(() => {});
+    await host.close();
+    await guest.close();
+  }
+});
+
 test('копейщики, конюшня и матрица контрударов', async ({ page }) => {
   test.setTimeout(120_000);
   mkdirSync(shots, { recursive: true });
@@ -1221,11 +1307,18 @@ test.describe('альбом телефона', () => {
         }
         const outside: string[] = [];
         const short: string[] = [];
+        const overflow: string[] = [];
+        const textOf = (el: Element) => (el.textContent || '').replace(/\s+/g, ' ').trim();
         for (const button of document.querySelectorAll('button')) {
           if (!shown(button) || clipped(button)) continue;
           const rect = button.getBoundingClientRect();
-          const name = button.id || button.textContent?.trim() || 'button';
+          const name = button.id || textOf(button) || 'button';
           if (rect.left < -1 || rect.top < -1 || rect.right > innerWidth + 1 || rect.bottom > innerHeight + 1) outside.push(name);
+          if (button.scrollWidth > button.clientWidth + 1) overflow.push(`${name}:${button.scrollWidth}>${button.clientWidth}`);
+        }
+        for (const chip of document.querySelectorAll('#resources .res')) {
+          if (!shown(chip)) continue;
+          if (chip.scrollWidth > chip.clientWidth + 1) overflow.push(`res:${textOf(chip)}:${chip.scrollWidth}>${chip.clientWidth}`);
         }
         for (const sel of ['#open-menu', '#land-full', '#army-box', '#speeds button', '#army-groups button']) {
           for (const button of document.querySelectorAll(sel)) {
@@ -1241,6 +1334,7 @@ test.describe('альбом телефона', () => {
           bad,
           outside,
           short,
+          overflow,
         };
       });
 
@@ -1257,6 +1351,7 @@ test.describe('альбом телефона', () => {
       expect(layout.bad, `${size.width} overlaps ${JSON.stringify(layout)}`).toEqual([]);
       expect(layout.outside, `${size.width} outside`).toEqual([]);
       expect(layout.short, `${size.width} thumbs`).toEqual([]);
+      expect(layout.overflow, `${size.width} text`).toEqual([]);
     }
 
     await page.setViewportSize({ width: 915, height: 412 });
@@ -1275,6 +1370,7 @@ test.describe('альбом телефона', () => {
     const ghost = await probe();
     expect(ghost.bad, JSON.stringify(ghost)).toEqual([]);
     expect(ghost.outside).toEqual([]);
+    expect(ghost.overflow, JSON.stringify(ghost.overflow)).toEqual([]);
     await page.screenshot({ path: `${shots}/land_ghost.png` });
 
     await page.evaluate(() => window.__game!.setSpeed(1));
@@ -1309,6 +1405,7 @@ test.describe('альбом телефона', () => {
     await expect(page.getByTestId('army-count')).toContainText('Всего 3');
     const army = await probe();
     expect(army.bad, JSON.stringify(army)).toEqual([]);
+    expect(army.overflow, JSON.stringify(army.overflow)).toEqual([]);
     expect(army.share).toBeGreaterThan(0.6);
     await page.screenshot({ path: `${shots}/land_army.png` });
     const keepId = await page.evaluate(() => window.__game!.snapshot().buildings.find((b) => b.type === 'keep')!.id);
