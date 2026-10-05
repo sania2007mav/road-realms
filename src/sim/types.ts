@@ -62,7 +62,10 @@ export type BuildingType =
   | 'pitchditch'
   | 'brazier'
   | 'oil'
-  | 'guild';
+  | 'guild'
+  | 'workshop'
+  | 'chapel'
+  | 'merccamp';
 
 export type Weapon =
   | 'club'
@@ -76,6 +79,10 @@ export type Weapon =
   | 'horsebow'
   | 'engineer'
   | 'ladder'
+  | 'siegetower'
+  | 'healer'
+  | 'raider'
+  | 'axe'
   | 'ram'
   | 'catapult';
 
@@ -237,6 +244,10 @@ export interface Soldier {
   charge: number;
   /** 1 when the soldier was trained in armour. Lowers arrow damage. */
   armor: number;
+  /** 1 when a ladder is set against a wall, 2 when a siege tower is docked. */
+  dock: number;
+  /** 1 when the soldier was hired for gold and draws upkeep. */
+  merc: number;
 }
 
 export interface Ox {
@@ -317,6 +328,7 @@ export type Command =
   | { kind: 'upgrade'; playerId: number; buildingId: number }
   | { kind: 'market'; playerId: number; resource: Resource; mode: 'buy' | 'sell'; qty: number }
   | { kind: 'train'; playerId: number; weapon: Weapon }
+  | { kind: 'hire'; playerId: number; weapon: 'raider' | 'axe' }
   | { kind: 'mail'; playerId: number }
   | { kind: 'cow'; playerId: number; soldierId: number; x: number; y: number }
   | { kind: 'order'; playerId: number; order: 'defend' | 'raid' }

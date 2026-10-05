@@ -187,7 +187,7 @@ function pushCmd(command: Command) {
     const check = canPlace(state, command.playerId, command.building, command.x, command.y);
     if (check.ok) audio.play('place', command.x, command.y);
     else audio.play('ui-error');
-  } else if (command.kind === 'market') audio.play('coins');
+  } else if (command.kind === 'market' || command.kind === 'hire') audio.play('coins');
   else if (command.kind === 'army' || command.kind === 'train') audio.play('order');
   if (netMode) net.submit(command);
   else queue.push(command);
@@ -1900,11 +1900,25 @@ function syncPanel() {
         </div>`
       : mine && building.type === 'guild' && building.complete
         ? `<div class="row">
-          <button type="button" data-testid="train-engineer">Инженер (3 дерева, 1 железо)</button>
+          <button type="button" data-testid="train-engineer">Инженер (3 дерева, 1 железо, 10 золота)</button>
           <button type="button" data-testid="train-ladder">Лестничник (8 дерева)</button>
           <button type="button" data-testid="train-ram">Таран (16 дерева, 4 камня)</button>
           <button type="button" data-testid="train-catapult">Катапульта (18 дерева, 10 камня, 4 железа)</button>
           <button type="button" data-testid="launch-cow">Пустить корову</button>
+        </div>`
+        : mine && building.type === 'workshop' && building.complete
+          ? `<div class="row">
+          <button type="button" data-testid="train-engineer">Инженер (3 дерева, 1 железо, 10 золота)</button>
+          <button type="button" data-testid="train-ladder">Лестничник (8 дерева)</button>
+          <button type="button" data-testid="train-siegetower">Осадная башня (12 дерева, 6 камня, 8 золота)</button>
+        </div>`
+          : mine && building.type === 'chapel' && building.complete
+            ? `<div class="row"><button type="button" data-testid="train-healer">Лекарь (4 дерева, 8 золота)</button></div>`
+            : mine && building.type === 'merccamp' && building.complete
+              ? `<div class="row" data-testid="merc-panel">
+          <p>В лагере: налётчики ${building.buffer}, топорники ${building.input}. Содержание: 2 и 3 золота в минуту.</p>
+          <button type="button" data-testid="hire-raider">Степной налётчик (40 золота)</button>
+          <button type="button" data-testid="hire-axe">Топорник (56 золота)</button>
         </div>`
         : mine && building.type === 'armoury' && building.complete && state.players[localPlayer].mail !== 1
           ? `<div class="row"><button type="button" data-testid="train-mail">Укрепить доспехи (4)</button></div>`
@@ -1978,12 +1992,20 @@ function syncPanel() {
     selectedPersonId = null;
     panelSig = '';
   });
-  for (const weapon of ['club', 'spear', 'sword', 'bow', 'crossbow', 'shield', 'light', 'heavy', 'horsebow', 'engineer', 'ladder', 'ram', 'catapult'] as const) {
+  for (const weapon of ['club', 'spear', 'sword', 'bow', 'crossbow', 'shield', 'light', 'heavy', 'horsebow', 'engineer', 'ladder', 'siegetower', 'healer', 'ram', 'catapult'] as const) {
     panel.querySelector<HTMLButtonElement>(`[data-testid="train-${weapon}"]`)?.addEventListener('click', () => {
       pushCmd({ kind: 'train', playerId: localPlayer, weapon });
       panelSig = '';
     });
   }
+  panel.querySelector<HTMLButtonElement>('[data-testid="hire-raider"]')?.addEventListener('click', () => {
+    pushCmd({ kind: 'hire', playerId: localPlayer, weapon: 'raider' });
+    panelSig = '';
+  });
+  panel.querySelector<HTMLButtonElement>('[data-testid="hire-axe"]')?.addEventListener('click', () => {
+    pushCmd({ kind: 'hire', playerId: localPlayer, weapon: 'axe' });
+    panelSig = '';
+  });
   panel.querySelector<HTMLButtonElement>('[data-testid="train-mail"]')?.addEventListener('click', () => {
     pushCmd({ kind: 'mail', playerId: localPlayer });
     panelSig = '';
@@ -2308,6 +2330,12 @@ function syncArmy() {
   if (light) bits.push(`лёгкая конница ${light}`);
   if (heavy) bits.push(`тяжёлая конница ${heavy}`);
   if (horsebows) bits.push(`степные ${horsebows}`);
+  const healers = list.filter((s) => s.weapon === 'healer').length;
+  const raiders = list.filter((s) => s.weapon === 'raider').length;
+  const axes = list.filter((s) => s.weapon === 'axe').length;
+  if (healers) bits.push(`лекари ${healers}`);
+  if (raiders) bits.push(`налётчики ${raiders}`);
+  if (axes) bits.push(`топорники ${axes}`);
   armyCount.textContent = bits.join(' · ');
   armyAttack.setAttribute('aria-pressed', attackArmed ? 'true' : 'false');
   armyBox.setAttribute('aria-pressed', boxMode ? 'true' : 'false');
@@ -2795,6 +2823,83 @@ function stageBatchScene(kind: string) {
   silenceScene();
 }
 
+function stageCraftScene(kind: string) {
+  const keep = playerKeep(state, localPlayer);
+  if (!keep) return;
+  silenceScene();
+  state.mobs = [];
+  state.soldiers = [];
+  const foe = ensureFoe(keep.x + 16, keep.y + 8);
+  const foePlayer = state.players[foe];
+  if (foePlayer) foePlayer.isAi = false;
+  const x0 = keep.x + 6;
+  const y0 = keep.y + 4;
+  if (kind === 'mercs') {
+    dressTown(keep.x, keep.y);
+    const camp = createBuilding(state, localPlayer, 'merccamp', keep.x + 6, keep.y + 1, true);
+    camp.buffer = 2;
+    camp.input = 1;
+    camp.gear = 1;
+    camp.work = 90;
+    state.players[localPlayer].gold = 180;
+    selectedId = camp.id;
+    selectedPersonId = null;
+    panel.hidden = false;
+    panelSig = '';
+    lookAtPoint(camp.x + 1.2, camp.y + 1);
+    camera.zoom = 1.35;
+    clampView();
+    silenceScene();
+    panel.hidden = false;
+    panelSig = '';
+    return;
+  }
+  for (let x = x0; x <= x0 + 5; x++) createBuilding(state, foe, 'wall', x, y0, true);
+  if (kind === 'ladders') {
+    for (let i = 0; i < 3; i++) {
+      const ladder = createSoldier(state, localPlayer, x0 + 1 + i * 1.6, y0 + 0.45, 'ladder');
+      ladder.dock = 1;
+      ladder.order = 'hold';
+      ladder.anchorX = ladder.x;
+      ladder.anchorY = ladder.y;
+    }
+    for (let i = 0; i < 4; i++) {
+      const climber = createSoldier(state, localPlayer, x0 + 0.8 + (i % 2) * 1.5, y0 + 0.15 + Math.floor(i / 2) * 0.35, i % 2 === 0 ? 'spear' : 'club');
+      climber.order = 'hold';
+    }
+    const engineer = createSoldier(state, localPlayer, x0 + 0.4, y0 + 1.35, 'engineer');
+    engineer.order = 'hold';
+    lookAtPoint(x0 + 2.2, y0 + 0.6);
+  } else if (kind === 'siege-tower') {
+    const tower = createSoldier(state, localPlayer, x0 + 2.2, y0 + 0.85, 'siegetower');
+    tower.dock = 2;
+    tower.order = 'hold';
+    for (let i = 0; i < 3; i++) {
+      const man = createSoldier(state, localPlayer, x0 + 1.6 + i * 0.45, y0 + 0.15, 'club');
+      man.order = 'hold';
+    }
+    lookAtPoint(x0 + 2.2, y0 + 0.45);
+  } else {
+    const wounded = [];
+    for (let i = 0; i < 4; i++) {
+      const man = createSoldier(state, localPlayer, x0 + i * 0.7, y0 + 1.2, 'club');
+      man.hp = 12 + i * 3;
+      man.order = 'hold';
+      wounded.push(man);
+    }
+    const healer = createSoldier(state, localPlayer, x0 + 1.1, y0 + 0.45, 'healer');
+    healer.order = 'hold';
+    selectedSoldiers.clear();
+    for (const man of wounded) selectedSoldiers.add(man.id);
+    selectedSoldiers.add(healer.id);
+    for (let i = 0; i < 12; i++) step(state, []);
+    lookAtPoint(x0 + 1.2, y0 + 0.9);
+  }
+  camera.zoom = ZOOM_MAX;
+  clampView();
+  silenceScene();
+}
+
 function stageAiScene(kind: string) {
   const foe = state.players.find((player) => player.isAi && player.personality === (kind === 'ai-walls' ? 'builder' : 'warlord')) ?? state.players[1];
   const home = playerKeep(state, localPlayer);
@@ -2986,6 +3091,10 @@ function expose() {
       }
       if (kind === 'cavalry-fight' || kind === 'supply' || kind === 'battle' || kind === 'hud') {
         stageBatchScene(kind);
+        return;
+      }
+      if (kind === 'ladders' || kind === 'siege-tower' || kind === 'healer' || kind === 'mercs') {
+        stageCraftScene(kind);
         return;
       }
       const keep = playerKeep(state, localPlayer);

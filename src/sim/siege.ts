@@ -1,4 +1,5 @@
-import { BUILDINGS, BOW_RANGE, CLOUD_RADIUS, CLOUD_TICKS, CROSSBOW_RANGE, HORSEBOW_RANGE, PITCH_BURN, POP_MAX, POP_MIN, TOWER_RANGE } from './balance';
+import { BUILDINGS, BOW_RANGE, CLOUD_RADIUS, CLOUD_TICKS, CROSSBOW_RANGE, HORSEBOW_RANGE, LADDER_WOOD, MERC_REFRESH, PITCH_BURN, POP_MAX, POP_MIN, TOWER_RANGE } from './balance';
+import { createSoldier } from './entities';
 import { findPath, tileBlocked } from './path';
 import { hostile } from './match';
 import { roadPace } from './roads';
@@ -53,21 +54,19 @@ export function moverOf(soldier: Soldier): Mover {
   return 'soldier';
 }
 
-export function trainHall(weapon: Weapon): 'barracks' | 'guild' {
-  if (
-    weapon === 'club' ||
-    weapon === 'sword' ||
-    weapon === 'bow' ||
-    weapon === 'spear' ||
-    weapon === 'light' ||
-    weapon === 'heavy' ||
-    weapon === 'crossbow' ||
-    weapon === 'shield' ||
-    weapon === 'horsebow'
-  ) {
-    return 'barracks';
-  }
-  return 'guild';
+export function trainHall(weapon: Weapon): 'barracks' | 'guild' | 'workshop' | 'chapel' {
+  if (weapon === 'healer') return 'chapel';
+  if (weapon === 'siegetower') return 'workshop';
+  if (weapon === 'engineer' || weapon === 'ladder' || weapon === 'ram' || weapon === 'catapult') return 'guild';
+  return 'barracks';
+}
+
+/** Halls that may train this weapon. Engineers and ladder crews still muster at the old guild. */
+export function trainSites(weapon: Weapon): BuildingType[] {
+  if (weapon === 'engineer' || weapon === 'ladder') return ['workshop', 'guild'];
+  if (weapon === 'siegetower') return ['workshop'];
+  if (weapon === 'healer') return ['chapel'];
+  return [trainHall(weapon)];
 }
 
 function covers(building: Building, x: number, y: number): boolean {
@@ -166,6 +165,7 @@ export function blocksMover(state: GameState, x: number, y: number, playerId: nu
   if (fort.type === 'palisade' || fort.type === 'wall') {
     if (!own && kind === 'ladder') return false;
     if (own && kind === 'bow' && wallAccess(state, playerId).has(y * state.mapW + x)) return false;
+    if (wallClimbed(state, x, y, playerId)) return false;
     return true;
   }
   return false;
@@ -368,7 +368,8 @@ function unitOn(state: GameState, x: number, y: number, range: number, enemyOf: 
 function burnUnit(state: GameState, x: number, y: number) {
   for (const soldier of state.soldiers) {
     if (soldier.hp <= 0) continue;
-    if (Math.hypot(soldier.x - x, soldier.y - y) <= 0.8) soldier.hp -= 4;
+    if (Math.hypot(soldier.x - x, soldier.y - y) > 0.8) continue;
+    soldier.hp -= soldier.weapon === 'siegetower' ? 16 : 4;
   }
   for (const person of state.people) {
     if (person.hp <= 0) continue;
@@ -440,7 +441,7 @@ function updateOil(state: GameState) {
       if (soldier.hp <= 0 || !hostile(state, soldier.playerId, vat.playerId)) continue;
       if (!state.players[soldier.playerId]?.alive) continue;
       if (Math.hypot(soldier.x - spot.x, soldier.y - spot.y) > 1.6) continue;
-      soldier.hp -= 8;
+      soldier.hp -= soldier.weapon === 'siegetower' ? 22 : 8;
       hit = true;
     }
     if (!hit) continue;
@@ -498,11 +499,124 @@ function refreshSeals(state: GameState, note: (text: string) => void) {
   }
 }
 
+export function wallClimbed(state: GameState, x: number, y: number, playerId: number): boolean {
+  for (const soldier of state.soldiers) {
+    if (soldier.hp <= 0 || soldier.playerId !== playerId) continue;
+    const placed = (soldier.weapon === 'ladder' && (soldier.dock ?? 0) === 1) || (soldier.weapon === 'siegetower' && (soldier.dock ?? 0) === 2);
+    if (!placed) continue;
+    const sx = Math.floor(soldier.x);
+    const sy = Math.floor(soldier.y);
+    if (Math.max(Math.abs(sx - x), Math.abs(sy - y)) <= 1) return true;
+  }
+  return false;
+}
+
+function nearestHostileLine(state: GameState, x: number, y: number, playerId: number, types: readonly BuildingType[], range: number): Building | null {
+  let best: Building | null = null;
+  let bestD = range;
+  for (const building of state.buildings) {
+    if (building.hp <= 0 || !building.complete || !types.includes(building.type)) continue;
+    if (!hostile(state, building.playerId, playerId)) continue;
+    const spot = center(building);
+    const d = Math.hypot(spot.x - x, spot.y - y);
+    if (d > bestD + 1e-9) continue;
+    if (best && d > bestD - 1e-9 && building.id > best.id) continue;
+    best = building;
+    bestD = d;
+  }
+  return best;
+}
+
+function ladderPlanted(state: GameState, x: number, y: number): boolean {
+  for (const soldier of state.soldiers) {
+    if (soldier.hp <= 0 || soldier.weapon !== 'ladder' || (soldier.dock ?? 0) !== 1) continue;
+    if (Math.hypot(soldier.x - x, soldier.y - y) < 1.35) return true;
+  }
+  return false;
+}
+
+function updateEngineers(state: GameState, note: (text: string) => void) {
+  for (const soldier of state.soldiers) {
+    if (soldier.hp <= 0 || soldier.weapon !== 'engineer') continue;
+    const busy = state.soldiers.some(
+      (other) => other.hp > 0 && other.id !== soldier.id && hostile(state, other.playerId, soldier.playerId) && Math.hypot(other.x - soldier.x, other.y - soldier.y) <= 1.05,
+    );
+    if (busy) continue;
+    const moat = nearestHostileLine(state, soldier.x, soldier.y, soldier.playerId, ['moat'], 1.55);
+    if (moat && state.tick % 8 === 0) {
+      moat.hp -= 4;
+      if (moat.hp <= 0) note('Ров засыпан');
+      continue;
+    }
+    const wall = nearestHostileLine(state, soldier.x, soldier.y, soldier.playerId, ['palisade', 'wall'], 1.45);
+    if (!wall) continue;
+    const spot = center(wall);
+    if (ladderPlanted(state, spot.x, spot.y)) continue;
+    const owner = state.players[soldier.playerId];
+    if (!owner || (owner.stocks.wood ?? 0) < LADDER_WOOD) continue;
+    owner.stocks.wood -= LADDER_WOOD;
+    const ladder = createSoldier(state, soldier.playerId, spot.x, spot.y, 'ladder');
+    ladder.dock = 1;
+    ladder.order = 'hold';
+    ladder.anchorX = spot.x;
+    ladder.anchorY = spot.y;
+    note('Инженер поставил лестницу');
+  }
+}
+
+function updateDocks(state: GameState, note: (text: string) => void) {
+  for (const soldier of state.soldiers) {
+    if (soldier.hp <= 0 || (soldier.weapon !== 'ladder' && soldier.weapon !== 'siegetower')) continue;
+    const wall = nearestHostileLine(state, soldier.x, soldier.y, soldier.playerId, ['palisade', 'wall'], 1.25);
+    if (wall) {
+      const was = soldier.dock ?? 0;
+      soldier.dock = soldier.weapon === 'ladder' ? 1 : 2;
+      if (was !== 2 && soldier.weapon === 'siegetower') note('Осадная башня встала у стены');
+    } else if ((soldier.dock ?? 0) > 0 && !nearestHostileLine(state, soldier.x, soldier.y, soldier.playerId, ['palisade', 'wall'], 1.8)) {
+      soldier.dock = 0;
+    }
+  }
+  if (state.tick % 18 !== 0) return;
+  for (const soldier of state.soldiers) {
+    if (soldier.hp <= 0 || soldier.weapon !== 'ladder' || (soldier.dock ?? 0) !== 1) continue;
+    const pushed = state.soldiers.some(
+      (other) => other.hp > 0 && other.id !== soldier.id && hostile(state, other.playerId, soldier.playerId) && Math.hypot(other.x - soldier.x, other.y - soldier.y) <= 1.25,
+    );
+    if (!pushed) continue;
+    soldier.hp = 0;
+    note('Лестницу столкнули');
+  }
+}
+
+function updateMercStock(state: GameState) {
+  for (const camp of state.buildings) {
+    if (camp.type !== 'merccamp' || !camp.complete || camp.hp <= 0) continue;
+    if ((camp.gear ?? 0) === 0) {
+      camp.buffer = 2;
+      camp.input = 1;
+      camp.work = MERC_REFRESH;
+      camp.gear = 1;
+      continue;
+    }
+    if (camp.buffer >= 2 && camp.input >= 2) continue;
+    if (camp.work > 0) {
+      camp.work -= 1;
+      continue;
+    }
+    if (camp.buffer < 2) camp.buffer += 1;
+    else camp.input += 1;
+    camp.work = MERC_REFRESH;
+  }
+}
+
 export function updateSiege(state: GameState, note: (text: string) => void) {
   if (!state.clouds) state.clouds = [];
   updatePitch(state);
   updateOil(state);
   updateClouds(state);
+  updateEngineers(state, note);
+  updateDocks(state, note);
+  updateMercStock(state);
   refreshSeals(state, note);
 }
 

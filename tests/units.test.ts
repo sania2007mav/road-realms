@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { pickWeapon } from '../src/sim/ai';
+import { pickWeapon, planOneAi } from '../src/sim/ai';
 import {
   CHARGE_BONUS,
   counterFactor,
   dealtToSoldier,
   emptyStocks,
 } from '../src/sim/balance';
-import { createSoldier } from '../src/sim/entities';
+import { createBuilding, createPerson, createSoldier } from '../src/sim/entities';
 import { measureDuel } from '../src/sim/measure';
 import { applyCommand, createGame, deserialize, playerKeep, serialize, step, suggestedTile } from '../src/sim';
 import type { BuildingType, GameState } from '../src/sim';
@@ -151,7 +151,7 @@ describe('копья, конница и кузница', () => {
     delete raw.players[0].stocks.armor;
     delete raw.players[0].mail;
     const back = deserialize(JSON.stringify(raw));
-    expect(back.saveVersion).toBe(3);
+    expect(back.saveVersion).toBe(4);
     expect(back.players[0].stocks.horses).toBe(0);
     expect(back.players[0].stocks.crossbows).toBe(0);
     expect(back.players[0].mail).toBe(0);
@@ -311,5 +311,176 @@ describe('арбалет, щит и степной лук', () => {
     for (let i = 0; i < 4000; i++) step(state, []);
     expect(state.players[0].stocks.crossbows).toBeGreaterThan(0);
     expect(state.players[0].stocks.wood).toBeLessThan(400);
+  });
+});
+
+describe('инженеры, лекарь и наёмники', () => {
+  it('лестница пускает своих через стену, защитник её сталкивает', () => {
+    const state = createGame(31, { ai: 0, setup: { map: 'small', ai: 0 } });
+    state.mobs = [];
+    const foe = state.players.length;
+    state.players.push({
+      ...state.players[0],
+      id: foe,
+      name: 'Чужой',
+      isAi: true,
+      stocks: emptyStocks(),
+      gold: 0,
+    });
+    for (let x = 0; x < state.mapW; x++) createBuilding(state, foe, 'wall', x, 14, true);
+    const ladder = createSoldier(state, 0, 12.5, 14.5, 'ladder');
+    ladder.dock = 1;
+    ladder.order = 'hold';
+    const club = createSoldier(state, 0, 12.5, 16.2, 'club');
+    club.order = 'move';
+    club.destX = 12.5;
+    club.destY = 12.2;
+    club.waypoints = [];
+    for (let i = 0; i < 40; i++) step(state, []);
+    expect(club.y).toBeLessThan(14);
+    const again = createSoldier(state, 0, 12.5, 14.5, 'ladder');
+    again.dock = 1;
+    again.order = 'hold';
+    createSoldier(state, foe, 12.6, 14.4, 'club');
+    state.tick = 18;
+    step(state, []);
+    expect(state.soldiers.some((soldier) => soldier.id === again.id)).toBe(false);
+  });
+
+  it('осадная башня встаёт у стены и не берёт стрелы', () => {
+    const state = createGame(32, { ai: 0, setup: { map: 'small', ai: 0 } });
+    state.mobs = [];
+    const foe = state.players.length;
+    state.players.push({ ...state.players[0], id: foe, isAi: false, stocks: emptyStocks(), gold: 0 });
+    createBuilding(state, foe, 'wall', 18, 18, true);
+    const tower = createSoldier(state, 0, 18.5, 19.2, 'siegetower');
+    const bow = createSoldier(state, foe, 18.5, 16.2, 'bow');
+    const before = tower.hp;
+    step(state, []);
+    expect(tower.dock).toBe(2);
+    expect(tower.hp).toBe(before);
+    expect(dealtToSoldier(bow, tower, false)).toBe(0);
+    expect(dealtToSoldier(bow, createSoldier(state, 0, 4, 4, 'club'), false)).toBeGreaterThan(0);
+  });
+
+  it('инженер засыпает ров', () => {
+    const state = createGame(33, { ai: 0, setup: { map: 'small', ai: 0 } });
+    state.mobs = [];
+    const foe = state.players.length;
+    state.players.push({ ...state.players[0], id: foe, isAi: false, stocks: emptyStocks(), gold: 0 });
+    const moat = createBuilding(state, foe, 'moat', 8, 8, true);
+    moat.hp = 8;
+    const sapper = createSoldier(state, 0, 8.5, 8.9, 'engineer');
+    sapper.order = 'hold';
+    sapper.anchorX = sapper.x;
+    sapper.anchorY = sapper.y;
+    for (let i = 0; i < 16; i++) step(state, []);
+    expect(moat.hp).toBeLessThanOrEqual(0);
+  });
+
+  it('лечение ограничено и в бою реже', () => {
+    const calm = createGame(34, { ai: 0, setup: { map: 'small', ai: 0 } });
+    calm.mobs = [];
+    const hurt = createSoldier(calm, 0, 10, 10, 'club');
+    hurt.hp = 10;
+    const second = createSoldier(calm, 0, 11.2, 10, 'club');
+    second.hp = 14;
+    const third = createSoldier(calm, 0, 9, 10.4, 'club');
+    third.hp = 16;
+    createSoldier(calm, 0, 10.4, 10.2, 'healer');
+    for (let i = 0; i < 6; i++) createSoldier(calm, 0, 10.2, 10.6, 'healer');
+    step(calm, []);
+    expect(hurt.hp).toBe(11);
+    expect(second.hp).toBe(15);
+    expect(third.hp).toBe(16);
+
+    const fight = createGame(35, { ai: 0, setup: { map: 'small', ai: 0 } });
+    fight.mobs = [];
+    const foe = fight.players.length;
+    fight.players.push({ ...fight.players[0], id: foe, isAi: false, stocks: emptyStocks(), gold: 0 });
+    const patient = createSoldier(fight, 0, 10, 10, 'club');
+    patient.hp = 10;
+    patient.order = 'hold';
+    patient.anchorX = patient.x;
+    patient.anchorY = patient.y;
+    createSoldier(fight, 0, 10.3, 10.2, 'healer');
+    const menace = createSoldier(fight, foe, 12.4, 12, 'sword');
+    menace.order = 'hold';
+    menace.anchorX = menace.x;
+    menace.anchorY = menace.y;
+    for (let i = 0; i < 13; i++) step(fight, []);
+    expect(patient.hp).toBe(11);
+  });
+
+  it('наёмник не занимает человека, платит содержание и уходит без золота', () => {
+    const state = createGame(36, { ai: 0, setup: { map: 'small', ai: 0 } });
+    state.mobs = [];
+    const keep = playerKeep(state, 0)!;
+    keep.level = 3;
+    const camp = createBuilding(state, 0, 'merccamp', keep.x + 4, keep.y, true);
+    step(state, []);
+    const people = state.people.length;
+    expect(camp.buffer).toBe(2);
+    state.players[0].gold = 80;
+    expect(applyCommand(state, { kind: 'hire', playerId: 0, weapon: 'raider' })).toBe(true);
+    expect(state.people.length).toBe(people);
+    expect(state.players[0].gold).toBe(40);
+    expect(camp.buffer).toBe(1);
+    const hired = state.soldiers.find((soldier) => soldier.weapon === 'raider');
+    expect(hired?.merc).toBe(1);
+    state.tick = 60;
+    step(state, []);
+    expect(state.players[0].gold).toBe(38);
+    state.players[0].tax = 'none';
+    state.players[0].gold = 0;
+    state.tick = 120;
+    step(state, []);
+    expect(state.soldiers.some((soldier) => soldier.weapon === 'raider')).toBe(false);
+    expect(state.people.length).toBe(people);
+  });
+
+  it('личности берут инженера, лекаря и наёмника', () => {
+    const walls = createGame(37, { humans: 2, setup: { map: 'small', ai: 0, victory: 'conquest' } });
+    walls.mobs = [];
+    const builder = walls.players[0];
+    builder.personality = 'builder';
+    builder.stocks = emptyStocks();
+    builder.stocks.wood = 20;
+    builder.stocks.iron = 4;
+    builder.gold = 20;
+    for (let i = 0; i < 6; i++) createBuilding(walls, 1, 'palisade', 12 + i, 12, true);
+    expect(pickWeapon(walls, builder, 1)).toBe('engineer');
+
+    const host = createGame(38, { humans: 2, setup: { map: 'small', ai: 0, victory: 'conquest' } });
+    host.mobs = [];
+    const merchant = host.players[0];
+    merchant.personality = 'merchant';
+    merchant.gold = 90;
+    const home = playerKeep(host, 0)!;
+    const camp = createBuilding(host, 0, 'merccamp', home.x + 4, home.y, true);
+    camp.buffer = 2;
+    camp.input = 1;
+    camp.gear = 1;
+    createSoldier(host, 1, home.x + 2, home.y + 2, 'club');
+    expect(planOneAi(host, merchant)).toEqual({ kind: 'hire', playerId: 0, weapon: 'raider' });
+
+    const war = createGame(39, { humans: 2, setup: { map: 'small', ai: 0, victory: 'conquest' } });
+    war.mobs = [];
+    const warlord = war.players[0];
+    warlord.personality = 'warlord';
+    warlord.isAi = true;
+    warlord.gold = 40;
+    warlord.stocks.wood = 20;
+    const nest = playerKeep(war, 0)!;
+    const orchard = createBuilding(war, 0, 'orchard', nest.x + 4, nest.y, true);
+    const hand = createPerson(war, 0, nest.x + 1, nest.y + 2, 1);
+    orchard.workerIds.push(hand.id);
+    hand.task = { type: 'work', buildingId: orchard.id, mode: 'labor', targetId: 0 };
+    createBuilding(war, 0, 'chapel', nest.x + 4, nest.y + 3, true);
+    for (let i = 0; i < 4; i++) createSoldier(war, 0, nest.x + i, nest.y + 5, 'club');
+    const spare = createPerson(war, 0, nest.x + 1, nest.y + 3, 2);
+    spare.task = { type: 'idle' };
+    war.tick = 2400;
+    expect(planOneAi(war, warlord)).toEqual({ kind: 'train', playerId: 0, weapon: 'healer' });
   });
 });

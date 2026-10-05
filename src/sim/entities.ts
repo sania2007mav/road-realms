@@ -64,8 +64,12 @@ const SOLDIER_STATS: Record<Weapon, { hp: number; dmg: number }> = {
   club: { hp: 30, dmg: 5 },
   sword: { hp: 46, dmg: 9 },
   bow: { hp: 20, dmg: 8 },
-  engineer: { hp: 24, dmg: 2 },
+  engineer: { hp: 22, dmg: 2 },
   ladder: { hp: 26, dmg: 3 },
+  siegetower: { hp: 96, dmg: 2 },
+  healer: { hp: 16, dmg: 0 },
+  raider: { hp: 30, dmg: 7 },
+  axe: { hp: 62, dmg: 10 },
   ram: { hp: 100, dmg: 3 },
   catapult: { hp: 40, dmg: 2 },
   spear: { hp: 36, dmg: 7 },
@@ -100,6 +104,8 @@ export function createSoldier(state: GameState, playerId: number, x: number, y: 
     waypointI: 0,
     charge: weapon === 'heavy' ? 1 : 0,
     armor: weapon === 'sword' || weapon === 'heavy' ? 1 : 0,
+    dock: 0,
+    merc: 0,
   };
   state.soldiers.push(soldier);
   return soldier;

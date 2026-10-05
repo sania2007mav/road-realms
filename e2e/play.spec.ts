@@ -1078,6 +1078,20 @@ test('копейщики, конюшня и матрица контрударо�
   await page.waitForTimeout(250);
   await expect(page.locator('.log-line')).toHaveCount(0);
   await page.screenshot({ path: `${shots}/battle_units.png` });
+  await page.evaluate(() => window.__game!.debugScene('ladders'));
+  await page.waitForTimeout(250);
+  await expect(page.getByText('Поставьте амбар')).toBeHidden();
+  await page.screenshot({ path: `${shots}/siege_ladders.png` });
+  await page.evaluate(() => window.__game!.debugScene('siege-tower'));
+  await page.waitForTimeout(250);
+  await page.screenshot({ path: `${shots}/siege_tower.png` });
+  await page.evaluate(() => window.__game!.debugScene('healer'));
+  await page.waitForTimeout(250);
+  await page.screenshot({ path: `${shots}/healer.png` });
+  await page.evaluate(() => window.__game!.debugScene('mercs'));
+  await page.waitForTimeout(250);
+  await expect(page.getByTestId('merc-panel')).toBeVisible();
+  await page.screenshot({ path: `${shots}/mercenary_panel.png` });
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/road-realms/');

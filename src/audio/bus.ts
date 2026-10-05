@@ -362,7 +362,19 @@ export function createBus(factory?: () => AudioContext): AudioBus {
       if (soldier.playerId === playerId && soldier.hp > 0) own += 1;
       const prev = soldierHp.get(soldier.id);
       if (prev !== undefined && soldier.hp < prev && soldier.hp > 0) hitSoldier(state, soldier.x, soldier.y, soldier.playerId);
+      if (prev !== undefined && soldier.hp > prev) {
+        const healer = state.soldiers.some(
+          (other) => other.hp > 0 && other.weapon === 'healer' && other.playerId === soldier.playerId && Math.hypot(other.x - soldier.x, other.y - soldier.y) <= 2.4,
+        );
+        if (healer) play('heal', soldier.x, soldier.y);
+      }
       soldierHp.set(soldier.id, soldier.hp);
+      if (soldier.hp > 0 && soldier.weapon === 'ladder' && (soldier.dock ?? 0) === 1 && heard(soldier.x, soldier.y)) {
+        schedule('ladder', true, 1.6, soldier.x, soldier.y);
+      }
+      if (soldier.hp > 0 && soldier.weapon === 'siegetower' && (soldier.dock ?? 0) === 2 && heard(soldier.x, soldier.y)) {
+        schedule('tower', true, 2.4, soldier.x, soldier.y);
+      }
       if (soldier.hp > 0 && soldier.playerId !== playerId && heard(soldier.x, soldier.y)) battle = true;
       if (soldier.hp > 0 && (soldier.weapon === 'light' || soldier.weapon === 'heavy' || soldier.weapon === 'horsebow') && heard(soldier.x, soldier.y)) {
         const prev = hoofAt.get(soldier.id);

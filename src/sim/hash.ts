@@ -63,7 +63,7 @@ export function hashState(state: GameState): string {
   const soldiers = [...state.soldiers].sort((a, b) => a.id - b.id);
   for (const soldier of soldiers) {
     parts.push(
-      `S${soldier.id}|${soldier.playerId}|${num(soldier.x)}|${num(soldier.y)}|${soldier.hp}|${soldier.order}|${soldier.weapon}|${num(soldier.destX)}|${num(soldier.destY)}|${soldier.targetKind}|${soldier.targetId}|${soldier.waypointI}|${soldier.charge ?? 0}|${soldier.armor ?? 0}`,
+      `S${soldier.id}|${soldier.playerId}|${num(soldier.x)}|${num(soldier.y)}|${soldier.hp}|${soldier.order}|${soldier.weapon}|${num(soldier.destX)}|${num(soldier.destY)}|${soldier.targetKind}|${soldier.targetId}|${soldier.waypointI}|${soldier.charge ?? 0}|${soldier.armor ?? 0}|${soldier.dock ?? 0}|${soldier.merc ?? 0}`,
     );
   }
   const oxen = [...state.oxen].sort((a, b) => a.id - b.id);

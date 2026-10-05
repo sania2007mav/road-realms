@@ -101,6 +101,7 @@ export function popularityTarget(input: {
   tax: TaxId;
   beer: boolean;
   hunger: boolean;
+  chapel?: boolean;
 }): { value: number; reasons: PopReason[] } {
   const reasons: PopReason[] = [];
   const ration = RATION_POP[input.ration];
@@ -120,7 +121,12 @@ export function popularityTarget(input: {
     hunger = HUNGER_POP;
     reasons.push({ label: 'Голод', value: hunger });
   }
-  const raw = ration + variety + tax.pop + beer + hunger;
+  let chapel = 0;
+  if (input.chapel) {
+    chapel = CHAPEL_POP;
+    reasons.push({ label: 'Часовня', value: chapel });
+  }
+  const raw = ration + variety + tax.pop + beer + hunger + chapel;
   const value = Math.max(POP_MIN, Math.min(POP_MAX, raw));
   return { value, reasons };
 }
@@ -1104,7 +1110,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   guild: def({
     type: 'guild',
     name: 'Гильдия инженеров',
-    desc: 'Здесь учат инженеров, лестничников, таран и катапульту.',
+    desc: 'Здесь учат инженеров, лестничников, таран и катапульту. Осадную башню собирают в мастерской.',
     w: 3,
     h: 2,
     cost: { wood: 12, stone: 8 },
@@ -1114,6 +1120,78 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     category: 'defence',
     buildTicks: 180,
     hp: 160,
+    terrain: null,
+    nearTerrain: null,
+    nearRadius: 0,
+    nearHint: '',
+    needsDeer: false,
+    cycle: 0,
+    output: null,
+    outputQty: 0,
+    input: null,
+    hauler: 'none',
+  }),
+  workshop: def({
+    type: 'workshop',
+    name: 'Инженерная мастерская',
+    desc: 'Дерево и железо. Здесь учат инженеров и собирают лестницы и осадную башню. Инженер ставит лестницу, засыпает ров и ведёт башню к стене.',
+    w: 3,
+    h: 2,
+    cost: { wood: 12, iron: 2 },
+    workers: 0,
+    housing: 0,
+    keepLevel: 2,
+    category: 'defence',
+    buildTicks: 140,
+    hp: 150,
+    terrain: null,
+    nearTerrain: null,
+    nearRadius: 0,
+    nearHint: '',
+    needsDeer: false,
+    cycle: 0,
+    output: null,
+    outputQty: 0,
+    input: null,
+    hauler: 'none',
+  }),
+  chapel: def({
+    type: 'chapel',
+    name: 'Часовня',
+    desc: 'Учит лекаря. Он медленно лечит своих рядом и почти не лечит в бою. Часовня чуть поднимает настроение.',
+    w: 2,
+    h: 2,
+    cost: { wood: 8, stone: 6 },
+    workers: 0,
+    housing: 0,
+    keepLevel: 2,
+    category: 'military',
+    buildTicks: 120,
+    hp: 120,
+    terrain: null,
+    nearTerrain: null,
+    nearRadius: 0,
+    nearHint: '',
+    needsDeer: false,
+    cycle: 0,
+    output: null,
+    outputQty: 0,
+    input: null,
+    hauler: 'none',
+  }),
+  merccamp: def({
+    type: 'merccamp',
+    name: 'Лагерь наёмников',
+    desc: 'Наём за золото, без оружия и людей посада. Запас обновляется. Каждый наёмник берёт золото в минуту и уходит, если казна пуста.',
+    w: 3,
+    h: 2,
+    cost: { wood: 10, stone: 4 },
+    workers: 0,
+    housing: 0,
+    keepLevel: 2,
+    category: 'military',
+    buildTicks: 100,
+    hp: 110,
     terrain: null,
     nearTerrain: null,
     nearRadius: 0,
@@ -1164,6 +1242,9 @@ export const BUILD_MENU: BuildingType[] = [
   'brazier',
   'oil',
   'guild',
+  'workshop',
+  'chapel',
+  'merccamp',
 ];
 
 export const CATEGORY_NAME = {
@@ -1227,6 +1308,10 @@ export const TRAIN_COST: Record<Weapon, Partial<Record<Resource, number>>> = {
   horsebow: { horses: 1, wood: 4 },
   engineer: { wood: 3, iron: 1 },
   ladder: { wood: 8 },
+  siegetower: { wood: 12, stone: 6 },
+  healer: { wood: 4 },
+  raider: {},
+  axe: {},
   ram: { wood: 16, stone: 4 },
   catapult: { wood: 18, stone: 10, iron: 4 },
 };
@@ -1242,8 +1327,12 @@ export const TRAIN_GOLD: Record<Weapon, number> = {
   crossbow: 12,
   shield: 8,
   horsebow: 14,
-  engineer: 0,
+  engineer: 10,
   ladder: 0,
+  siegetower: 8,
+  healer: 8,
+  raider: 0,
+  axe: 0,
   ram: 0,
   catapult: 0,
 };
@@ -1262,6 +1351,20 @@ export const CROSSBOW_MELEE = 0.4;
 export const CROSSBOW_RELOAD = 28;
 export const CROSSBOW_RANGE = 5.8;
 export const HORSEBOW_RANGE = 4.8;
+/** A finished chapel lifts mood by this much. */
+export const CHAPEL_POP = 4;
+export const HEAL_RANGE = 2.2;
+export const HEAL_PULSE = 12;
+export const HEAL_COMBAT_PULSE = 24;
+/** Hit points one side can restore on a single pulse, however many healers stand together. */
+export const HEAL_CAP = 2;
+/** Wood an engineer spends to set one ladder against a wall. */
+export const LADDER_WOOD = 4;
+export const MERC_REFRESH = 180;
+export const RAIDER_GOLD = 40;
+export const AXE_GOLD = 56;
+export const RAIDER_UPKEEP = 2;
+export const AXE_UPKEEP = 3;
 
 export function isArrow(weapon: Weapon): boolean {
   return weapon === 'bow' || weapon === 'crossbow' || weapon === 'horsebow';
@@ -1274,6 +1377,11 @@ export function soldierPace(weapon: Weapon): number {
   if (weapon === 'spear') return 0.18;
   if (weapon === 'crossbow') return 0.15;
   if (weapon === 'shield') return 0.13;
+  if (weapon === 'raider') return 0.36;
+  if (weapon === 'siegetower') return 0.07;
+  if (weapon === 'axe') return 0.14;
+  if (weapon === 'healer') return 0.16;
+  if (weapon === 'engineer') return 0.16;
   return SOLDIER_SPEED;
 }
 
@@ -1281,13 +1389,19 @@ const COUNTER: Partial<Record<Weapon, Partial<Record<Weapon, number>>>> = {
   spear: { light: 2.2, heavy: 2.1, bow: 0.55, sword: 0.6, ram: 0.7, catapult: 0.65, horsebow: 1.85, crossbow: 1.15, shield: 0.9 },
   light: { spear: 0.4, heavy: 0.7, sword: 0.75, bow: 0.9, club: 1.2, ram: 1.85, catapult: 1.85, engineer: 1.7, ladder: 1.7, horsebow: 0.85, crossbow: 1.1, shield: 0.8 },
   heavy: { spear: 0.42, sword: 0.85, bow: 1.05, club: 1.25, light: 1.2, ram: 1.15, catapult: 1.1, horsebow: 0.9, crossbow: 1.05, shield: 0.75 },
-  sword: { spear: 1.5, bow: 1.15, light: 1.05, heavy: 0.8, shield: 1.65, crossbow: 1.45, horsebow: 1.2 },
-  bow: { spear: 1.6, light: 1.15, heavy: 0.85, club: 1.15, catapult: 1.3, shield: 1, horsebow: 1.25, crossbow: 0.9 },
+  sword: { spear: 1.5, bow: 1.15, light: 1.05, heavy: 0.8, shield: 1.65, crossbow: 1.45, horsebow: 1.2, healer: 1.7, engineer: 1.6, ladder: 1.55, raider: 1.15, axe: 0.85 },
+  bow: { spear: 1.6, light: 1.15, heavy: 0.85, club: 1.15, catapult: 1.3, shield: 1, horsebow: 1.25, crossbow: 0.9, siegetower: 0, healer: 1.6, engineer: 1.4, ladder: 1.3 },
   club: { spear: 0.85, light: 0.7, heavy: 0.55, shield: 0.8, horsebow: 0.75 },
-  crossbow: { sword: 1.65, heavy: 1.7, light: 1.15, spear: 1.2, shield: 1.15, horsebow: 1.6, bow: 1.1, club: 1.15, ram: 0.7, catapult: 0.6 },
+  crossbow: { sword: 1.65, heavy: 1.7, light: 1.15, spear: 1.2, shield: 1.15, horsebow: 1.6, bow: 1.1, club: 1.15, ram: 0.7, catapult: 0.6, siegetower: 0 },
   shield: { sword: 0.45, catapult: 0.4, bow: 0.55, crossbow: 0.5, spear: 0.85, club: 0.8, light: 0.7, heavy: 0.65, horsebow: 0.7 },
-  horsebow: { spear: 0.4, crossbow: 0.45, sword: 0.85, shield: 0.7, bow: 0.8, club: 1.15, ram: 1.4, heavy: 0.75, light: 0.9, catapult: 1.2 },
-  catapult: { shield: 1.8 },
+  horsebow: { spear: 0.4, crossbow: 0.45, sword: 0.85, shield: 0.7, bow: 0.8, club: 1.15, ram: 1.4, heavy: 0.75, light: 0.9, catapult: 1.2, siegetower: 0 },
+  catapult: { shield: 1.8, siegetower: 1.4 },
+  engineer: { sword: 0.35, spear: 0.45, bow: 0.5, club: 0.6 },
+  ladder: { sword: 0.4, bow: 0.55, spear: 0.5 },
+  siegetower: { sword: 0.3, bow: 0.2, crossbow: 0.2 },
+  healer: { club: 0, spear: 0, sword: 0, bow: 0, crossbow: 0, shield: 0, light: 0, heavy: 0, horsebow: 0, engineer: 0, ladder: 0, siegetower: 0, raider: 0, axe: 0, ram: 0, catapult: 0 },
+  raider: { spear: 0.4, sword: 0.7, club: 1.35, engineer: 1.6, ladder: 1.5, ram: 1.7, catapult: 1.6 },
+  axe: { shield: 1.55, spear: 0.5, crossbow: 0.55, bow: 0.7, sword: 0.9, club: 1.25 },
 };
 
 /** Damage multiplier from the attacker onto this defender. 1 is an even trade before hit points. */
@@ -1296,6 +1410,8 @@ export function counterFactor(attacker: Weapon, defender: Weapon): number {
 }
 
 export function dealtToSoldier(attacker: Soldier, defender: Soldier, mail: boolean, aura = 1): number {
+  if (attacker.weapon === 'healer' || attacker.dmg <= 0) return 0;
+  if (defender.weapon === 'siegetower' && isArrow(attacker.weapon)) return 0;
   let dmg = attacker.dmg * counterFactor(attacker.weapon, defender.weapon);
   if (attacker.weapon === 'heavy' && attacker.charge > 0) dmg *= CHARGE_BONUS;
   if (isArrow(attacker.weapon)) {

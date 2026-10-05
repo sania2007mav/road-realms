@@ -16,7 +16,15 @@ import {
   BOW_SKIRMISH,
   CROSSBOW_MELEE,
   CROSSBOW_RELOAD,
+  AXE_GOLD,
+  AXE_UPKEEP,
+  HEAL_CAP,
+  HEAL_COMBAT_PULSE,
+  HEAL_PULSE,
+  HEAL_RANGE,
   MAIL_COST,
+  RAIDER_GOLD,
+  RAIDER_UPKEEP,
   SHIELD_AURA,
   SHIELD_AURA_RANGE,
   TAX_EVERY,
@@ -68,6 +76,7 @@ import {
   strikeReach,
   towerSlotFor,
   trainHall,
+  trainSites,
   updateSiege,
 } from './siege';
 import { terrainAt } from './world';
@@ -110,7 +119,12 @@ export function currentTarget(state: GameState, playerId: number): { value: numb
     tax: player.tax,
     beer: player.beerMood > 0,
     hunger: player.hunger,
+    chapel: hasChapel(state, playerId),
   });
+}
+
+function hasChapel(state: GameState, playerId: number): boolean {
+  return state.buildings.some((building) => building.playerId === playerId && building.type === 'chapel' && building.complete && building.hp > 0);
 }
 
 function takeRng(state: GameState): number {
@@ -463,10 +477,22 @@ export function applyCommand(state: GameState, command: Command): boolean {
   }
 
   if (command.kind === 'train') {
-    const hall = trainHall(command.weapon);
-    const yard = state.buildings.find((b) => b.playerId === command.playerId && b.type === hall && b.complete && b.hp > 0);
+    if (command.weapon === 'raider' || command.weapon === 'axe') {
+      state.message = 'Наёмников нанимают в лагере за золото';
+      return false;
+    }
+    const halls = trainSites(command.weapon);
+    const yard = state.buildings.find((b) => b.playerId === command.playerId && halls.includes(b.type) && b.complete && b.hp > 0);
     if (!yard) {
-      state.message = hall === 'guild' ? 'Сначала постройте гильдию инженеров' : 'Сначала постройте казарму';
+      const hall = trainHall(command.weapon);
+      state.message =
+        hall === 'chapel'
+          ? 'Сначала постройте часовню'
+          : hall === 'workshop'
+            ? 'Сначала постройте инженерную мастерскую'
+            : hall === 'guild'
+              ? 'Сначала постройте гильдию инженеров'
+              : 'Сначала постройте казарму';
       return false;
     }
     const cost = TRAIN_COST[command.weapon];
@@ -499,10 +525,39 @@ export function applyCommand(state: GameState, command: Command): boolean {
       horsebow: 'Обучен степной лучник',
       engineer: 'Обучен инженер',
       ladder: 'Обучен лестничник',
+      siegetower: 'Собрана осадная башня',
+      healer: 'Обучен лекарь',
       ram: 'Собран таран',
       catapult: 'Собрана катапульта',
     };
     state.message = trained[command.weapon] ?? 'Отряд готов';
+    return true;
+  }
+
+  if (command.kind === 'hire') {
+    const camp = state.buildings.find((b) => b.playerId === command.playerId && b.type === 'merccamp' && b.complete && b.hp > 0);
+    if (!camp) {
+      state.message = 'Сначала поставьте лагерь наёмников';
+      return false;
+    }
+    const raider = command.weapon === 'raider';
+    const stock = raider ? camp.buffer : camp.input;
+    const price = raider ? RAIDER_GOLD : AXE_GOLD;
+    if (stock < 1) {
+      state.message = 'Наёмников сейчас нет';
+      return false;
+    }
+    if (player.gold < price) {
+      state.message = 'Не хватает золота';
+      return false;
+    }
+    player.gold -= price;
+    if (raider) camp.buffer -= 1;
+    else camp.input -= 1;
+    const center = buildingCenter(camp);
+    const hired = createSoldier(state, command.playerId, center.x, center.y + 1.2, command.weapon);
+    hired.merc = 1;
+    state.message = raider ? 'Нанят степной налётчик' : 'Нанят топорник';
     return true;
   }
 
@@ -1429,6 +1484,33 @@ function updateCombat(state: GameState) {
     if (soldier.hp <= 0) continue;
     updateSoldier(state, soldier);
   }
+  updateHeal(state);
+}
+
+function updateHeal(state: GameState) {
+  if (state.tick % HEAL_PULSE !== 0) return;
+  const spent = new Map<number, number>();
+  const healed = new Set<number>();
+  const healers = state.soldiers.filter((soldier) => soldier.hp > 0 && soldier.weapon === 'healer').sort((a, b) => a.id - b.id);
+  for (const healer of healers) {
+    const used = spent.get(healer.playerId) ?? 0;
+    if (used >= HEAL_CAP) continue;
+    const combat = state.soldiers.some(
+      (other) => other.hp > 0 && hostile(state, other.playerId, healer.playerId) && Math.hypot(other.x - healer.x, other.y - healer.y) <= 2.8,
+    );
+    if (combat && state.tick % HEAL_COMBAT_PULSE !== 0) continue;
+    let best: Soldier | null = null;
+    for (const friend of state.soldiers) {
+      if (friend.hp <= 0 || friend.playerId !== healer.playerId || friend.id === healer.id) continue;
+      if (friend.hp >= friend.maxHp || healed.has(friend.id)) continue;
+      if (Math.hypot(friend.x - healer.x, friend.y - healer.y) > HEAL_RANGE) continue;
+      if (!best || friend.hp < best.hp || (friend.hp === best.hp && friend.id < best.id)) best = friend;
+    }
+    if (!best) continue;
+    best.hp = Math.min(best.maxHp, best.hp + 1);
+    healed.add(best.id);
+    spent.set(healer.playerId, used + 1);
+  }
 }
 
 interface Actor {
@@ -1550,6 +1632,7 @@ function fightThreat(state: GameState, soldier: Soldier, threat: Threat) {
 }
 
 function strikeBuilding(state: GameState, soldier: Soldier, building: Building) {
+  if (soldier.weapon === 'healer') return;
   const center = buildingCenter(building);
   const def = BUILDINGS[building.type];
   const reach = strikeReach(soldier.weapon, building.type, Math.max(def.w, def.h));
@@ -1588,7 +1671,7 @@ function resolveTarget(state: GameState, soldier: Soldier): Threat | null {
 
 function updateDirected(state: GameState, soldier: Soldier) {
   ensureSoldier(soldier);
-  if (soldier.weapon === 'light' && soldier.order !== 'hold') {
+  if ((soldier.weapon === 'light' || soldier.weapon === 'raider') && soldier.order !== 'hold') {
     const victim = nearestEnemyPerson(state, soldier, 1.6);
     const foe = nearestEnemySoldier(state, soldier, 1.6);
     if (victim && (!foe || Math.hypot(victim.x - soldier.x, victim.y - soldier.y) <= Math.hypot(foe.x - soldier.x, foe.y - soldier.y))) {
@@ -1648,7 +1731,27 @@ function updateDirected(state: GameState, soldier: Soldier) {
   }
 }
 
+function updateHealer(state: GameState, soldier: Soldier) {
+  let best: Soldier | null = null;
+  let bestHp = Infinity;
+  for (const friend of state.soldiers) {
+    if (friend.hp <= 0 || friend.playerId !== soldier.playerId || friend.id === soldier.id) continue;
+    if (friend.hp >= friend.maxHp) continue;
+    if (Math.hypot(friend.x - soldier.x, friend.y - soldier.y) > 6) continue;
+    if (friend.hp < bestHp || (friend.hp === bestHp && best && friend.id < best.id)) {
+      best = friend;
+      bestHp = friend.hp;
+    }
+  }
+  if (!best) return;
+  if (Math.hypot(best.x - soldier.x, best.y - soldier.y) > 1.3) walkSoldier(state, soldier, best.x, best.y, moveSpeed(soldier));
+}
+
 function updateSoldier(state: GameState, soldier: Soldier) {
+  if (soldier.weapon === 'healer') {
+    updateHealer(state, soldier);
+    return;
+  }
   if (soldier.order === 'move' || soldier.order === 'hold' || soldier.order === 'attack' || soldier.order === 'attackmove' || soldier.order === 'home') {
     updateDirected(state, soldier);
     return;
@@ -1665,7 +1768,7 @@ function updateSoldier(state: GameState, soldier: Soldier) {
       strikeSoldier(state, soldier, closeEnemy);
       return;
     }
-    if (soldier.weapon === 'light') {
+    if (soldier.weapon === 'light' || soldier.weapon === 'raider') {
       const victim = nearestEnemyPerson(state, soldier, 1.6);
       if (victim) {
         strikePerson(state, soldier, victim);
@@ -1756,6 +1859,7 @@ function strikeMob(state: GameState, soldier: Soldier, mob: Mob) {
 }
 
 function strikeSoldier(state: GameState, soldier: Soldier, other: Soldier) {
+  if (soldier.weapon === 'healer') return;
   const d = Math.hypot(other.x - soldier.x, other.y - soldier.y);
   const range = isArrow(soldier.weapon) ? bowRange(state, soldier) : 0.7;
   const melee =
@@ -1827,15 +1931,33 @@ function nearestEnemyPerson(state: GameState, soldier: Soldier, range: number): 
 }
 
 function strikePerson(state: GameState, soldier: Soldier, person: Person) {
+  if (soldier.weapon === 'healer') return;
   const d = Math.hypot(person.x - soldier.x, person.y - soldier.y);
   if (d > 0.7) {
     walkSoldier(state, soldier, person.x, person.y, moveSpeed(soldier));
     return;
   }
   if (state.tick % 12 !== 0) return;
-  const bonus = soldier.weapon === 'light' ? 1.5 : 1;
+  const bonus = soldier.weapon === 'light' || soldier.weapon === 'raider' ? 1.5 : 1;
   person.hp -= Math.max(1, Math.round(soldier.dmg * bonus));
   if (soldier.weapon === 'heavy' && soldier.charge > 0) soldier.charge = 0;
+}
+
+function collectMercUpkeep(state: GameState) {
+  if (state.tick <= 0 || state.tick % TICKS_PER_GAME_MINUTE !== 0) return;
+  for (const player of state.players) {
+    if (!player.alive) continue;
+    const mercs = state.soldiers
+      .filter((soldier) => soldier.playerId === player.id && soldier.hp > 0 && (soldier.merc ?? 0) === 1)
+      .sort((a, b) => a.id - b.id);
+    for (const soldier of mercs) {
+      const due = soldier.weapon === 'axe' ? AXE_UPKEEP : RAIDER_UPKEEP;
+      if (player.gold < due) {
+        soldier.hp = 0;
+        note(state, 'Наёмники ушли');
+      } else player.gold -= due;
+    }
+  }
 }
 
 function updateEconomy(state: GameState) {
@@ -1860,6 +1982,7 @@ function updateEconomy(state: GameState) {
         tax: player.tax,
         beer: player.beerMood > 0,
         hunger: player.hunger,
+        chapel: hasChapel(state, player.id),
       }).value;
       if (player.popularity < target) player.popularity += 1;
       else if (player.popularity > target) player.popularity -= 1;
@@ -2095,6 +2218,7 @@ export function step(state: GameState, commands: Command[] = [], opts?: { shelte
   updateOxen(state);
   updateCombat(state);
   updateSiege(state, (text) => note(state, text));
+  collectMercUpkeep(state);
   state.people = state.people.filter((p) => p.hp > 0);
   state.soldiers = state.soldiers.filter((s) => s.hp > 0);
   state.mobs = state.mobs.filter((m) => m.alive || m.respawn > 0);
@@ -2135,7 +2259,7 @@ export function serialize(state: GameState): string {
 
 export function deserialize(raw: string): GameState {
   const data = JSON.parse(raw) as GameState & { terrain: number[]; roads?: number[] };
-  if (data.saveVersion !== 1 && data.saveVersion !== 2 && data.saveVersion !== 3) throw new Error('Неизвестная версия сохранения');
+  if (data.saveVersion !== 1 && data.saveVersion !== 2 && data.saveVersion !== 3 && data.saveVersion !== 4) throw new Error('Неизвестная версия сохранения');
   const terrain = Uint8Array.from(data.terrain);
   const roads =
     data.roads && data.roads.length === data.mapW * data.mapH
@@ -2150,6 +2274,8 @@ export function deserialize(raw: string): GameState {
   for (const soldier of data.soldiers) {
     if (soldier.charge == null) soldier.charge = 0;
     if (soldier.armor == null) soldier.armor = soldier.weapon === 'sword' || soldier.weapon === 'heavy' ? 1 : 0;
+    if (soldier.dock == null) soldier.dock = 0;
+    if (soldier.merc == null) soldier.merc = 0;
   }
   const ai = data.players.filter((player) => player.isAi).length;
   for (const player of data.players) {
@@ -2163,7 +2289,7 @@ export function deserialize(raw: string): GameState {
   }
   return {
     ...data,
-    saveVersion: 3,
+    saveVersion: 4,
     terrain,
     roads,
     clouds,

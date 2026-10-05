@@ -32,6 +32,9 @@ export type SoundId =
   | 'crossbow'
   | 'shield'
   | 'volley'
+  | 'ladder'
+  | 'tower'
+  | 'heal'
   | 'ram'
   | 'catapult'
   | 'impact'
@@ -86,6 +89,9 @@ export const SOUNDS: readonly SoundDef[] = [
   { id: 'crossbow', bus: 'sfx', gapMs: 280, world: true, label: 'Щелчок арбалета' },
   { id: 'shield', bus: 'sfx', gapMs: 140, world: true, label: 'Удар в щит' },
   { id: 'volley', bus: 'sfx', gapMs: 320, world: true, label: 'Залп на скаку' },
+  { id: 'ladder', bus: 'sfx', gapMs: 360, world: true, label: 'Стук лестницы' },
+  { id: 'tower', bus: 'sfx', gapMs: 700, world: true, label: 'Скрип осадной башни' },
+  { id: 'heal', bus: 'sfx', gapMs: 480, world: true, label: 'Перезвон лекаря' },
   { id: 'ram', bus: 'sfx', gapMs: 240, world: true, label: 'Удар тарана' },
   { id: 'catapult', bus: 'sfx', gapMs: 420, world: true, label: 'Выстрел катапульты' },
   { id: 'impact', bus: 'sfx', gapMs: 240, world: true, label: 'Удар ядра' },
@@ -135,6 +141,9 @@ export function soundForLog(line: string): SoundId | null {
   if (line.includes('угрожает')) return 'horn';
   if (line.startsWith('Волна ')) return 'horn';
   if (line === 'Ров засыпан') return 'crumble';
+  if (line === 'Инженер поставил лестницу' || line === 'Лестницу столкнули') return 'ladder';
+  if (line === 'Осадная башня встала у стены') return 'tower';
+  if (line === 'Наёмники ушли') return 'leave';
   return null;
 }
 
@@ -148,6 +157,11 @@ export function strikeSound(weapon: string): SoundId {
   if (weapon === 'spear') return 'spear';
   if (weapon === 'light') return 'hoof';
   if (weapon === 'heavy') return 'charge';
+  if (weapon === 'raider') return 'hoof';
+  if (weapon === 'axe') return 'sword';
+  if (weapon === 'ladder') return 'ladder';
+  if (weapon === 'siegetower') return 'tower';
+  if (weapon === 'engineer') return 'pick';
   return 'sword';
 }
 
