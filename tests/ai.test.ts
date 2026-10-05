@@ -47,12 +47,12 @@ describe('умный ИИ', () => {
     expect(locked.length).toBeLessThanOrEqual(32);
     expect(locked.endsWith('~30201211ab12cd34')).toBe(true);
     expect(displayLobbyName(locked).length).toBeLessThanOrEqual(15);
-    expect(tailFromLobbyName(locked)).toEqual({ speed: 2, teams: 'pairs', lock: 'ab12cd34' });
+    expect(tailFromLobbyName(locked)).toEqual({ speed: 2, teams: 'pairs', lock: 'ab12cd34', seasons: 'off' });
     const open = packLobbyName('Витрина тракта у реки', profiles, { speed: 1, teams: 'ffa', lock: '' });
     expect(open.length).toBeLessThanOrEqual(32);
     expect(displayLobbyName(open)).toBe('Витрина тракта у реки');
-    expect(tailFromLobbyName(open)).toEqual({ speed: 1, teams: 'ffa', lock: '' });
-    expect(tailFromLobbyName(packed)).toEqual({ speed: 1, teams: 'ffa', lock: '' });
+    expect(tailFromLobbyName(open)).toEqual({ speed: 1, teams: 'ffa', lock: '', seasons: 'off' });
+    expect(tailFromLobbyName(packed)).toEqual({ speed: 1, teams: 'ffa', lock: '', seasons: 'off' });
   });
 
   it('к десятой минуте ест своё и не пустеет', () => {

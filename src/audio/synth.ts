@@ -291,6 +291,14 @@ export function speak(ctx: SynthContext, dest: AudioNode, id: SoundId, when: num
       tone(ctx, dest, when, 220, 0.45, 'sawtooth', 0.05 * v, 1.5);
       tone(ctx, dest, when + 0.28, 330, 0.4, 'triangle', 0.04 * v);
       break;
+    case 'rain':
+      burst(ctx, dest, noise, when, 0.42, 0.045 * v, 1800, 0.35);
+      burst(ctx, dest, noise, when + 0.08, 0.28, 0.03 * v, 900, 0.5);
+      break;
+    case 'wind':
+      burst(ctx, dest, noise, when, 0.7, 0.035 * v, 280, 0.25);
+      tone(ctx, dest, when, 90, 0.6, 'sine', 0.02 * v, 0.85);
+      break;
     case 'victory':
       tone(ctx, dest, when, 523, 0.16, 'triangle', 0.06 * v);
       tone(ctx, dest, when + 0.12, 659, 0.16, 'triangle', 0.06 * v);

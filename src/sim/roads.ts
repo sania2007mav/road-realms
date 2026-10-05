@@ -1,4 +1,5 @@
 import { BUILDINGS } from './balance';
+import { offroadFactor } from './seasons';
 import type { GameState } from './types';
 import { Terrain } from './types';
 
@@ -17,7 +18,8 @@ export function onRoad(state: GameState, x: number, y: number): boolean {
 }
 
 export function roadPace(state: GameState, x: number, y: number, speed: number): number {
-  return onRoad(state, x, y) ? speed * ROAD_MULT : speed;
+  if (onRoad(state, x, y)) return speed * ROAD_MULT;
+  return speed * offroadFactor(state);
 }
 
 function tileFree(state: GameState, x: number, y: number): boolean {

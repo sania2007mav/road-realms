@@ -68,6 +68,9 @@ export function createBus(factory?: () => AudioContext): AudioBus {
   let scanAt = 0;
   let sweep = 0;
   let inMatch = false;
+  let muffled = false;
+  let climateRain = false;
+  let climateWind = false;
   let seenSeed = -1;
   let seenTick = -1;
   let battle = false;
@@ -160,7 +163,7 @@ export function createBus(factory?: () => AudioContext): AudioBus {
     const master = settings.muted ? 0 : settings.master;
     graph.master.gain.setTargetAtTime(master, now, 0.04);
     graph.music.gain.setTargetAtTime(settings.music, now, 0.04);
-    graph.sfx.gain.setTargetAtTime(settings.sfx, now, 0.04);
+    graph.sfx.gain.setTargetAtTime(settings.sfx * (muffled ? 0.4 : 1), now, 0.08);
     graph.ambience.gain.setTargetAtTime(settings.ambience, now, 0.04);
   }
 
@@ -434,6 +437,8 @@ export function createBus(factory?: () => AudioContext): AudioBus {
     schedule('cows', cows > 0, 2.1, cowX, cowY);
     schedule('fire', fire > 0, 1.1, fireX, fireY);
     schedule('hoof', hoof > 0, 0.32, hoofX, hoofY);
+    schedule('rain', climateRain, 0.42, 0, 0);
+    schedule('wind', climateWind, 0.7, 0, 0);
   }
 
   function modeFor(playing: boolean): MusicMode {
@@ -484,6 +489,13 @@ export function createBus(factory?: () => AudioContext): AudioBus {
       viewW = width;
       viewH = height;
       inMatch = playing;
+      const snow = state.weather === 'snow';
+      if (snow !== muffled) {
+        muffled = snow;
+        applyGains();
+      }
+      climateRain = state.weather === 'rain' || state.weather === 'storm';
+      climateWind = state.season === 'winter' || state.weather === 'snow' || state.weather === 'storm';
       if (state.seed !== seenSeed || state.tick < seenTick) primed = false;
       seenSeed = state.seed;
       seenTick = state.tick;

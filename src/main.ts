@@ -35,6 +35,10 @@ import {
   scoreOf,
   victoryName,
   viewerWon,
+  forecastLine,
+  seasonName,
+  weatherName,
+  syncClimate,
   CRUEL_BONUS_TEXT,
   SCORE_TEXT,
   step,
@@ -266,7 +270,7 @@ function syncBuildScroll() {
   next.hidden = !overflow;
 }
 
-let setupDraft: MatchSetup = normalizeSetup({ ai: 3 });
+let setupDraft: MatchSetup = normalizeSetup({ ai: 3, seasons: 'normal' });
 
 function readProfiles(): AiProfile[] {
   const difficulty = (index: number): DifficultyId =>
@@ -315,6 +319,7 @@ function readSetup(): MatchSetup {
     goldTarget: num('gold-target', 2000),
     popTarget: num('pop-target', 20),
     surviveMinutes: num('survive-min', 20),
+    seasons: pick('seasons', 'normal'),
     profiles: readProfiles(),
   });
   return setupDraft;
@@ -896,6 +901,13 @@ function buildTitle() {
             ${option('high', 'Богатые', draft.start === 'high')}
           </select>
         </label>
+        <label for="seasons">Сезоны
+          <select id="seasons" data-testid="seasons">
+            ${option('off', 'Выкл', draft.seasons === 'off')}
+            ${option('normal', 'Обычные', (draft.seasons ?? 'normal') === 'normal')}
+            ${option('long', 'Долгие', draft.seasons === 'long')}
+          </select>
+        </label>
       </div>
       <div id="neighbours" data-testid="neighbours">
         <p id="ai-note" class="ai-note" data-testid="ai-note">${CRUEL_BONUS_TEXT}</p>
@@ -1138,6 +1150,7 @@ function buildChrome() {
       <button type="button" class="readout" id="mood-btn" data-testid="popularity"></button>
       <div class="readout" id="gold-readout"></div>
       <div class="readout" id="clock"></div>
+      <div id="season-badge" data-testid="season-badge" hidden></div>
       <div class="readout" id="fps">60 к/с</div>
       <button type="button" id="res-toggle" data-testid="res-toggle">Ресурсы</button>
       <button type="button" id="mute-btn" data-testid="mute-audio" aria-label="Без звука" aria-pressed="false"></button>
@@ -1556,6 +1569,19 @@ function syncHud() {
   if (clock) {
     clock.textContent = land ? `${minute} мин` : compact ? `${minute}м` : `${minute} мин`;
     clock.title = `${minute} мин`;
+  }
+  const badge = document.querySelector<HTMLElement>('#season-badge');
+  if (badge) {
+    const line = forecastLine(state);
+    badge.hidden = !line;
+    if (line) {
+      const short = `${seasonName(state.season)} · ${weatherName(state.weather)}`;
+      badge.textContent = land || compact ? short : line;
+      badge.title = line;
+      const host = badge.parentElement;
+      if (host && host.scrollWidth > host.clientWidth + 1) badge.textContent = short;
+      if (host && host.scrollWidth > host.clientWidth + 1) badge.textContent = seasonName(state.season);
+    }
   }
   const fpsEl = document.querySelector<HTMLElement>('#fps');
   if (fpsEl) {
@@ -3014,6 +3040,47 @@ function stageBatchScene(kind: string) {
   silenceScene();
 }
 
+function stageSeason(kind: string) {
+  const keep = playerKeep(state, localPlayer);
+  if (!keep || !state.match) return;
+  silenceScene();
+  state.mobs = [];
+  dressTown(keep.x, keep.y);
+  state.match = { ...state.match, seasons: 'normal' };
+  const band = kind === 'season-autumn' ? 12 : kind === 'season-winter' ? 18 : kind === 'season-rain' ? 0 : 6;
+  const want = kind === 'season-rain' ? 'rain' : kind === 'season-winter' ? 'snow' : 'clear';
+  let chosen = band;
+  let found = false;
+  for (let cycle = 0; cycle < 8 && !found; cycle++) {
+    for (let stepMin = 0; stepMin < 6; stepMin++) {
+      const minute = band + stepMin + cycle * 24;
+      state.tick = minute * TICKS_PER_GAME_MINUTE + 30;
+      syncClimate(state);
+      const mild = want === 'clear' && (state.weather === 'clear' || state.weather === 'heat');
+      if (state.weather === want || mild) {
+        chosen = minute;
+        found = true;
+        break;
+      }
+    }
+  }
+  state.tick = chosen * TICKS_PER_GAME_MINUTE + 30;
+  syncClimate(state);
+  selectedId = null;
+  panel.hidden = true;
+  panelSig = '';
+  cancelBuild();
+  selectedSoldiers.clear();
+  attackArmed = false;
+  lookAtPoint(keep.x + 1.5, keep.y + 1);
+  camera.zoom = 0.95;
+  clampView();
+  silenceScene();
+  state.tick = chosen * TICKS_PER_GAME_MINUTE + 30;
+  syncClimate(state);
+  syncHud();
+}
+
 function stageLandScene(kind: string) {
   const keep = playerKeep(state, localPlayer);
   if (!keep) return;
@@ -3324,6 +3391,10 @@ function expose() {
         stageLandScene(kind);
         return;
       }
+      if (kind === 'season-summer' || kind === 'season-autumn' || kind === 'season-winter' || kind === 'season-rain') {
+        stageSeason(kind);
+        return;
+      }
       const keep = playerKeep(state, localPlayer);
       if (!keep) return;
       state.buildings = state.buildings.filter((building) => building.id === keep.id);
@@ -3558,6 +3629,8 @@ function expose() {
     snapshot() {
       return {
         tick: state.tick,
+        season: state.season,
+        weather: state.weather,
         idle: idleCount(state, localPlayer),
         used: usedCount(state, localPlayer),
         cap: housingCap(state, localPlayer),
@@ -4263,6 +4336,7 @@ function lobbyPack(draft: LobbyDraft, worldSeed: number) {
     popTarget: draft.popTarget,
     surviveMinutes: draft.surviveMinutes,
     teams: draft.teams,
+    seasons: draft.seasons,
     profiles,
   });
   return {
@@ -4272,6 +4346,7 @@ function lobbyPack(draft: LobbyDraft, worldSeed: number) {
     profiles,
     speed: draft.speed,
     teams: draft.teams,
+    seasons: draft.seasons,
     password: draft.password,
   };
 }

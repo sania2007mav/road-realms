@@ -220,6 +220,24 @@ function wallCommand(state: GameState, player: Player): Command | null {
   return null;
 }
 
+function stockForWinter(state: GameState, player: Player): Command | null {
+  if (state.season !== 'summer' && state.season !== 'autumn') return null;
+  const id = player.id;
+  if ((player.stocks.wood ?? 0) < 30 && countOf(state, id, 'woodcutter') < 2) {
+    const hut = place(state, id, 'woodcutter');
+    if (hut) return hut;
+  }
+  const food = (player.stocks.apples ?? 0) + (player.stocks.cheese ?? 0) + (player.stocks.meat ?? 0) + (player.stocks.bread ?? 0);
+  if (food < 48 && countOf(state, id, 'orchard') < 2) {
+    const trees = place(state, id, 'orchard');
+    if (trees) return trees;
+  }
+  if (state.season === 'autumn' && food < 24 && player.ration !== 'half' && player.ration !== 'none') {
+    return { kind: 'ration', playerId: id, ration: 'half' };
+  }
+  return null;
+}
+
 function economyCommand(state: GameState, player: Player): Command | null {
   const id = player.id;
   const victory = state.match?.victory;
@@ -229,6 +247,9 @@ function economyCommand(state: GameState, player: Player): Command | null {
   if (countOf(state, id, 'orchard') === 0) return place(state, id, 'orchard');
   if (countOf(state, id, 'stockpile') === 0) return place(state, id, 'stockpile');
   if (countOf(state, id, 'woodcutter') === 0) return place(state, id, 'woodcutter');
+
+  const winter = stockForWinter(state, player);
+  if (winter) return winter;
 
   const ration = chooseRation(state, player);
   if (ration) return ration;

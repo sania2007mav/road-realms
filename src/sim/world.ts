@@ -10,6 +10,7 @@ import {
 } from './balance';
 import { createBuilding, createMob, createPerson } from './entities';
 import { emptyStats, mapSize, normalizeProfiles, normalizeSetup, openingBundle } from './match';
+import { syncClimate } from './seasons';
 import { hash2 } from './rng';
 import { Terrain, type GameState, type MatchSetup, type Player } from './types';
 
@@ -148,7 +149,7 @@ export function createGame(
   }
 
   const state: GameState = {
-    saveVersion: 4,
+    saveVersion: 5,
     seed: seed >>> 0,
     tick: 0,
     rng: (seed || 1) >>> 0,
@@ -170,6 +171,8 @@ export function createGame(
     winnerId: -1,
     outcome: 'playing',
     message: '',
+    season: 'off',
+    weather: 'clear',
     log: [
       'Тракт пролегает через весь край. Поставьте амбар и склад.',
       'В запасе уже есть яблоки: успейте поставить сад и назначить работника.',
@@ -260,6 +263,7 @@ export function createGame(
     pop: state.players.map(() => START_PEOPLE),
     gold: state.players.map((player) => player.gold),
   });
+  syncClimate(state);
 
   return state;
 }

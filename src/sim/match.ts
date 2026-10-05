@@ -1,4 +1,5 @@
 import { MAP_H, MAP_W, START_GOLD, START_STOCKS, TICKS_PER_GAME_MINUTE } from './balance';
+import { paceName, seasonPace } from './seasons';
 import type {
   AiProfile,
   DifficultyId,
@@ -10,6 +11,7 @@ import type {
   Player,
   TeamMode,
   PlayerStats,
+  SeasonPace,
   StartId,
   VictoryId,
 } from './types';
@@ -69,6 +71,7 @@ export function normalizeSetup(partial?: Partial<MatchSetup> | null, ai = DEFAUL
     goldTarget: finite(partial.goldTarget, base.goldTarget),
     popTarget: finite(partial.popTarget, base.popTarget),
     surviveMinutes: finite(partial.surviveMinutes, base.surviveMinutes),
+    seasons: seasonPace(partial.seasons),
   };
   if (partial.teams === 'pairs' || partial.teams === 'ffa') setup.teams = partial.teams;
   if (partial.profiles) setup.profiles = normalizeProfiles(partial.profiles);
@@ -130,7 +133,8 @@ export function describeSetup(setup: MatchSetup): string {
           .join(', ')}.`
       : '';
   const teams = setup.teams === 'pairs' ? ' Команды: двое на двое.' : '';
-  return `${victoryName(setup.victory)}${extra}. ${map}, ${start}, соседей ${setup.ai}${time}.${faces}${teams}`;
+  const year = setup.seasons && setup.seasons !== 'off' ? ` Сезоны: ${paceName(setup.seasons)}.` : '';
+  return `${victoryName(setup.victory)}${extra}. ${map}, ${start}, соседей ${setup.ai}${time}.${faces}${teams}${year}`;
 }
 
 /** Seat order splits in half: 0..half-1 against the rest. Two players are opponents; four are 2v2. */
@@ -177,7 +181,8 @@ export function lobbySummary(setup: MatchSetup, config: LobbyConfig): string {
   const map = setup.map === 'small' ? 'малая' : setup.map === 'large' ? 'большая' : 'обычная';
   const start = setup.start === 'low' ? 'скудные' : setup.start === 'high' ? 'богатые' : 'обычные';
   const teams = config.teams === 'pairs' ? '2×2' : 'каждый сам';
-  return `${victoryName(setup.victory)} · ${map} · ${config.speed}× · ${start} · соседи ${setup.ai} · ${teams}`;
+  const year = setup.seasons && setup.seasons !== 'off' ? ` · сезоны ${paceName(setup.seasons)}` : '';
+  return `${victoryName(setup.victory)} · ${map} · ${config.speed}× · ${start} · соседи ${setup.ai} · ${teams}${year}`;
 }
 
 export function defaultProfiles(): AiProfile[] {
@@ -221,13 +226,14 @@ export function normalizeProfiles(list?: AiProfile[] | null): AiProfile[] {
   });
 }
 
-const LOBBY_TAIL = /~([0-3]{6})(?:([012])([01])(?:([0-9a-f]{8}|-{8}))?)?$/;
+const LOBBY_TAIL = /~([0-3]{6})(?:([012])([01])([012])?(?:([0-9a-f]{8}|-{8}))?)?$/;
 
 export interface LobbyTail {
   speed: 1 | 2 | 3;
   teams: TeamMode;
   /** First 8 hex chars of the password hash, or empty when the room is open. */
   lock: string;
+  seasons: SeasonPace;
 }
 
 /** The lobby name is an existing 1–32 string. Profiles, speed, teams and a password tag share its suffix. */
@@ -240,8 +246,9 @@ export function packLobbyName(name: string, profiles?: AiProfile[] | null, tail?
   if (!tail) return `${shown.slice(0, 25) || 'Тракт'}~${digits}`;
   const speed = tail.speed === 2 ? '1' : tail.speed === 3 ? '2' : '0';
   const teams = tail.teams === 'pairs' ? '1' : '0';
+  const season = tail.seasons === 'normal' ? '1' : tail.seasons === 'long' ? '2' : tail.seasons === 'off' ? '0' : '';
   const lock = tail.lock && /^[0-9a-f]{8}$/.test(tail.lock) ? tail.lock : '';
-  const suffix = `${digits}${speed}${teams}${lock}`;
+  const suffix = `${digits}${speed}${teams}${season}${lock}`;
   const cap = Math.max(1, 32 - suffix.length - 1);
   return `${shown.slice(0, cap) || 'Тракт'}~${suffix}`;
 }
@@ -262,11 +269,13 @@ export function profilesFromLobbyName(name: string): AiProfile[] | null {
 
 export function tailFromLobbyName(name: string): LobbyTail {
   const found = name.match(LOBBY_TAIL);
-  if (!found || found[2] == null) return { speed: 1, teams: 'ffa', lock: '' };
+  const seasons = found?.[4] === '1' ? 'normal' : found?.[4] === '2' ? 'long' : 'off';
+  if (!found || found[2] == null) return { speed: 1, teams: 'ffa', lock: '', seasons: 'off' };
   return {
     speed: found[2] === '1' ? 2 : found[2] === '2' ? 3 : 1,
     teams: found[3] === '1' ? 'pairs' : 'ffa',
-    lock: found[4] && !found[4].startsWith('-') ? found[4] : '',
+    lock: found[5] && !found[5].startsWith('-') ? found[5] : '',
+    seasons,
   };
 }
 
@@ -389,7 +398,7 @@ export function unpackSeed(packed: number): { worldSeed: number; setup: MatchSet
   const bits = n >>> 16;
   return {
     worldSeed: n & 0xffff,
-    setup: {
+    setup: normalizeSetup({
       victory: VICTORY[bits & 3],
       timeLimit: TIMES[(bits >> 2) & 3],
       map: MAPS[(bits >> 4) & 3],
@@ -398,6 +407,6 @@ export function unpackSeed(packed: number): { worldSeed: number; setup: MatchSet
       goldTarget: GOLD[(bits >> 10) & 3],
       popTarget: POP[(bits >> 12) & 3],
       surviveMinutes: SURVIVE[(bits >> 14) & 3],
-    },
+    }),
   };
 }

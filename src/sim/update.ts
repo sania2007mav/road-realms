@@ -46,6 +46,7 @@ import { cruelMinute, planOneAi, reactionTicks } from './ai';
 import { consumeFood } from './economy';
 import { createMob, createOx, createPerson, createSoldier } from './entities';
 import { bloomKeepLevel, emptyStats, hostile, normalizeSetup, scoreOf, teamOf } from './match';
+import { climateMinute, farmWorkRate, isFarm, nextSeason, seasonName, seasonPace, stormMiss, syncClimate, weatherName } from './seasons';
 import { rngNext } from './rng';
 import type {
   Building,
@@ -1250,7 +1251,11 @@ function updateWorker(state: GameState, person: Person) {
   const cap = def.hauler === 'ox' ? OX_BUFFER_CAP : BUFFER_CAP;
   if (def.output && building.buffer >= cap) return;
 
-  building.work += 1;
+  if (isFarm(building.type)) {
+    const rate = farmWorkRate(state);
+    if (rate <= 0) return;
+    building.work += rate;
+  } else building.work += 1;
   if (building.work < def.cycle) return;
   building.work = 0;
   if (building.type === 'stable') {
@@ -1905,6 +1910,7 @@ function shieldAuraFactor(state: GameState, defender: Soldier): number {
 }
 
 function landBlow(state: GameState, soldier: Soldier, other: Soldier, kiting: boolean, gap = 0) {
+  if (isArrow(soldier.weapon) && stormMiss(state, soldier.id)) return;
   const mail = state.players[other.playerId]?.mail === 1;
   const aura = isArrow(soldier.weapon) ? shieldAuraFactor(state, other) : 1;
   let dealt = dealtToSoldier(soldier, other, mail, aura);
@@ -2209,6 +2215,7 @@ function recordSamples(state: GameState) {
 
 export function step(state: GameState, commands: Command[] = [], opts?: { shelter?: boolean }): void {
   if (state.outcome !== 'playing') return;
+  if (!state.season || !state.weather) syncClimate(state);
   if (!state.match) state.match = normalizeSetup(null, state.players.filter((player) => player.isAi).length);
   if (state.winnerId == null) state.winnerId = -1;
   for (const command of commands) applyCommand(state, command);
@@ -2223,10 +2230,16 @@ export function step(state: GameState, commands: Command[] = [], opts?: { shelte
   state.soldiers = state.soldiers.filter((s) => s.hp > 0);
   state.mobs = state.mobs.filter((m) => m.alive || m.respawn > 0);
   // Single-player onboarding only. Multiplayer never sets this, so every client still shares one economy.
-  if (!opts?.shelter) updateEconomy(state);
+    if (!opts?.shelter) updateEconomy(state);
+  climateMinute(state);
   finishOutcome(state);
   recordSamples(state);
+  const shown = state.season;
   state.tick += 1;
+  syncClimate(state);
+  if (shown && shown !== 'off' && state.season !== shown && state.season !== 'off') {
+    note(state, `${seasonName(state.season)}: ${weatherName(state.weather)}. Дальше — ${seasonName(nextSeason(state.season))}.`);
+  }
 }
 
 export function serialize(state: GameState): string {
@@ -2254,12 +2267,16 @@ export function serialize(state: GameState): string {
     outcome: state.outcome,
     message: state.message,
     log: state.log,
+    season: state.season ?? 'off',
+    weather: state.weather ?? 'clear',
   });
 }
 
 export function deserialize(raw: string): GameState {
   const data = JSON.parse(raw) as GameState & { terrain: number[]; roads?: number[] };
-  if (data.saveVersion !== 1 && data.saveVersion !== 2 && data.saveVersion !== 3 && data.saveVersion !== 4) throw new Error('Неизвестная версия сохранения');
+  if (data.saveVersion !== 1 && data.saveVersion !== 2 && data.saveVersion !== 3 && data.saveVersion !== 4 && data.saveVersion !== 5) {
+    throw new Error('Неизвестная версия сохранения');
+  }
   const terrain = Uint8Array.from(data.terrain);
   const roads =
     data.roads && data.roads.length === data.mapW * data.mapH
@@ -2278,6 +2295,8 @@ export function deserialize(raw: string): GameState {
     if (soldier.merc == null) soldier.merc = 0;
   }
   const ai = data.players.filter((player) => player.isAi).length;
+  const match = data.match ?? normalizeSetup(null, ai);
+  match.seasons = data.saveVersion < 5 && data.match?.seasons == null ? 'off' : seasonPace(match.seasons);
   for (const player of data.players) {
     const stocks = emptyStocks();
     player.stocks = { ...stocks, ...player.stocks };
@@ -2287,14 +2306,18 @@ export function deserialize(raw: string): GameState {
     if (!player.personality) player.personality = 'strategist';
     if (player.mail == null) player.mail = 0;
   }
-  return {
+  const loaded: GameState = {
     ...data,
-    saveVersion: 4,
+    saveVersion: 5,
     terrain,
     roads,
     clouds,
-    match: data.match ?? normalizeSetup(null, ai),
+    match,
     samples: data.samples ?? [],
     winnerId: data.winnerId ?? (data.outcome === 'playing' ? -1 : 0),
+    season: data.season ?? 'off',
+    weather: data.weather ?? 'clear',
   };
+  syncClimate(loaded);
+  return loaded;
 }

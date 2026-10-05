@@ -11,6 +11,7 @@ export interface LobbyDraft {
   ai: number;
   speed: 1 | 2 | 3;
   teams: 'ffa' | 'pairs';
+  seasons: 'off' | 'normal' | 'long';
   difficulty: RoomView['draft']['difficulty'];
   goldTarget: number;
   popTarget: number;
@@ -39,6 +40,7 @@ const DEFAULT_DRAFT: LobbyDraft = {
   ai: 1,
   speed: 1,
   teams: 'ffa',
+  seasons: 'normal',
   difficulty: 'normal',
   goldTarget: 2000,
   popTarget: 20,
@@ -142,6 +144,11 @@ function setupGrid(draft: LobbyDraft, testPrefix: string): HTMLDivElement {
     ['ffa', 'Каждый сам'],
     ['pairs', 'Двое на двое'],
   ]);
+  const seasons = select(`${testPrefix}-seasons`, draft.seasons, [
+    ['off', 'Выкл'],
+    ['normal', 'Обычные'],
+    ['long', 'Долгие'],
+  ]);
   const gold = select(`${testPrefix}-gold`, String(draft.goldTarget), [
     ['1000', '1000 золота'],
     ['2000', '2000 золота'],
@@ -176,6 +183,7 @@ function setupGrid(draft: LobbyDraft, testPrefix: string): HTMLDivElement {
     labeled('Соседи на пустые места', ai),
     labeled('Сложность соседей', difficulty),
     labeled('Команды', teams),
+    labeled('Сезоны', seasons),
     goldField,
     popField,
     surviveField,
@@ -192,6 +200,7 @@ function readDraft(root: ParentNode, prefix: string, fallback: LobbyDraft): Lobb
   const map = value('map');
   const start = value('start');
   const teams = value('teams');
+  const seasons = value('seasons');
   const difficulty = value('diff');
   const speed = Number(value('speed'));
   return {
@@ -205,6 +214,7 @@ function readDraft(root: ParentNode, prefix: string, fallback: LobbyDraft): Lobb
     ai: Math.max(0, Math.min(3, Number(value('ai')) || 0)),
     speed: speed === 2 || speed === 3 ? speed : 1,
     teams: teams === 'pairs' ? 'pairs' : 'ffa',
+    seasons: seasons === 'off' || seasons === 'normal' || seasons === 'long' ? seasons : fallback.seasons,
     difficulty: difficulty === 'easy' || difficulty === 'hard' || difficulty === 'cruel' ? difficulty : 'normal',
     goldTarget: [1000, 2000, 4000].includes(Number(value('gold'))) ? Number(value('gold')) : 2000,
     popTarget: [12, 20, 30].includes(Number(value('pop'))) ? Number(value('pop')) : 20,

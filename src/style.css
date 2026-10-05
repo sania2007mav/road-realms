@@ -84,6 +84,7 @@ button.active, button[aria-pressed="true"] {
 }
 
 #status, #resources { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; pointer-events: none; }
+#status { flex-wrap: nowrap; overflow: hidden; }
 #status > *, #resources > * { pointer-events: auto; }
 
 .resgroup {
@@ -139,6 +140,28 @@ button.active, button[aria-pressed="true"] {
 }
 
 .readout strong { color: var(--gold); font-variant-numeric: tabular-nums; }
+
+#season-badge {
+  box-sizing: border-box;
+  background: var(--panel);
+  border: 1px solid var(--gold);
+  border-radius: 999px;
+  padding: 0 12px;
+  min-height: 44px;
+  height: 44px;
+  max-width: min(280px, 46vw);
+  min-width: 0;
+  flex: 0 1 auto;
+  display: inline-flex;
+  align-items: center;
+  color: var(--paper);
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: auto;
+}
+#season-badge[hidden] { display: none !important; }
 
 .readout.idle-empty { border-color: var(--bad); }
 .readout.idle-empty strong { color: var(--bad); }
@@ -913,6 +936,14 @@ button.guide-pulse {
     font-size: 13px;
   }
   #fps, #mute-btn, #audio-open, #presence { display: none !important; }
+  #season-badge {
+    min-height: 36px;
+    height: 36px;
+    max-height: 36px;
+    padding: 0 8px;
+    font-size: 12px;
+    max-width: 34vw;
+  }
   #resources {
     flex-wrap: nowrap;
     width: 100%;
@@ -1314,6 +1345,18 @@ html.phone-land #status {
   overflow: visible;
   gap: 4px;
   flex: none;
+}
+html.phone-land #season-badge {
+  width: 100%;
+  min-height: 22px;
+  max-height: 24px;
+  padding: 1px 6px;
+  font-size: 11px;
+  line-height: 20px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-sizing: border-box;
 }
 html.phone-land #status .readout,
 html.phone-land #people-btn,

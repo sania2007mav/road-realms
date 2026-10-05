@@ -140,6 +140,10 @@ export interface PlayerStats {
   razed: number;
 }
 
+export type SeasonId = 'spring' | 'summer' | 'autumn' | 'winter';
+export type SeasonPace = 'off' | 'normal' | 'long';
+export type WeatherId = 'clear' | 'rain' | 'heat' | 'storm' | 'snow' | 'drought';
+
 export type VictoryId = 'conquest' | 'wealth' | 'bloom' | 'survival';
 export type MapSizeId = 'small' | 'normal' | 'large';
 export type StartId = 'low' | 'normal' | 'high';
@@ -166,6 +170,8 @@ export interface MatchSetup {
   teams?: TeamMode;
   /** Up to three AI neighbours. Omitted in the packed seed; lobbies carry it in the name. */
   profiles?: AiProfile[];
+  /** Season length. Omitted means off, so old matches and the campaign stay on a clear year. */
+  seasons?: SeasonPace;
 }
 
 export interface Sample {
@@ -318,6 +324,9 @@ export interface GameState {
   outcome: 'playing' | 'victory' | 'defeat';
   message: string;
   log: string[];
+  /** Derived from tick, seed and match.seasons. Stored so the hash and saves share one value. */
+  season: SeasonId | 'off';
+  weather: WeatherId;
 }
 
 export type Command =

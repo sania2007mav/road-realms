@@ -894,8 +894,88 @@ export function renderWorld(
   if (overlay) {
     for (const marker of overlay.markers) drawOrderMarker(ctx, marker, time);
   }
+  paintSeasonTint(ctx, state);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   if (overlay?.box) drawSelectBox(ctx, overlay.box);
+  paintWeather(ctx, state, camera, viewW, viewH, time);
+}
+
+function seasonTint(season: string, weather: string): string {
+  if (weather === 'rain' || weather === 'storm') return 'rgba(64, 86, 108, 0.18)';
+  if (weather === 'snow') return 'rgba(232, 240, 246, 0.30)';
+  if (weather === 'drought') return 'rgba(168, 116, 42, 0.18)';
+  if (season === 'spring') return 'rgba(78, 132, 68, 0.10)';
+  if (season === 'summer') return weather === 'heat' ? 'rgba(214, 132, 36, 0.16)' : 'rgba(198, 164, 58, 0.10)';
+  if (season === 'autumn') return 'rgba(176, 108, 32, 0.16)';
+  if (season === 'winter') return 'rgba(214, 226, 236, 0.22)';
+  return '';
+}
+
+/** Tint stays on the map, so the dark margin around a zoomed-out tract keeps its colour. */
+function paintSeasonTint(ctx: CanvasRenderingContext2D, state: GameState) {
+  const season = state.season ?? 'off';
+  if (season === 'off') return;
+  const tint = seasonTint(season, state.weather ?? 'clear');
+  if (!tint) return;
+  const pts = [tileToIso(0, 0), tileToIso(state.mapW, 0), tileToIso(state.mapW, state.mapH), tileToIso(0, state.mapH)];
+  ctx.fillStyle = tint;
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function paintWeather(
+  ctx: CanvasRenderingContext2D,
+  state: GameState,
+  camera: Camera,
+  viewW: number,
+  viewH: number,
+  time: number,
+) {
+  const season = state.season ?? 'off';
+  const weather = state.weather ?? 'clear';
+  if (season === 'off' || !gfxHigh()) return;
+  if (weather !== 'rain' && weather !== 'storm' && weather !== 'snow') return;
+  const pts = [tileToIso(0, 0), tileToIso(state.mapW, 0), tileToIso(state.mapW, state.mapH), tileToIso(0, state.mapH)];
+  const project = (x: number, y: number) => ({
+    x: viewW / 2 + (x - camera.x) * camera.zoom,
+    y: viewH / 2 + (y - camera.y) * camera.zoom,
+  });
+  const corners = pts.map((p) => project(p.x, p.y));
+  const left = Math.max(0, Math.min(...corners.map((p) => p.x)));
+  const top = Math.max(0, Math.min(...corners.map((p) => p.y)));
+  const right = Math.min(viewW, Math.max(...corners.map((p) => p.x)));
+  const bottom = Math.min(viewH, Math.max(...corners.map((p) => p.y)));
+  if (right - left < 8 || bottom - top < 8) return;
+  const snow = weather === 'snow';
+  const count = weather === 'storm' ? 40 : 28;
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(corners[0].x, corners[0].y);
+  for (let i = 1; i < corners.length; i++) ctx.lineTo(corners[i].x, corners[i].y);
+  ctx.closePath();
+  ctx.clip();
+  ctx.lineWidth = weather === 'storm' ? 1.5 : 1;
+  ctx.strokeStyle = 'rgba(214, 228, 238, 0.62)';
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.82)';
+  for (let i = 0; i < count; i++) {
+    const speed = snow ? 0.018 : weather === 'storm' ? 0.22 : 0.12;
+    const y = top + ((time * speed + i * 37) % (bottom - top + 24));
+    const x = left + ((i * 67 + time * (snow ? 0.012 : 0.035)) % (right - left + 12));
+    if (snow) {
+      ctx.beginPath();
+      ctx.arc(x, y, 1.2 + (i % 3) * 0.45, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + (weather === 'storm' ? 8 : 5), y + (weather === 'storm' ? 18 : 13));
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
 }
 
 function drawFeetRing(ctx: CanvasRenderingContext2D, tx: number, ty: number) {

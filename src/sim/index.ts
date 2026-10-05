@@ -28,6 +28,7 @@ export {
 export { consumeFood } from './economy';
 export type { MealResult } from './economy';
 export { createGame, planSpawns, terrainAt } from './world';
+export { forecastLine, seasonName, syncClimate, weatherName } from './seasons';
 export {
   CRUEL_BONUS_TEXT,
   DEFAULT_SETUP,

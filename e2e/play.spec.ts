@@ -1211,6 +1211,42 @@ test('копейщики, конюшня и матрица контрударо�
   await page.getByTestId('help-matrix').screenshot({ path: `${shots}/counter_matrix.png` });
 });
 
+test('сезоны: одно поселение летом, осенью, зимой и в дождь', async ({ page }) => {
+  test.setTimeout(90_000);
+  mkdirSync(shots, { recursive: true });
+  await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('/road-realms/');
+  await page.getByTestId('new-game').click();
+  await page.evaluate(() => window.__game!.setGfxMode('high'));
+  await page.evaluate(() => window.__game!.setSpeed(0));
+
+  const shot = async (kind: string, file: string, season: string) => {
+    await page.evaluate((name) => window.__game!.debugScene(name), kind);
+    await page.waitForTimeout(300);
+    const climate = await page.evaluate(() => {
+      const snap = window.__game!.snapshot();
+      const badge = document.querySelector<HTMLElement>('#season-badge');
+      return { season: snap.season, weather: snap.weather, text: badge?.textContent ?? '', title: badge?.title ?? '' };
+    });
+    expect(climate.season).toBe(season);
+    expect(climate.text.length).toBeGreaterThan(0);
+    expect(climate.title).toContain('дальше');
+    await expect(page.getByTestId('season-badge')).toBeVisible();
+    await page.screenshot({ path: `${shots}/${file}` });
+    return climate;
+  };
+
+  const summer = await shot('season-summer', 'season_summer.png', 'summer');
+  expect(summer.weather === 'clear' || summer.weather === 'heat').toBe(true);
+  await page.getByTestId('season-badge').screenshot({ path: `${shots}/season_badge.png` });
+  await shot('season-autumn', 'season_autumn.png', 'autumn');
+  const winter = await shot('season-winter', 'season_winter.png', 'winter');
+  expect(winter.weather).toBe('snow');
+  const rain = await shot('season-rain', 'season_rain.png', 'spring');
+  expect(rain.weather).toBe('rain');
+});
+
 function letterboxPhone(raw: string, out: string): string {
   return `
 from PIL import Image, ImageDraw, ImageFont
@@ -1452,6 +1488,8 @@ declare global {
       focusArmy: () => void;
       snapshot: () => {
         tick: number;
+        season: string;
+        weather: string;
         idle: number;
         used: number;
         cap: number;
