@@ -4095,7 +4095,7 @@ function expose() {
         units: { spear: 18, bow: 4 },
         trades: 4,
         best: { gold: 640, pop: 36, wood: 80, beer: 6, bread: 12, soldiers: 8, razed: 1, roads: 14, apples: 20 },
-        unlocked: { 'gold-100': 1, 'spear-1': 1, 'trade-1': 1 },
+        unlocked: { 'gold-400': 1, 'spear-1': 1, 'trade-1': 1 },
       };
       persistMeta(meta);
       title.hidden = false;

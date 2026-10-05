@@ -119,7 +119,7 @@ export const UNIT_NAME: Record<string, string> = {
 };
 
 export const ACHIEVEMENTS: AchievementDef[] = [
-  { id: 'gold-100', title: 'Собрать 100 золота', detail: 'Казна дошла до ста монет.', icon: '🪙', group: 'Экономика', goal: 100, secret: false, steam: 'GOLD_100', yandex: 'gold_100' },
+  { id: 'gold-400', title: 'Собрать 400 золота', detail: 'Казна выросла выше стартового запаса.', icon: '🪙', group: 'Экономика', goal: 400, secret: false, steam: 'GOLD_400', yandex: 'gold_400' },
   { id: 'gold-1000', title: 'Собрать 1000 золота', detail: 'Тысяча монет в сундуке.', icon: '💰', group: 'Экономика', goal: 1000, secret: false, steam: 'GOLD_1000', yandex: 'gold_1000' },
   { id: 'wood-200', title: 'Запасти 200 дерева', detail: 'Дров хватит на долгую зиму.', icon: '🪵', group: 'Экономика', goal: 200, secret: false, steam: 'WOOD_200', yandex: 'wood_200' },
   { id: 'bread-40', title: 'Испечь 40 хлеба', detail: 'Пекарня не простаивает.', icon: '🍞', group: 'Экономика', goal: 40, secret: false, steam: 'BREAD_40', yandex: 'bread_40' },
@@ -135,7 +135,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   { id: 'engineer-keep', title: 'Взять замок инженерами', detail: 'Инженер добил чужой замок.', icon: '⚙', group: 'Война', goal: 1, secret: false, steam: 'ENGINEER_KEEP', yandex: 'engineer_keep' },
   { id: 'winter-fed', title: 'Пережить зиму без голода', detail: 'Зима прошла, и люди не голодали.', icon: '❄', group: 'Сезоны', goal: 1, secret: false, steam: 'WINTER_FED', yandex: 'winter_fed' },
   { id: 'storm', title: 'Пережить грозу', detail: 'Гроза прошла над посадом.', icon: '⛈', group: 'Сезоны', goal: 1, secret: false, steam: 'STORM', yandex: 'storm' },
-  { id: 'apples-30', title: 'Собрать 30 яблок', detail: 'Сады отдали урожай.', icon: '🍎', group: 'Сезоны', goal: 30, secret: false, steam: 'APPLES_30', yandex: 'apples_30' },
+  { id: 'apples-200', title: 'Собрать 200 яблок', detail: 'Сады отдали урожай сверх стартовой корзины.', icon: '🍎', group: 'Сезоны', goal: 200, secret: false, steam: 'APPLES_200', yandex: 'apples_200' },
   { id: 'seasons-loop', title: 'Дождаться весны', detail: 'После сытой зимы снова весна.', icon: '❀', group: 'Сезоны', goal: 1, secret: false, steam: 'SPRING', yandex: 'spring' },
   { id: 'trade-1', title: 'Сделка с караваном', detail: 'Первая торговля на тракте.', icon: '🛒', group: 'Тракт', goal: 1, secret: false, steam: 'TRADE_1', yandex: 'trade_1' },
   { id: 'trade-10', title: 'Торговать с 10 караванами', detail: 'Десять разных караванов.', icon: '🐪', group: 'Тракт', goal: 10, secret: false, steam: 'TRADE_10', yandex: 'trade_10' },
@@ -360,7 +360,7 @@ export function progressOf(meta: MetaState, id: string): { value: number; goal: 
   const goal = item?.goal ?? 1;
   const value = (() => {
     switch (id) {
-      case 'gold-100':
+      case 'gold-400':
       case 'gold-1000':
         return meta.best.gold;
       case 'wood-200':
@@ -392,7 +392,7 @@ export function progressOf(meta: MetaState, id: string): { value: number; goal: 
         return meta.winters;
       case 'storm':
         return meta.storms;
-      case 'apples-30':
+      case 'apples-200':
         return meta.best.apples;
       case 'trade-1':
       case 'trade-10':

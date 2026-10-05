@@ -63,8 +63,10 @@ describe('достижения', () => {
   });
 
   it('открывает тысячу золота и счастливую сотню с полоской прогресса', () => {
+    const opening = observe(emptyMeta(), pulse({ gold: 300, apples: 160, wood: 80 }));
+    expect(opening.fresh).toEqual([]);
     const poor = observe(emptyMeta(), pulse({ gold: 400, pop: 40, happy: true }));
-    expect(poor.fresh.map((item) => item.id)).toEqual(['gold-100']);
+    expect(poor.fresh.map((item) => item.id)).toEqual(['gold-400']);
     expect(progressOf(poor.meta, 'gold-1000')).toEqual({ value: 400, goal: 1000 });
     const rich = observe(poor.meta, pulse({ gold: 1000, pop: 100, happy: true }));
     expect(rich.fresh.map((item) => item.id)).toEqual(expect.arrayContaining(['gold-1000', 'happy-100']));

@@ -440,10 +440,15 @@ details.advanced summary {
 #toast.toast-achieve {
   position: fixed;
   top: 72px;
+  bottom: auto;
   left: 50%;
+  right: auto;
+  width: max-content;
+  height: auto;
   transform: translateX(-50%);
   z-index: 30;
   max-width: min(420px, calc(100% - 24px));
+  white-space: nowrap;
 }
 .ach {
   display: flex;
