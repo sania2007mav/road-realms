@@ -96,6 +96,8 @@ import {
 import { loadBoard, loadHistory, publishProfile, settleRanked, SOON } from './net/rank';
 import { bakeTerrain, climateStamp, clearTerrainChunks, minimapToTile, renderMinimap, renderWorld, setTerrainChunks, type Ghost, type OrderMarker } from './render/draw';
 import { net } from './net/session';
+import { closeMapEditor, editorShowList, openMapEditor } from './editor/editor';
+import { blankMap, encodeShare, listMaps, loadMap, MAP_SHARE_LIMIT, saveMap, validateMap, type CustomMap } from './sim/custom';
 import { NetView, type LobbyDraft } from './net/screens';
 import { ZOOM_MAX, clampCamera, focusTile, screenToTile, screenToWorld, worldToScreen, type Camera } from './render/camera';
 import { helpHtml } from './ui/help';
@@ -559,13 +561,33 @@ function hideMenu() {
   menu.hidden = true;
 }
 
-function startGame() {
+function pickedCustom(): CustomMap | undefined {
+  const mapId = document.querySelector<HTMLSelectElement>('#custom-map')?.value ?? '';
+  if (!mapId) return undefined;
+  const loaded = loadMap(mapId);
+  if (!loaded) {
+    flash('Карта не читается');
+    return undefined;
+  }
+  return loaded;
+}
+
+function startGame(custom?: CustomMap) {
+  const chosen = custom ?? pickedCustom();
+  if (!custom && document.querySelector<HTMLSelectElement>('#custom-map')?.value && !chosen) return;
+  if (chosen) {
+    const errors = validateMap(chosen);
+    if (errors.length) {
+      flash(errors[0]);
+      return;
+    }
+  }
   netMode = false;
   localPlayer = 0;
   campaignSession = null;
   const seed = Number((document.querySelector<HTMLInputElement>('#seed')?.value ?? '20261003')) || 1;
   const setup = readSetup();
-  state = createGame(seed >>> 0, { ai: setup.ai, setup });
+  state = createGame(seed >>> 0, { ai: setup.ai, humans: 1, setup, ...(chosen ? { custom: chosen } : {}) });
   baked = bakeTerrain(state);
   clearTerrainChunks();
   const keep = playerKeep(state, localPlayer);
@@ -591,8 +613,27 @@ function startGame() {
   menu.hidden = true;
   buildChrome();
   tutorial.hidden = true;
-  if (!netMode && !localStorage.getItem(TUTORIAL_KEY)) beginGuide();
+  closeMapEditor();
+  if (!chosen && !localStorage.getItem(TUTORIAL_KEY)) beginGuide();
   expose();
+}
+
+function openEditor(initial?: CustomMap) {
+  const host = document.querySelector<HTMLElement>('#map-editor');
+  if (!host) return;
+  title.hidden = true;
+  openMapEditor(host, {
+    land: () => phoneLandscape(),
+    flash,
+    onPlay: (map) => startGame(map),
+    onClose: () => {
+      closeMapEditor();
+      if (!playing) {
+        buildTitle();
+        bootPreview();
+      }
+    },
+  }, initial);
 }
 
 function applyUi() {
@@ -962,6 +1003,12 @@ function buildTitle() {
             ${option('large', 'Большая', draft.map === 'large')}
           </select>
         </label>
+        <label for="custom-map">Карта
+          <select id="custom-map" data-testid="custom-map">
+            ${option('', 'Случайная', true)}
+            ${listMaps().map((row) => option(row.id, row.name, false)).join('')}
+          </select>
+        </label>
         <label for="start-res">Начальные запасы
           <select id="start-res" data-testid="start-res">
             ${option('low', 'Скудные', draft.start === 'low')}
@@ -1032,6 +1079,7 @@ function buildTitle() {
         <button type="button" id="achieve-title" data-testid="achieve-open">Достижения</button>
         <button type="button" id="rating-title" data-testid="rating-open">Рейтинг</button>
         <button type="button" id="stats-title" data-testid="stats-open">Статистика</button>
+        <button type="button" id="editor-title" data-testid="editor-open">Редактор карт</button>
       </div>
       <p class="fineprint"><a href="privacy.html">Политика конфиденциальности</a></p>
     </div>
@@ -1072,6 +1120,7 @@ function buildTitle() {
   document.querySelector<HTMLButtonElement>('#achieve-title')!.onclick = () => openAchievements();
   document.querySelector<HTMLButtonElement>('#rating-title')!.onclick = () => void openRating();
   document.querySelector<HTMLButtonElement>('#stats-title')!.onclick = () => openStats();
+  document.querySelector<HTMLButtonElement>('#editor-title')!.onclick = () => openEditor();
 }
 
 function openAbout() {
@@ -4276,6 +4325,38 @@ function expose() {
         <p id="rating-line" data-testid="rating-line">Рейтинг 1000 → 1016 (+16)</p>
       </div>`;
     },
+    previewEditor() {
+      openEditor();
+    },
+    previewEditorError() {
+      const bad = blankMap();
+      bad.starts[1] = { x: bad.starts[0].x + 2, y: bad.starts[0].y, team: 1 };
+      openEditor(bad);
+    },
+    previewEditorList() {
+      const north = blankMap();
+      north.name = 'Северный тракт';
+      const bend = blankMap('normal', 'bend');
+      bend.name = 'Изгиб у реки';
+      saveMap(north);
+      saveMap(bend);
+      openEditor();
+      editorShowList();
+    },
+    previewCustomPlay() {
+      const map = blankMap('small', 'cross');
+      map.name = 'Перекрёсток';
+      map.seasonStart = 'summer';
+      const { w } = { w: map.paint.length / 80 };
+      for (let y = 4; y < 22; y++) {
+        for (let x = 48; x < 78; x++) map.paint[y * w + x] = Terrain.Water;
+      }
+      startGame(map);
+      lookAtTile(state.mapW / 2, state.mapH * 0.42);
+      camera.zoom = 0.62;
+      clampView();
+      setSpeed(0);
+    },
     stageRoad() {
       const keep = playerKeep(state, localPlayer);
       if (!keep) return;
@@ -4703,6 +4784,10 @@ declare global {
       previewBoard: () => void;
       previewRanked: () => void;
       previewRatingChange: () => void;
+      previewEditor: () => void;
+      previewEditorError: () => void;
+      previewEditorList: () => void;
+      previewCustomPlay: () => void;
       stageRoad: () => void;
     };
   }
@@ -4887,7 +4972,7 @@ function lobbyPack(draft: LobbyDraft, worldSeed: number) {
         events: draft.events,
         profiles,
       });
-  return {
+  const packed = {
     name: draft.name,
     maxPlayers: draft.ranked ? 2 : draft.maxPlayers,
     seed: packSeed(worldSeed, { ...setup, profiles }),
@@ -4898,7 +4983,27 @@ function lobbyPack(draft: LobbyDraft, worldSeed: number) {
     events: draft.ranked ? 'off' : draft.events,
     password: draft.ranked ? '' : draft.password,
     ranked: draft.ranked,
-  } as const;
+    mapCode: '',
+  };
+  if (!draft.ranked && draft.mapId) {
+    const loaded = loadMap(draft.mapId);
+    if (!loaded) {
+      flash('Карта не читается');
+      return null;
+    }
+    const errors = validateMap(loaded);
+    if (errors.length) {
+      flash(errors[0]);
+      return null;
+    }
+    const code = encodeShare(loaded);
+    if (code.length > MAP_SHARE_LIMIT || !/^[A-Za-z0-9_-]+$/.test(code)) {
+      flash('Карта слишком велика для сетевой комнаты');
+      return null;
+    }
+    packed.mapCode = code;
+  }
+  return packed;
 }
 
 function paintRatingLine(text: string) {
@@ -4922,6 +5027,7 @@ const netView = new NetView(document.querySelector<HTMLElement>('#net')!, docume
     rememberName();
     const world = Number(document.querySelector<HTMLInputElement>('#seed')?.value ?? '1') >>> 0;
     const packed = lobbyPack(draft, world);
+    if (!packed) return;
     void net.create(packed).catch((err) => netMessage(err, 'Не удалось создать лобби'));
   },
   join: (id, password) => {

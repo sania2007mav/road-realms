@@ -1025,8 +1025,11 @@ export function laborSpot(state: GameState, building: Building): { x: number; y:
     return porch;
   }
   if (building.type === 'quarry' || building.type === 'mine' || building.type === 'pitch') {
-    const terrain = building.type === 'quarry' ? Terrain.Limestone : building.type === 'mine' ? Terrain.Iron : Terrain.Swamp;
-    const node = nearestTerrainTile(state, porch.x, porch.y, terrain, 2.8);
+    const node =
+      building.type === 'quarry'
+        ? nearestTerrainTile(state, porch.x, porch.y, Terrain.Limestone, 2.8) ??
+          nearestTerrainTile(state, porch.x, porch.y, Terrain.Clay, 2.8)
+        : nearestTerrainTile(state, porch.x, porch.y, building.type === 'mine' ? Terrain.Iron : Terrain.Swamp, 2.8);
     if (node) return { x: node.x + 0.5, y: node.y + 0.5 };
     return porch;
   }
@@ -1040,7 +1043,13 @@ export function stallReason(state: GameState, building: Building): string | null
     return 'ждёт: нет леса рядом';
   }
   if (building.type === 'hunter' && !nearestDeer(state, porch.x, porch.y, 12)) return 'ждёт: нет оленей рядом';
-  if (building.type === 'quarry' && !nearestTerrainTile(state, porch.x, porch.y, Terrain.Limestone, 2.8)) return 'ждёт: нет камня рядом';
+  if (
+    building.type === 'quarry' &&
+    !nearestTerrainTile(state, porch.x, porch.y, Terrain.Limestone, 2.8) &&
+    !nearestTerrainTile(state, porch.x, porch.y, Terrain.Clay, 2.8)
+  ) {
+    return 'ждёт: нет камня рядом';
+  }
   if (building.type === 'mine' && !nearestTerrainTile(state, porch.x, porch.y, Terrain.Iron, 2.8)) return 'ждёт: нет железа рядом';
   if (building.type === 'pitch' && !nearestTerrainTile(state, porch.x, porch.y, Terrain.Swamp, 2.8)) return 'ждёт: нет болота рядом';
   if (def.output && (def.hauler === 'person' || def.hauler === 'ox')) {
@@ -2296,6 +2305,7 @@ export function serialize(state: GameState): string {
     season: state.season ?? 'off',
     weather: state.weather ?? 'clear',
     road: state.road,
+    ...(state.mapHash ? { mapHash: state.mapHash } : {}),
   });
 }
 
@@ -2352,6 +2362,7 @@ export function deserialize(raw: string): GameState {
     winnerId: data.winnerId ?? (data.outcome === 'playing' ? -1 : 0),
     season: data.season ?? 'off',
     weather: data.weather ?? 'clear',
+    mapHash: typeof (data as { mapHash?: unknown }).mapHash === 'string' ? (data as { mapHash: string }).mapHash : undefined,
   };
   syncClimate(loaded);
   return loaded;

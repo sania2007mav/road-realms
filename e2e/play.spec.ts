@@ -969,7 +969,7 @@ test('кадры для витрины 1280×720', async ({ page, browser }) => 
 test('кнопки заставки внутри карточки', async ({ page }) => {
   test.setTimeout(120_000);
   mkdirSync(shots, { recursive: true });
-  const ids = ['new-game', 'net-game', 'continue-game', 'campaign-open', 'load-game', 'help-open', 'settings-open', 'know-game', 'about-open', 'achieve-open', 'rating-open', 'stats-open'];
+  const ids = ['new-game', 'net-game', 'continue-game', 'campaign-open', 'load-game', 'help-open', 'settings-open', 'know-game', 'about-open', 'achieve-open', 'rating-open', 'stats-open', 'editor-open'];
   const viewports = [
     { width: 1280, height: 800 },
     { width: 830, height: 755 },
@@ -1689,6 +1689,79 @@ test.describe('альбом телефона', () => {
   });
 });
 
+test('редактор карт на столе', async ({ page }) => {
+  test.setTimeout(60_000);
+  mkdirSync(shots, { recursive: true });
+  await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/road-realms/');
+  await page.getByTestId('editor-open').click();
+  await expect(page.getByTestId('map-editor')).toBeVisible();
+  await expect(page.getByTestId('tool-water')).toBeVisible();
+  await expect(page.getByTestId('brush-5')).toBeVisible();
+  await page.getByTestId('tool-water').click();
+  await page.getByTestId('brush-3').click();
+  await page.getByTestId('editor-canvas').click({ position: { x: 420, y: 220 } });
+  await page.getByTestId('editor-undo').click();
+  await page.getByTestId('editor-redo').click();
+  await expect(page.getByTestId('editor-confirm')).toBeHidden();
+  await page.screenshot({ path: `${shots}/editor_desktop.png` });
+});
+
+test('редактор показывает ошибку и список карт', async ({ page }) => {
+  test.setTimeout(60_000);
+  mkdirSync(shots, { recursive: true });
+  await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/road-realms/');
+  await page.evaluate(() => window.__game!.previewEditorError());
+  await page.getByTestId('editor-validate').click();
+  await expect(page.getByTestId('editor-errors')).toContainText('слишком близко');
+  await page.screenshot({ path: `${shots}/editor_error.png` });
+  await page.evaluate(() => window.__game!.previewEditorList());
+  await expect(page.getByTestId('editor-saved')).toContainText('Северный тракт');
+  await expect(page.getByTestId('editor-saved')).toContainText('Изгиб у реки');
+  await page.screenshot({ path: `${shots}/editor_list.png` });
+});
+
+test('своя карта в игре', async ({ page }) => {
+  test.setTimeout(60_000);
+  mkdirSync(shots, { recursive: true });
+  await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/road-realms/');
+  await page.evaluate(() => window.__game!.previewCustomPlay());
+  await expect(page.locator('#buildbar')).toBeVisible();
+  await expect(page.getByTestId('map-editor')).toBeHidden();
+  await page.screenshot({ path: `${shots}/editor_play.png` });
+});
+
+test.describe('редактор в альбоме', () => {
+  test.use({
+    hasTouch: true,
+    isMobile: true,
+    viewport: { width: 915, height: 412 },
+    deviceScaleFactor: 1,
+  });
+
+  test('призрак кисти на узком экране', async ({ page }) => {
+    test.setTimeout(60_000);
+    mkdirSync(shots, { recursive: true });
+    await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+    await page.goto('/road-realms/');
+    await page.evaluate(() => window.__game!.previewEditor());
+    await expect(page.locator('html')).toHaveClass(/phone-land/);
+    await expect(page.getByTestId('editor-confirm')).toBeVisible();
+    const canvas = page.getByTestId('editor-canvas');
+    const box = await canvas.boundingBox();
+    expect(box).toBeTruthy();
+    await canvas.click({ position: { x: box!.width / 2, y: box!.height / 2 } });
+    await expect(page.getByTestId('editor-ghost')).toBeVisible();
+    await expect(page.getByTestId('editor-ghost')).toContainText('Кисть');
+    await page.screenshot({ path: `${shots}/editor_land.png` });
+  });
+});
+
 declare global {
   interface Window {
     __game?: {
@@ -1728,6 +1801,10 @@ declare global {
       offerInstall: () => void;
       setGfxMode: (mode: 'high' | 'simple') => void;
       stageRoad: () => void;
+      previewEditor: () => void;
+      previewEditorError: () => void;
+      previewEditorList: () => void;
+      previewCustomPlay: () => void;
     };
   }
 }

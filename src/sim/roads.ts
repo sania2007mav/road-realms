@@ -8,6 +8,29 @@ export const ROAD_MULT = 1.45;
 
 export const ROAD_COST = { wood: 1 } as const;
 
+/** Middle of the highway in this column. A straight trakt stays on roadY. */
+export function roadCenter(state: GameState, x: number): number {
+  const tx = Math.max(0, Math.min(state.mapW - 1, Math.floor(x)));
+  let best = state.roadY;
+  let bestDist = 1e9;
+  let y = 0;
+  while (y < state.mapH) {
+    if (state.terrain[y * state.mapW + tx] !== Terrain.Road) {
+      y += 1;
+      continue;
+    }
+    const top = y;
+    while (y < state.mapH && state.terrain[y * state.mapW + tx] === Terrain.Road) y += 1;
+    const center = (top + (y - 1)) / 2;
+    const dist = Math.abs(center - state.roadY);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = center;
+    }
+  }
+  return best;
+}
+
 export function onRoad(state: GameState, x: number, y: number): boolean {
   const tx = Math.floor(x);
   const ty = Math.floor(y);

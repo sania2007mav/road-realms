@@ -25,6 +25,7 @@ import { OFFLINE_NOTE, enableAppCheck, firebaseConfig, friendlyNetError } from '
 import { describeSetup, displayLobbyName, lobbySummary, normalizeProfiles, normalizeSetup, packLobbyName, profilesFromLobbyName, rankedSetup, tailFromLobbyName, unpackSeed } from '../sim/match';
 import { readStoredProfile, seatLabel } from '../meta/rating';
 import { passwordLock } from './password';
+import { decodeShare, validateMap } from '../sim/custom';
 import { createGame } from '../sim/world';
 import { hashState } from '../sim/hash';
 import { step, type Command, type GameState } from '../sim';
@@ -60,6 +61,7 @@ export interface LobbyData {
   lock?: string;
   createdAt?: number;
   startedAt?: number;
+  map?: string;
   players?: Record<string, LobbyPlayer>;
   seats?: Record<string, string> | string[];
 }
@@ -329,6 +331,7 @@ export class NetSession {
     events?: 'off' | 'rare' | 'normal' | 'often';
     password?: string;
     ranked?: boolean;
+    mapCode?: string;
   }): Promise<void> {
     await this.signIn();
     const ranked = opts.ranked === true;
@@ -354,6 +357,7 @@ export class NetSession {
       createdAt: serverTimestamp(),
       players: { [this.uid]: { name: this.playerName(), seat: 0, joinedAt: serverTimestamp() } },
       seats: { 0: this.uid },
+      ...(opts.mapCode ? { map: opts.mapCode } : {}),
     });
     this.watchLobby(id);
   }
@@ -563,7 +567,7 @@ export class NetSession {
       maxPlayers: lobby.maxPlayers,
       seed: decoded.worldSeed,
       rules: describeSetup(setup),
-      summary: lobbySummary(setup, { speed: tail.speed, teams: tail.teams, difficulty: profiles[0]?.difficulty ?? 'normal' }, tail.ranked),
+      summary: `${lobbySummary(setup, { speed: tail.speed, teams: tail.teams, difficulty: profiles[0]?.difficulty ?? 'normal' }, tail.ranked)}${lobby.map ? ' · своя карта' : ''}`,
       locked,
       draft: {
         victory: setup.victory,
@@ -603,13 +607,33 @@ export class NetSession {
     this.pace = ranked ? 1 : tail.speed;
     this.rankedMatch = ranked;
     this.forfeitSent = false;
+    let custom: ReturnType<typeof decodeShare> | undefined;
+    if (!ranked && lobby.map) {
+      try {
+        custom = decodeShare(lobby.map);
+      } catch {
+        this.hooks.onError('Карта в комнате не читается');
+        return;
+      }
+      const errors = validateMap(custom);
+      if (errors.length) {
+        this.hooks.onError(errors[0]);
+        return;
+      }
+      if (humans > custom.starts.length) {
+        this.hooks.onError(`На карте ${custom.starts.length} стартов, а игроков больше`);
+        return;
+      }
+    }
+    const customAi = custom ? Math.max(0, Math.min(custom.starts.length - humans, ai)) : ai;
     const setup = ranked
       ? { ...rankedSetup(decoded.setup.map), ai: 0, profiles, teams: 'ffa' as const, seasons: 'off' as const, events: 'off' as const }
-      : { ...decoded.setup, ai, profiles, teams: tail.teams, seasons: tail.seasons, events: tail.events };
+      : { ...decoded.setup, ai: custom ? customAi : ai, profiles, teams: tail.teams, seasons: tail.seasons, events: tail.events };
     const state = createGame(decoded.worldSeed, {
       humans,
-      ai,
+      ai: custom ? customAi : ai,
       setup,
+      ...(custom ? { custom } : {}),
     });
     for (const seat of this.roster) {
       const player = state.players[seat.playerId];

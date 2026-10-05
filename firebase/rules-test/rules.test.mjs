@@ -269,3 +269,11 @@ test('ranked reports agree before a rating moves, and a forfeit waits out the ti
   await seed('matches/R3/presence/bob', { online: false, at: Date.now() - 120000 });
   await assertSucceeds(set(ref(db('alice'), 'matches/R3/settled'), { ...settled, mode: 'forfeit' }));
 });
+
+test('lobby may carry a map share code', async () => {
+  await assertSucceeds(set(ref(db('alice'), 'lobbies/MAP1'), newLobby('alice', { map: 'A'.repeat(16) })));
+  await assertSucceeds(set(ref(db('alice'), 'lobbies/MAP5'), newLobby('alice')));
+  await assertFails(set(ref(db('alice'), 'lobbies/MAP2'), newLobby('alice', { map: 'A'.repeat(12001) })));
+  await assertFails(set(ref(db('alice'), 'lobbies/MAP3'), newLobby('alice', { map: 'abc$defgh' })));
+  await assertFails(set(ref(db('alice'), 'lobbies/MAP4'), newLobby('alice', { map: 'short' })));
+});

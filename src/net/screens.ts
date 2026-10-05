@@ -1,3 +1,4 @@
+import { listMaps } from '../sim/custom';
 import type { LobbyRow, RoomView, WaitView } from './session';
 
 export interface LobbyDraft {
@@ -18,6 +19,7 @@ export interface LobbyDraft {
   goldTarget: number;
   popTarget: number;
   surviveMinutes: number;
+  mapId: string;
 }
 
 export interface NetActions {
@@ -49,6 +51,7 @@ const DEFAULT_DRAFT: LobbyDraft = {
   goldTarget: 2000,
   popTarget: 20,
   surviveMinutes: 20,
+  mapId: '',
 };
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string): HTMLElementTagNameMap[K] {
@@ -184,10 +187,15 @@ function setupGrid(draft: LobbyDraft, testPrefix: string): HTMLDivElement {
   };
   victory.addEventListener('change', syncExtra);
   syncExtra();
+  const custom = select(`${testPrefix}-map-custom`, draft.mapId || '', [
+    ['', 'Случайная'],
+    ...listMaps().map((row) => [row.id, row.name] as const),
+  ]);
   grid.append(
     labeled('Условие победы', victory),
     labeled('Лимит времени', time),
     labeled('Размер карты', map),
+    labeled('Своя карта', custom),
     labeled('Скорость', speed),
     labeled('Начальные запасы', start),
     labeled('Соседи на пустые места', ai),
@@ -233,6 +241,7 @@ function readDraft(root: ParentNode, prefix: string, fallback: LobbyDraft): Lobb
     goldTarget: [1000, 2000, 4000].includes(Number(value('gold'))) ? Number(value('gold')) : 2000,
     popTarget: [12, 20, 30].includes(Number(value('pop'))) ? Number(value('pop')) : 20,
     surviveMinutes: [10, 20, 30].includes(Number(value('survive'))) ? Number(value('survive')) : 20,
+    mapId: value('map-custom'),
   };
 }
 
@@ -318,6 +327,7 @@ export class NetView {
         if (control.dataset.testid === 'lobby-teams') control.value = 'ffa';
         if (control.dataset.testid === 'lobby-seasons') control.value = 'off';
         if (control.dataset.testid === 'lobby-events') control.value = 'off';
+        if (control.dataset.testid === 'lobby-map-custom') control.value = '';
       }
     };
     ranked.addEventListener('change', applyRanked);

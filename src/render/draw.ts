@@ -192,10 +192,22 @@ function groundColor(state: GameState, x: number, y: number): string {
     g = 58;
     b = 44;
   } else if (terrain === Terrain.Road) {
-    const edge = y === state.roadY - 1 || y === state.roadY + 1;
+    const edge = terrainAt(state, x, y - 1) !== Terrain.Road || terrainAt(state, x, y + 1) !== Terrain.Road;
     r = edge ? 132 : 176;
     g = edge ? 96 : 132;
     b = edge ? 58 : 78;
+  } else if (terrain === Terrain.Rock) {
+    r = 118;
+    g = 116;
+    b = 112;
+  } else if (terrain === Terrain.Water) {
+    r = 48;
+    g = 96;
+    b = 148;
+  } else if (terrain === Terrain.Clay) {
+    r = 176;
+    g = 112;
+    b = 72;
   }
   let oasis = 0;
   let sand = 0;

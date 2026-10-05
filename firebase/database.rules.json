@@ -35,6 +35,9 @@
           ".write": "auth != null && !data.exists() && newData.exists() && auth.uid == data.parent().child('hostUid').val() && data.parent().child('status').val() == 'open'",
           ".validate": "newData.isNumber() && ((!data.exists() && newData.val() == now && newData.parent().child('status').val() == 'started') || newData.val() == data.val())"
         },
+        "map": {
+          ".validate": "newData.isString() && newData.val().length >= 8 && newData.val().length <= 12000 && newData.val().matches(/^[A-Za-z0-9_-]+$/)"
+        },
 
         "players": {
           "$uid": {

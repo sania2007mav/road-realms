@@ -21,10 +21,11 @@ export function seasonLength(pace: SeasonPace): number {
   return SEASON_MINUTES[pace] * TICKS_PER_GAME_MINUTE;
 }
 
-export function seasonAt(tick: number, pace: SeasonPace): SeasonId | 'off' {
+export function seasonAt(tick: number, pace: SeasonPace, shift = 0): SeasonId | 'off' {
   const len = seasonLength(pace);
   if (len <= 0) return 'off';
-  return SEASONS[Math.floor(Math.max(0, tick) / len) % 4];
+  const index = (Math.floor(Math.max(0, tick) / len) + ((shift % 4) + 4) % 4) % 4;
+  return SEASONS[index];
 }
 
 export function nextSeason(season: SeasonId | 'off'): SeasonId | 'off' {
@@ -41,8 +42,8 @@ export function weatherRoll(seed: number, minute: number): number {
   return (h >>> 0) % 100;
 }
 
-export function weatherAt(seed: number, tick: number, pace: SeasonPace): WeatherId {
-  const season = seasonAt(tick, pace);
+export function weatherAt(seed: number, tick: number, pace: SeasonPace, shift = 0): WeatherId {
+  const season = seasonAt(tick, pace, shift);
   if (season === 'off') return 'clear';
   const roll = weatherRoll(seed >>> 0, Math.floor(Math.max(0, tick) / TICKS_PER_GAME_MINUTE));
   if (season === 'spring') return roll < 40 ? 'rain' : 'clear';
@@ -58,8 +59,9 @@ export function weatherAt(seed: number, tick: number, pace: SeasonPace): Weather
 
 export function syncClimate(state: GameState): void {
   const pace = seasonPace(state.match?.seasons);
-  state.season = seasonAt(state.tick, pace);
-  state.weather = weatherAt(state.seed, state.tick, pace);
+  const shift = state.match?.seasonShift ?? 0;
+  state.season = seasonAt(state.tick, pace, shift);
+  state.weather = weatherAt(state.seed, state.tick, pace, shift);
 }
 
 export function isFarm(type: BuildingType): boolean {

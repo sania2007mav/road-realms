@@ -86,7 +86,7 @@ export type Weapon =
   | 'ram'
   | 'catapult';
 
-export type Terrain = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+export type Terrain = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
 
 export const Terrain = {
   Land: 0,
@@ -97,6 +97,9 @@ export const Terrain = {
   Iron: 5,
   Swamp: 6,
   Road: 7,
+  Rock: 8,
+  Water: 9,
+  Clay: 10,
 } as const;
 
 export type WorkMode = 'goto' | 'labor' | 'fetch' | 'return' | 'deliver';
@@ -175,6 +178,8 @@ export interface MatchSetup {
   seasons?: SeasonPace;
   /** Road events. Omitted means off, so the campaign and the balance runs stay quiet. */
   events?: EventPace;
+  /** Added to the season index. Omitted means the year still opens in spring. */
+  seasonShift?: number;
 }
 
 export interface Sample {
@@ -385,6 +390,8 @@ export interface GameState {
   weather: WeatherId;
   /** Caravans, fairs, raids and travelers. Missing on old saves, which stay quiet. */
   road?: RoadState;
+  /** Fingerprint of a custom map. Procedural matches omit it, so their lockstep hash stays the same. */
+  mapHash?: string;
 }
 
 export type Command =

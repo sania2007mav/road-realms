@@ -76,6 +76,7 @@ export function normalizeSetup(partial?: Partial<MatchSetup> | null, ai = DEFAUL
     seasons: seasonPace(partial.seasons),
     events: eventPace(partial.events),
   };
+  if (partial.seasonShift === 1 || partial.seasonShift === 2 || partial.seasonShift === 3) setup.seasonShift = partial.seasonShift;
   if (partial.teams === 'pairs' || partial.teams === 'ffa') setup.teams = partial.teams;
   if (partial.profiles) setup.profiles = normalizeProfiles(partial.profiles);
   return setup;

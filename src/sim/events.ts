@@ -2,6 +2,7 @@ import { housingOf, POP_MAX, POP_MIN, PRICES, TICKS_PER_GAME_MINUTE } from './ba
 import { createMob, createPerson } from './entities';
 import type { Building, Caravan, EventPace, GameState, Mob, Resource, RoadNote, RoadParty, RoadState } from './types';
 import { Terrain } from './types';
+import { roadCenter } from './roads';
 
 const GOODS: Resource[] = ['wood', 'apples', 'iron'];
 
@@ -98,7 +99,7 @@ export function moveRoad(state: GameState): void {
     if (!caravan.alive) continue;
     const dir = caravan.toX >= caravan.x ? 1 : -1;
     caravan.x += dir * speed;
-    caravan.y = state.roadY + 0.15;
+    caravan.y = roadCenter(state, caravan.x) + 0.15;
     if (Math.abs(caravan.x - caravan.toX) <= speed) {
       caravan.alive = false;
       const host = state.players[caravan.toId];
@@ -233,7 +234,7 @@ function spawnCaravan(state: GameState) {
     fromId: from.playerId,
     toId: to.playerId,
     x: spot.x,
-    y: state.roadY + 0.15,
+    y: roadCenter(state, spot.x) + 0.15,
     toX: dest.x,
     hp: 40,
     gold: 36,
@@ -271,7 +272,7 @@ function spawnRaid(state: GameState) {
   const minute = Math.floor(state.tick / TICKS_PER_GAME_MINUTE);
   const edge = roll(state.seed, minute + 7) % 2 === 0;
   let x = edge ? 2 : state.mapW - 3;
-  let y = state.roadY;
+  let y = Math.round(roadCenter(state, x));
   if (!edge) {
     const forest = forestNearRoad(state, minute);
     if (forest) {
@@ -293,7 +294,8 @@ function forestNearRoad(state: GameState, minute: number): { x: number; y: numbe
   const origin = 4 + (roll(state.seed, minute + 3) % Math.max(1, state.mapW - 8));
   for (let dx = 0; dx < span; dx++) {
     const x = (origin + dx) % state.mapW;
-    for (const y of [state.roadY - 4, state.roadY + 4, state.roadY - 6, state.roadY + 6]) {
+    const row = roadCenter(state, x);
+    for (const y of [row - 4, row + 4, row - 6, row + 6]) {
       if (y < 1 || y >= state.mapH - 1) continue;
       if (state.terrain[y * state.mapW + x] === Terrain.Forest) return { x, y };
     }
@@ -315,7 +317,7 @@ function spawnParty(state: GameState) {
     kind,
     playerId: keep.playerId,
     x: Math.max(2, spot.x - 8),
-    y: state.roadY,
+    y: roadCenter(state, Math.max(2, spot.x - 8)),
     count: 2,
     until: state.tick + 4 * TICKS_PER_GAME_MINUTE,
   };

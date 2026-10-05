@@ -27,6 +27,7 @@ export function hashState(state: GameState): string {
     `n${state.nextId}`,
     `o${state.outcome}`,
     `s${state.seed >>> 0}`,
+    ...(state.mapHash ? [`H${state.mapHash}`] : []),
     `w${state.winnerId ?? -1}`,
     match
       ? `K${match.victory}|${match.timeLimit}|${match.map}|${match.start}|${match.ai}|${match.goldTarget}|${match.popTarget}|${match.surviveMinutes}|${match.teams === 'pairs' ? 'pairs' : 'ffa'}|${match.seasons ?? 'off'}|${state.season ?? 'off'}|${state.weather ?? 'clear'}`
