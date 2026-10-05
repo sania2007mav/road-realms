@@ -4,6 +4,7 @@ import {
   PRICES,
   TICKS_PER_GAME_MINUTE,
   TRAIN_COST,
+  TRAIN_GOLD,
   foodTypesIn,
 } from './balance';
 import { totalFood } from './economy';
@@ -298,6 +299,18 @@ function economyCommand(state: GameState, player: Player): Command | null {
     const walls = wallCommand(state, player);
     if (walls) return walls;
   }
+  return supplyCommand(state, player);
+}
+
+function supplyCommand(state: GameState, player: Player): Command | null {
+  if (player.personality !== 'warlord' && player.personality !== 'strategist') return null;
+  if (soldiersOf(state, player.id).length < 3) return null;
+  if ((playerKeep(state, player.id)?.level ?? 1) < 2) return null;
+  if (countOf(state, player.id, 'armoury') === 0) return place(state, player.id, 'armoury');
+  const ironReady = (player.stocks.iron ?? 0) > 0 || countOf(state, player.id, 'mine') > 0;
+  if (ironReady && countOf(state, player.id, 'smith') === 0) return place(state, player.id, 'smith');
+  const fodder = (player.stocks.apples ?? 0) > 8 || (player.stocks.wheat ?? 0) > 0;
+  if (fodder && countOf(state, player.id, 'stable') === 0) return place(state, player.id, 'stable');
   return null;
 }
 
@@ -365,6 +378,7 @@ function repairWall(state: GameState, player: Player): boolean {
 }
 
 function groupSize(player: Player): number {
+  if (player.personality === 'merchant') return 2;
   if (player.personality === 'warlord') {
     if (player.difficulty === 'hard' || player.difficulty === 'cruel') return 4;
     return 3;
@@ -383,20 +397,47 @@ function enemyWeapons(state: GameState, victim: number) {
   let infantry = 0;
   let archers = 0;
   let walls = 0;
+  let cavalry = 0;
+  let spears = 0;
   for (const soldier of state.soldiers) {
     if (soldier.playerId !== victim || soldier.hp <= 0) continue;
     if (soldier.weapon === 'bow') archers += 1;
+    else if (soldier.weapon === 'spear') spears += 1;
+    else if (soldier.weapon === 'light' || soldier.weapon === 'heavy') cavalry += 1;
     else if (soldier.weapon !== 'ram' && soldier.weapon !== 'catapult') infantry += 1;
   }
   for (const building of state.buildings) {
     if (building.playerId !== victim || building.hp <= 0) continue;
     if (building.type === 'palisade' || building.type === 'wall' || building.type === 'gate' || building.type === 'stonetower') walls += 1;
   }
-  return { infantry, archers, walls };
+  return { infantry, archers, walls, cavalry, spears };
+}
+
+function canTrain(player: Player, weapon: Weapon): boolean {
+  return afford(player.stocks, TRAIN_COST[weapon]) && player.gold >= (TRAIN_GOLD[weapon] ?? 0);
+}
+
+/** What this personality would train against the army it can see. */
+export function pickWeapon(state: GameState, player: Player, victim: number): Weapon {
+  return desiredWeapon(state, player, victim);
 }
 
 function desiredWeapon(state: GameState, player: Player, victim: number): Weapon {
   const seen = enemyWeapons(state, victim);
+  if (player.personality === 'merchant') {
+    if (seen.cavalry >= 2 && canTrain(player, 'spear')) return 'spear';
+    return 'club';
+  }
+  if (player.personality === 'warlord' && (player.stocks.horses ?? 0) >= 1 && soldiersOf(state, player.id).length >= 2) {
+    if (seen.spears >= 2 && canTrain(player, 'bow')) return 'bow';
+    if (seen.spears < 2 && canTrain(player, 'heavy')) return 'heavy';
+    if (canTrain(player, 'light')) return 'light';
+  }
+  if (seen.cavalry >= 2 && seen.spears < seen.cavalry && canTrain(player, 'spear')) return 'spear';
+  if (player.personality === 'strategist') {
+    if (seen.spears > seen.archers && seen.spears > 0 && canTrain(player, 'bow')) return 'bow';
+    if (seen.archers > seen.infantry && seen.archers > 0 && canTrain(player, 'sword')) return 'sword';
+  }
   const have = (weapon: Weapon) => soldiersOf(state, player.id).some((soldier) => soldier.weapon === weapon);
   if (seen.walls >= 6) {
     if (!have('ram')) return 'ram';
@@ -433,9 +474,10 @@ function trainCommand(state: GameState, player: Player, victim: number): Command
     return place(state, player.id, 'barracks');
   }
   if (idleCount(state, player.id) < 1) return freeHand(state, player);
-  if (soldiersOf(state, player.id).length >= trainCap(player)) return null;
+  const cap = player.personality === 'merchant' ? Math.min(2, trainCap(player)) : trainCap(player);
+  if (soldiersOf(state, player.id).length >= cap) return null;
   const weapon = desiredWeapon(state, player, victim);
-  if (!afford(player.stocks, TRAIN_COST[weapon])) {
+  if (!canTrain(player, weapon)) {
     if (weapon !== 'club' && afford(player.stocks, TRAIN_COST.club)) {
       return { kind: 'train', playerId: player.id, weapon: 'club' };
     }

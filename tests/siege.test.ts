@@ -25,6 +25,7 @@ function addFoe(state: GameState): number {
     tax: 'low',
     hunger: false,
     beerMood: 0,
+    mail: 0,
       migrate: 0,
       stats: emptyStats(0),
       difficulty: 'normal',

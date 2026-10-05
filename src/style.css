@@ -552,6 +552,9 @@ details.advanced summary {
 .help-card, #settings-panel .card, #save-panel .card { max-width: 720px; margin: 0 auto; }
 .help-entry { border-top: 1px solid var(--line); padding-top: 8px; }
 .help-entry h3 { margin: 0 0 4px; }
+.counter-matrix { width: 100%; border-collapse: collapse; font-size: 13px; margin: 8px 0 12px; }
+.counter-matrix th, .counter-matrix td { border: 1px solid var(--line); padding: 4px 6px; text-align: center; }
+.counter-matrix th { color: var(--gold); font-weight: 650; }
 .chain { white-space: pre-wrap; background: rgba(0,0,0,0.25); padding: 10px; border-radius: 8px; }
 .checkline { display: flex; gap: 8px; align-items: center; }
 .save-row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }

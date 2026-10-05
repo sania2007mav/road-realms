@@ -85,6 +85,7 @@ export function createBus(factory?: () => AudioContext): AudioBus {
   let cows = 0;
   let sheep = 0;
   let fire = 0;
+  let hoof = 0;
   let hammerX = 0;
   let hammerY = 0;
   let chopX = 0;
@@ -103,6 +104,9 @@ export function createBus(factory?: () => AudioContext): AudioBus {
   let sheepY = 0;
   let fireX = 0;
   let fireY = 0;
+  let hoofX = 0;
+  let hoofY = 0;
+  const hoofAt = new Map<number, { x: number; y: number }>();
   const nextAt: Partial<Record<SoundId, number>> = {};
   let onPlayed: ((id: SoundId) => void) | null = null;
 
@@ -282,6 +286,7 @@ export function createBus(factory?: () => AudioContext): AudioBus {
     bakery = 0;
     cows = 0;
     fire = 0;
+    hoof = 0;
     birds = 0;
     sheep = 0;
     battle = false;
@@ -358,6 +363,15 @@ export function createBus(factory?: () => AudioContext): AudioBus {
       if (prev !== undefined && soldier.hp < prev && soldier.hp > 0) hitSoldier(state, soldier.x, soldier.y, soldier.playerId);
       soldierHp.set(soldier.id, soldier.hp);
       if (soldier.hp > 0 && soldier.playerId !== playerId && heard(soldier.x, soldier.y)) battle = true;
+      if (soldier.hp > 0 && (soldier.weapon === 'light' || soldier.weapon === 'heavy') && heard(soldier.x, soldier.y)) {
+        const prev = hoofAt.get(soldier.id);
+        if (!prev || Math.hypot(prev.x - soldier.x, prev.y - soldier.y) > 0.04) {
+          hoof = 1;
+          hoofX = soldier.x;
+          hoofY = soldier.y;
+        }
+        hoofAt.set(soldier.id, { x: soldier.x, y: soldier.y });
+      }
     }
     if (own > soldiers) play('trained');
     soldiers = own;
@@ -406,6 +420,7 @@ export function createBus(factory?: () => AudioContext): AudioBus {
     schedule('sheep', sheep > 0, 2.6, sheepX, sheepY);
     schedule('cows', cows > 0, 2.1, cowX, cowY);
     schedule('fire', fire > 0, 1.1, fireX, fireY);
+    schedule('hoof', hoof > 0, 0.32, hoofX, hoofY);
   }
 
   function modeFor(playing: boolean): MusicMode {

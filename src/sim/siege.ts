@@ -54,7 +54,7 @@ export function moverOf(soldier: Soldier): Mover {
 }
 
 export function trainHall(weapon: Weapon): 'barracks' | 'guild' {
-  if (weapon === 'club' || weapon === 'sword' || weapon === 'bow') return 'barracks';
+  if (weapon === 'club' || weapon === 'sword' || weapon === 'bow' || weapon === 'spear' || weapon === 'light' || weapon === 'heavy') return 'barracks';
   return 'guild';
 }
 

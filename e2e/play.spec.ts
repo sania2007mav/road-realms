@@ -1015,6 +1015,29 @@ test('настройки лобби видны до старта', async ({ page
   }
 });
 
+test('копейщики, конюшня и матрица контрударов', async ({ page }) => {
+  test.setTimeout(120_000);
+  mkdirSync(shots, { recursive: true });
+  await page.addInitScript(() => {
+    localStorage.setItem('dorozhnye-kraya-tutorial', '1');
+  });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/road-realms/');
+  await page.getByTestId('new-game').click();
+  await page.evaluate(() => window.__game!.debugScene('cavalry-fight'));
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: `${shots}/spear_cavalry.png` });
+  await page.evaluate(() => window.__game!.debugScene('supply'));
+  await expect(page.getByRole('heading', { name: 'Кузница' })).toBeVisible();
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: `${shots}/stable_smith.png` });
+  await page.goto('/road-realms/');
+  await page.getByTestId('help-open').click();
+  await expect(page.getByTestId('help-units')).toBeVisible();
+  await page.getByTestId('help-units').screenshot({ path: `${shots}/encyclopedia_units.png` });
+  await page.getByTestId('help-matrix').screenshot({ path: `${shots}/counter_matrix.png` });
+});
+
 function letterboxPhone(raw: string, out: string): string {
   return `
 from PIL import Image, ImageDraw, ImageFont

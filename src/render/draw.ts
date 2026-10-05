@@ -52,6 +52,9 @@ const CARGO: Partial<Record<Resource, string>> = {
   flour: '#f4efe2',
   hops: '#6a8f3a',
   beer: '#e0a11b',
+  horses: '#8a5a32',
+  weapons: '#c5ccd2',
+  armor: '#7d8ea3',
 };
 
 type Pt = { x: number; y: number };
@@ -843,7 +846,13 @@ export function renderWorld(
         if (picked) drawFeetRing(ctx, soldier.x, soldier.y);
         if (soldier.weapon === 'ram') drawRam(ctx, soldier.x, soldier.y, color);
         else if (soldier.weapon === 'catapult') drawCatapult(ctx, soldier.x, soldier.y, color, time);
-        else {
+        else if (soldier.weapon === 'light' || soldier.weapon === 'heavy') {
+          drawCavalry(ctx, soldier.x, soldier.y, color, moving(soldier), time, soldier.weapon === 'heavy');
+        } else if (soldier.weapon === 'spear') {
+          const lift = standLift(state, soldier.x, soldier.y);
+          drawFigure(ctx, soldier.x, soldier.y, color, moving(soldier), time, 'spear', null, false, lift);
+          drawSpearHead(ctx, soldier.x, soldier.y, lift, time, moving(soldier));
+        } else {
           const tool =
             soldier.weapon === 'sword'
               ? 'sword'
@@ -1245,6 +1254,134 @@ function drawRuin(ctx: CanvasRenderingContext2D, building: Building) {
   ctx.fillRect(right.x + 4, right.y - 18, 4, 12);
 }
 
+function drawSpearHead(ctx: CanvasRenderingContext2D, tx: number, ty: number, lift: number, time: number, walk: boolean) {
+  const base = tileToIso(tx, ty);
+  const swing = walk ? Math.sin(time / 90 + tx * 3) : 0;
+  const x = base.x + 13;
+  const y = base.y - 26 + swing * 4 - lift;
+  ctx.fillStyle = '#d7dde2';
+  ctx.beginPath();
+  ctx.moveTo(x, y - 8);
+  ctx.lineTo(x + 3.2, y);
+  ctx.lineTo(x - 3.2, y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#6b4a2c';
+  ctx.fillRect(x - 1.1, y, 2.2, 16);
+}
+
+function drawCavalry(
+  ctx: CanvasRenderingContext2D,
+  tx: number,
+  ty: number,
+  color: string,
+  walk: boolean,
+  time: number,
+  heavy: boolean,
+) {
+  const base = tileToIso(tx, ty);
+  const swing = walk ? Math.sin(time / 80 + tx * 2) : 0;
+  const y = base.y + (walk ? Math.sin(time / 80 + ty) * 1.2 : 0);
+  const x = base.x;
+  const body = heavy ? 12 : 9;
+  ctx.fillStyle = 'rgba(20,14,10,0.3)';
+  ctx.beginPath();
+  ctx.ellipse(x, base.y + 3, body, 3.4, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#3a2a22';
+  ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  ctx.moveTo(x - body * 0.55, y - 2);
+  ctx.lineTo(x - body * 0.7, y + 6 + swing * 2);
+  ctx.moveTo(x - 2, y - 2);
+  ctx.lineTo(x - 3, y + 6 - swing * 2);
+  ctx.moveTo(x + 4, y - 2);
+  ctx.lineTo(x + 3, y + 6 + swing * 2);
+  ctx.moveTo(x + body * 0.45, y - 2);
+  ctx.lineTo(x + body * 0.55, y + 6 - swing * 2);
+  ctx.stroke();
+  ctx.fillStyle = heavy ? '#5c4634' : '#c49a62';
+  ctx.beginPath();
+  ctx.ellipse(x, y - 6, body, heavy ? 6.2 : 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = heavy ? '#3e342c' : '#f0e2c4';
+  ctx.beginPath();
+  ctx.ellipse(x + body * 0.72, y - 10, 3.4, 2.6, 0.4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#2a2018';
+  ctx.beginPath();
+  ctx.moveTo(x + body * 0.9, y - 12);
+  ctx.lineTo(x + body * 0.95, y - 16);
+  ctx.stroke();
+  if (heavy) {
+    ctx.strokeStyle = '#9aa7b5';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y - 6, 7, Math.PI * 0.15, Math.PI * 0.85);
+    ctx.stroke();
+  }
+  ctx.fillStyle = color;
+  ctx.fillRect(x - 4, y - 22, 8, 10);
+  ctx.fillStyle = '#f0c7a0';
+  ctx.beginPath();
+  ctx.arc(x, y - 26, 3.4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = heavy ? '#d7dde2' : '#efe6d4';
+  ctx.lineWidth = heavy ? 2.4 : 1.8;
+  ctx.beginPath();
+  ctx.moveTo(x + 3, y - 18);
+  ctx.lineTo(x + (heavy ? 16 : 11), y - (heavy ? 30 : 24) + swing * 3);
+  ctx.stroke();
+}
+
+function drawStable(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, wall: number) {
+  drawVolume(ctx, x, y, w, h, wall, '#8d6a3e', '#6e522f', '#4e3a22', true);
+  const door = tileToIso(x + w * 0.55, y + h * 0.72);
+  ctx.fillStyle = '#2a2018';
+  ctx.fillRect(door.x - 7, door.y - wall * 0.45, 14, wall * 0.42);
+  ctx.fillStyle = '#c49a62';
+  ctx.beginPath();
+  ctx.ellipse(door.x + 2, door.y - wall * 0.28, 6, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#f0e2c4';
+  ctx.beginPath();
+  ctx.arc(door.x + 7, door.y - wall * 0.34, 2.2, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawSmith(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, wall: number, time: number) {
+  drawVolume(ctx, x, y, w, h, wall, '#6d655c', '#514c46', '#3a3632', true);
+  const top = tileToIso(x + w * 0.72, y + h * 0.28);
+  ctx.fillStyle = '#4a4540';
+  ctx.fillRect(top.x - 3, top.y - wall - 10, 6, 12);
+  const glow = 0.35 + Math.sin(time / 180) * 0.15;
+  ctx.fillStyle = `rgba(224, 120, 40, ${glow})`;
+  ctx.beginPath();
+  ctx.arc(top.x, top.y - wall * 0.35, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#2a241f';
+  ctx.fillRect(top.x - 8, top.y - wall * 0.2, 10, 3);
+}
+
+function drawArmoury(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, wall: number) {
+  drawVolume(ctx, x, y, w, h, wall, '#7a6244', '#5c4932', '#3e3224', true);
+  const left = tileToIso(x + 0.45, y + h * 0.45);
+  const right = tileToIso(x + w * 0.7, y + h * 0.4);
+  ctx.fillStyle = '#8ea0b4';
+  ctx.beginPath();
+  ctx.moveTo(left.x, left.y - wall * 0.55);
+  ctx.lineTo(left.x + 7, left.y - wall * 0.2);
+  ctx.lineTo(left.x - 7, left.y - wall * 0.2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#c5ccd2';
+  ctx.fillRect(right.x - 2, right.y - wall * 0.62, 3, wall * 0.4);
+  ctx.fillStyle = '#d6453d';
+  ctx.beginPath();
+  ctx.arc(left.x, left.y - wall * 0.38, 2.2, 0, Math.PI * 2);
+  ctx.fill();
+}
+
 function drawBuilding(ctx: CanvasRenderingContext2D, building: Building, time: number) {
   const def = BUILDINGS[building.type];
   const growing = !building.complete || building.upgrading;
@@ -1340,6 +1477,15 @@ function drawBuilding(ctx: CanvasRenderingContext2D, building: Building, time: n
     case 'oil':
     case 'guild':
       drawDefence(ctx, building, wall);
+      break;
+    case 'stable':
+      drawStable(ctx, building.x, building.y, def.w, def.h, wall);
+      break;
+    case 'smith':
+      drawSmith(ctx, building.x, building.y, def.w, def.h, wall, time);
+      break;
+    case 'armoury':
+      drawArmoury(ctx, building.x, building.y, def.w, def.h, wall);
       break;
     default:
       drawVolume(ctx, building.x, building.y, def.w, def.h, wall, '#ccc', '#999', '#777', true);

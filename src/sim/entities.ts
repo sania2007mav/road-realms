@@ -32,6 +32,7 @@ export function createBuilding(
     upgrading: false,
     seal: 0,
     ruin: 0,
+    gear: 0,
   };
   state.buildings.push(building);
   return building;
@@ -67,6 +68,9 @@ const SOLDIER_STATS: Record<Weapon, { hp: number; dmg: number }> = {
   ladder: { hp: 26, dmg: 3 },
   ram: { hp: 100, dmg: 3 },
   catapult: { hp: 40, dmg: 2 },
+  spear: { hp: 36, dmg: 7 },
+  light: { hp: 34, dmg: 7 },
+  heavy: { hp: 58, dmg: 11 },
 };
 
 export function createSoldier(state: GameState, playerId: number, x: number, y: number, weapon: Weapon): Soldier {
@@ -91,6 +95,8 @@ export function createSoldier(state: GameState, playerId: number, x: number, y: 
     targetId: 0,
     waypoints: [],
     waypointI: 0,
+    charge: weapon === 'heavy' ? 1 : 0,
+    armor: weapon === 'sword' || weapon === 'heavy' ? 1 : 0,
   };
   state.soldiers.push(soldier);
   return soldier;

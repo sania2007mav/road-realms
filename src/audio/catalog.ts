@@ -24,6 +24,9 @@ export type SoundId =
   | 'select'
   | 'order'
   | 'sword'
+  | 'spear'
+  | 'hoof'
+  | 'charge'
   | 'bow'
   | 'arrow'
   | 'ram'
@@ -72,6 +75,9 @@ export const SOUNDS: readonly SoundDef[] = [
   { id: 'select', bus: 'sfx', gapMs: 140, world: false, label: 'Выбор' },
   { id: 'order', bus: 'sfx', gapMs: 180, world: false, label: 'Приказ' },
   { id: 'sword', bus: 'sfx', gapMs: 90, world: true, label: 'Удар меча' },
+  { id: 'spear', bus: 'sfx', gapMs: 110, world: true, label: 'Укол копья' },
+  { id: 'hoof', bus: 'sfx', gapMs: 280, world: true, label: 'Копыта' },
+  { id: 'charge', bus: 'sfx', gapMs: 420, world: true, label: 'Наскок конницы' },
   { id: 'bow', bus: 'sfx', gapMs: 120, world: true, label: 'Тетива' },
   { id: 'arrow', bus: 'sfx', gapMs: 90, world: true, label: 'Попадание стрелы' },
   { id: 'ram', bus: 'sfx', gapMs: 240, world: true, label: 'Удар тарана' },
@@ -130,6 +136,9 @@ export function strikeSound(weapon: string): SoundId {
   if (weapon === 'bow') return 'bow';
   if (weapon === 'ram') return 'ram';
   if (weapon === 'catapult') return 'catapult';
+  if (weapon === 'spear') return 'spear';
+  if (weapon === 'light') return 'hoof';
+  if (weapon === 'heavy') return 'charge';
   return 'sword';
 }
 

@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { BUILDINGS, KEEP_UPGRADE_COST, KEEP_UPGRADE_TICKS, PRICES, TAXES } from '../src/sim/balance';
+import { BUILDINGS, KEEP_UPGRADE_COST, KEEP_UPGRADE_TICKS, PRICES, TAXES, counterFactor } from '../src/sim/balance';
 import {
   CHAINS,
   craftMargins,
@@ -101,6 +101,13 @@ const duels: DuelResult[] = [
   measureDuel('club', 'catapult', 4, 3),
   measureDuel('engineer', 'sword', 4, 2),
   measureDuel('ladder', 'sword', 4, 2),
+  measureDuel('spear', 'light', 4, 1.2),
+  measureDuel('spear', 'heavy', 4, 1.2),
+  measureDuel('light', 'spear', 4, 1.2),
+  measureDuel('heavy', 'spear', 4, 1.2),
+  measureDuel('sword', 'spear', 4, 1.2),
+  measureDuel('bow', 'spear', 4, 6),
+  measureDuel('light', 'ram', 4, 2),
 ];
 
 const walls: WallResult[] = [
@@ -243,6 +250,27 @@ lines.push('');
 lines.push('## Войско и стены');
 lines.push('');
 lines.push('До правок вплотную мечи и дубины били лучников, а таран бил лучников. Сейчас атакующие лучники отходят, пока пехота дальше 3.4 клетки, и стреляют. Ближе этого пехота их догоняет. Таран живёт под стрелами и ломает стены. Катапульта ломает стены и проигрывает в поле.');
+lines.push('');
+lines.push('Копейщик дешёвый: 8 дерева, 1 оружие и 6 золота. Мечник берёт 1 оружие и 1 доспех вместо двух железа. Лёгкая конница — лошадь, 4 дерева и 10 золота. Тяжёлая — лошадь, оружие, доспехи и 24 золота, первый удар множится на 1.8. Доспех на мечнике и тяжёлой коннице, и кольчуга из оружейной, режут урон стрел до 0.75. Рудник кормит кузницу, кузница по очереди выдаёт оружие и доспехи, оружейная их принимает. Конюшня на траве или в оазисе съедает 2 яблока или 2 пшеницы и выводит лошадь.');
+lines.push('');
+const matrixWeapons = ['club', 'spear', 'sword', 'bow', 'light', 'heavy', 'ram'] as const;
+const matrixName: Record<(typeof matrixWeapons)[number], string> = {
+  club: 'ополченец',
+  spear: 'копейщик',
+  sword: 'мечник',
+  bow: 'лучник',
+  light: 'лёгкая',
+  heavy: 'тяжёлая',
+  ram: 'таран',
+};
+lines.push('| Бьёт ↓ / кого → | ' + matrixWeapons.map((weapon) => matrixName[weapon]).join(' | ') + ' |');
+lines.push('| --- | ' + matrixWeapons.map(() => '---:').join(' | ') + ' |');
+for (const row of matrixWeapons) {
+  const cells = matrixWeapons.map((col) => (row === col ? '—' : String(counterFactor(row, col))));
+  lines.push(`| ${matrixName[row]} | ${cells.join(' | ')} |`);
+}
+lines.push('');
+lines.push('Число — множитель урона бьющего по цели. Копьё выше 2 против обеих конниц и ниже 0.7 против лука и меча. Лёгкая конница выше 1.5 по тарану и ниже 0.5 по копью. Воевода, когда уже есть лошади, берёт тяжёлую конницу, а против копий — лук. Стратег на конницу отвечает копьём. Купец держит не больше двух солдат и без чужой конницы остаётся при дубинах.');
 lines.push('');
 lines.push('| Бой | Победитель | Оставшиеся hp (левые / правые) |');
 lines.push('| --- | --- | --- |');

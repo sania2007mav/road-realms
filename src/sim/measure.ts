@@ -55,6 +55,8 @@ export function craftMargins(): CraftMargin[] {
     link('мука → хлеб', 'flour', 'bread'),
     link('пшеница → хлеб', 'wheat', 'bread'),
     link('хмель → пиво', 'hops', 'beer'),
+    link('железо → оружие', 'iron', 'weapons'),
+    link('железо → доспехи', 'iron', 'armor'),
   ];
 }
 

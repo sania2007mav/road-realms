@@ -148,7 +148,7 @@ export function createGame(
   }
 
   const state: GameState = {
-    saveVersion: 1,
+    saveVersion: 2,
     seed: seed >>> 0,
     tick: 0,
     rng: (seed || 1) >>> 0,
@@ -204,6 +204,7 @@ export function createGame(
       tax: 'low',
       hunger: false,
       beerMood: 0,
+      mail: 0,
       migrate: 0,
       stats: emptyStats(START_PEOPLE),
       difficulty: profile?.difficulty ?? 'normal',

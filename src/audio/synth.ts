@@ -216,6 +216,19 @@ export function speak(ctx: SynthContext, dest: AudioNode, id: SoundId, when: num
       burst(ctx, dest, noise, when, 0.08, 0.07 * v, 1800, 2);
       tone(ctx, dest, when, 210, 0.09, 'triangle', 0.05 * v, 0.5);
       break;
+    case 'spear':
+      burst(ctx, dest, noise, when, 0.05, 0.06 * v, 2400, 3);
+      tone(ctx, dest, when, 180, 0.07, 'triangle', 0.04 * v, 0.4);
+      break;
+    case 'hoof':
+      burst(ctx, dest, noise, when, 0.06, 0.05 * v, 220, 1);
+      burst(ctx, dest, noise, when + 0.08, 0.05, 0.04 * v, 180, 1);
+      break;
+    case 'charge':
+      tone(ctx, dest, when, 140, 0.16, 'sawtooth', 0.05 * v, 1.4);
+      burst(ctx, dest, noise, when, 0.1, 0.06 * v, 200, 1);
+      burst(ctx, dest, noise, when + 0.09, 0.08, 0.05 * v, 160, 1);
+      break;
     case 'bow':
       tone(ctx, dest, when, 620, 0.1, 'triangle', 0.05 * v, 0.35);
       burst(ctx, dest, noise, when, 0.05, 0.04 * v, 2400, 4);
