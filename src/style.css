@@ -30,7 +30,7 @@ html, body, #app {
 input, textarea, select { user-select: text; -webkit-user-select: text; }
 
 #topbar, #dock, #panel, #menu, #goals, #army, #tutorial, #end, #title, #popbox, #peoplebox,
-#help-book, #settings-panel, #save-panel, #audio-panel, #banner, #tip {
+#help-book, #achieve-book, #stats-book, #settings-panel, #save-panel, #audio-panel, #banner, #tip {
   zoom: var(--ui, 1);
 }
 
@@ -437,6 +437,32 @@ details.advanced summary {
   border: 1px solid #e15b45;
 }
 
+#toast.toast-achieve {
+  position: fixed;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  max-width: min(420px, calc(100% - 24px));
+}
+.ach {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.ach-ico { width: 36px; flex: none; font-size: 22px; line-height: 1.2; text-align: center; }
+.ach b { display: block; }
+.ach p { margin: 2px 0 6px; color: var(--muted); font-size: 13px; }
+.ach-bar { height: 8px; background: #2b241d; border-radius: 99px; overflow: hidden; }
+.ach-bar span { display: block; height: 100%; background: var(--gold); }
+.ach.done b { color: var(--gold); }
+.ach.secret { opacity: 0.72; }
+.stat-list { margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.stat-list div { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.stat-list dt { color: var(--muted); }
+.stat-list dd { margin: 0; color: var(--gold); font-variant-numeric: tabular-nums; }
 #toast {
   position: static;
   grid-column: 1 / -1;
@@ -582,20 +608,20 @@ details.advanced summary {
   padding: 6px 10px;
   font-size: 13px;
 }
-#help-book, #settings-panel, #save-panel {
+#help-book, #achieve-book, #stats-book, #settings-panel, #save-panel {
   position: absolute;
   z-index: 12;
   inset: 24px;
   overflow: auto;
 }
-#help-book {
+#help-book, #achieve-book, #stats-book {
   overflow: hidden;
   display: flex;
   flex-direction: column;
   background: #1c1612;
   border-radius: 16px;
 }
-#help-book .help-card {
+#help-book .help-card, #achieve-book .help-card, #stats-book .help-card {
   width: 100%;
   max-width: none;
   height: 100%;
@@ -1531,12 +1557,12 @@ html.phone-land #dock {
   bottom: calc(var(--land-tray) + var(--safe-b));
   left: auto;
   width: var(--land-right);
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 44px minmax(0, 1fr) auto;
-  align-content: stretch;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   gap: 4px;
   padding: 4px;
+  overflow: hidden;
   pointer-events: auto;
   background: #1c1612;
   border-left: 1px solid var(--line);
@@ -1546,13 +1572,14 @@ html.phone-land #dock > * { pointer-events: auto; }
 html.phone-land #econ { display: none !important; }
 html.phone-land #econ.in-menu { display: flex !important; }
 html.phone-land #dock-nav {
+  order: 1;
+  flex: 0 0 44px;
   display: grid;
-  grid-column: 1 / -1;
-  grid-row: 1;
   grid-template-columns: 1fr 1fr;
   gap: 4px;
   height: 44px;
   min-height: 44px;
+  max-height: 44px;
   position: relative;
   z-index: 2;
   background: #1c1612;
@@ -1583,33 +1610,48 @@ html.phone-land #map-toggle {
   justify-content: center;
 }
 html.phone-land #buildbar {
-  grid-column: 1 / -1;
-  grid-row: 2;
+  order: 2;
   position: relative;
   z-index: 1;
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
-  overflow: auto;
+  overflow: hidden;
   padding: 0;
-  touch-action: pan-y;
   border-radius: 10px;
 }
 html.phone-land #tabs {
+  flex: 1 1 0;
+  min-height: 0;
   flex-direction: column;
   flex-wrap: nowrap;
-  overflow: visible;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
   gap: 4px;
 }
 html.phone-land #tabs button { min-height: 44px; width: 100%; flex: none; font-size: 13px; }
-html.phone-land #buttonrow { display: flex; flex-direction: column; margin: 4px 0 0; min-height: 0; }
+html.phone-land #buttonrow {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  max-height: 46%;
+  margin: 4px 0 0;
+  min-height: 0;
+  overflow: hidden;
+}
 html.phone-land #build-prev,
 html.phone-land #build-next { display: none; }
 html.phone-land #buttons {
   display: flex;
   flex-direction: column;
-  overflow: visible;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   gap: 4px;
   padding: 0;
   touch-action: pan-y;
@@ -1624,9 +1666,9 @@ html.phone-land #buttons button {
 html.phone-land #buttons small { display: block; }
 html.phone-land #dock.show-map #mapwrap {
   display: block;
+  order: 3;
   position: static;
-  grid-column: 1 / -1;
-  grid-row: 3;
+  flex: 0 0 72px;
   width: 100%;
   height: 72px;
   right: auto;

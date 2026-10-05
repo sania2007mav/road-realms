@@ -1330,6 +1330,30 @@ test('дорожные события: караван, налёт, ярмарк�
   await page.screenshot({ path: `${shots}/event_note.png` });
 });
 
+test('достижения и статистика', async ({ page }) => {
+  test.setTimeout(60_000);
+  mkdirSync(shots, { recursive: true });
+  await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('/road-realms/');
+  await page.evaluate(() => window.__game!.previewMeta());
+  await expect(page.getByTestId('achieve-count')).toHaveText('3 / 32');
+  await expect(page.getByTestId('ach-gold-1000')).toBeVisible();
+  await expect(page.getByTestId('ach-secret-road')).toContainText('Скрытое');
+  await page.screenshot({ path: `${shots}/achievements.png` });
+  await page.getByTestId('achieve-close').click();
+  await page.evaluate(() => window.__game!.previewStats());
+  await expect(page.getByTestId('stats-games')).toHaveText('12');
+  await expect(page.getByTestId('stats-wins')).toHaveText('5');
+  await expect(page.getByTestId('stats-time')).toHaveText('1 ч 35 мин');
+  await expect(page.getByTestId('stats-unit')).toHaveText('копейщик');
+  await page.screenshot({ path: `${shots}/stats.png` });
+  await page.getByTestId('stats-close').click();
+  await page.evaluate(() => window.__game!.previewUnlock());
+  await expect(page.locator('#toast')).toContainText('Собрать 1000 золота');
+  await page.screenshot({ path: `${shots}/achieve_toast.png` });
+});
+
 function letterboxPhone(raw: string, out: string): string {
   return `
 from PIL import Image, ImageDraw, ImageFont
@@ -1477,6 +1501,40 @@ test.describe('альбом телефона', () => {
         };
       });
 
+    const tabClear = () =>
+      page.evaluate(() => {
+        const overlap = (a: { left: number; right: number; top: number; bottom: number }, b: { left: number; right: number; top: number; bottom: number }) =>
+          a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1;
+        const tabs = document.querySelector<HTMLElement>('#tabs');
+        const home = document.querySelector('#home');
+        const map = document.querySelector('#map-toggle');
+        if (!tabs || !home || !map) return ['missing'];
+        const hits: string[] = [];
+        const check = (label: string) => {
+          const host = tabs.getBoundingClientRect();
+          const buttons = [home, map].map((el) => el.getBoundingClientRect());
+          for (const tab of tabs.querySelectorAll('button')) {
+            const rect = tab.getBoundingClientRect();
+            const top = Math.max(rect.top, host.top);
+            const bottom = Math.min(rect.bottom, host.bottom);
+            const left = Math.max(rect.left, host.left);
+            const right = Math.min(rect.right, host.right);
+            if (bottom - top < 2 || right - left < 2) continue;
+            const visible = { left, right, top, bottom };
+            for (const button of buttons) {
+              if (overlap(button, visible)) hits.push(`${label}:${(tab.textContent || '').trim()}`);
+            }
+          }
+          if (buttons[0].bottom > host.top + 1) hits.push(`${label}:nav-below-tabs`);
+        };
+        tabs.scrollTop = 0;
+        check('top');
+        tabs.scrollTop = Math.max(0, tabs.scrollHeight - tabs.clientHeight);
+        check('end');
+        tabs.scrollTop = 0;
+        return hits;
+      });
+
     for (const size of [
       { width: 800, height: 360 },
       { width: 915, height: 412 },
@@ -1484,6 +1542,9 @@ test.describe('альбом телефона', () => {
     ]) {
       await page.setViewportSize(size);
       await page.waitForTimeout(200);
+      if (size.width === 915 || size.width === 740) {
+        expect(await tabClear(), `${size.width} tabs under nav`).toEqual([]);
+      }
       const layout = await probe();
       expect(layout.land, `${size.width} class`).toBe(true);
       expect(layout.share, `${size.width} map`).toBeGreaterThan(0.6);
@@ -1493,12 +1554,17 @@ test.describe('альбом телефона', () => {
       expect(layout.overflow, `${size.width} text`).toEqual([]);
     }
 
+    await page.setViewportSize({ width: 740, height: 360 });
+    await page.waitForTimeout(200);
+    expect(await tabClear(), '740 shot').toEqual([]);
+    await page.screenshot({ path: `${shots}/land_hud_740.png` });
     await page.setViewportSize({ width: 915, height: 412 });
     await page.evaluate(() => window.__game!.debugScene('land'));
     await page.waitForTimeout(250);
     await expect(page.getByTestId('phone-goal')).toBeVisible();
     await expect(page.getByTestId('open-menu')).toBeVisible();
     await expect(page.getByTestId('speed-0')).toBeVisible();
+    expect(await tabClear(), '915 shot').toEqual([]);
     await page.screenshot({ path: `${shots}/land_hud_915.png` });
 
     await page.evaluate(() => window.__game!.debugScene('land-ghost'));

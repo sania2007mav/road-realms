@@ -64,6 +64,19 @@ import { emptyStocks, PLAYER_NAMES } from './sim/balance';
 import { isLineBuilding, wallLine } from './sim/siege';
 import { cycleGfx, gfxLabel, loadGfx, setGfx } from './render/gfx';
 import { emptyRoad } from './sim/events';
+import {
+  addPlayMs,
+  achievementsHtml,
+  beginMatch,
+  loadMeta,
+  noteTrade,
+  noteUnit,
+  observe,
+  saveMeta as persistMeta,
+  statsHtml,
+  type MetaState,
+  type ObservePulse,
+} from './meta/achievements';
 import { bakeTerrain, climateStamp, clearTerrainChunks, minimapToTile, renderMinimap, renderWorld, setTerrainChunks, type Ghost, type OrderMarker } from './render/draw';
 import { net } from './net/session';
 import { NetView, type LobbyDraft } from './net/screens';
@@ -553,6 +566,7 @@ function startGame() {
   queue = [];
   acc = 0;
   resetArmy();
+  resetMetaWatch(false, true);
   title.hidden = true;
   netView.hide();
   netView.wait(null, null);
@@ -615,6 +629,7 @@ async function restoreSlot(slot: SlotId) {
   } else campaignSession = null;
   playing = true;
   speed = uiSettings.speed;
+  resetMetaWatch(false, false);
   title.hidden = true;
   netView.hide();
   netView.wait(null, null);
@@ -634,7 +649,7 @@ async function restoreSlot(slot: SlotId) {
 }
 
 function hideBooks() {
-  for (const id of ['#help-book', '#settings-panel', '#save-panel']) {
+  for (const id of ['#help-book', '#settings-panel', '#save-panel', '#achieve-book', '#stats-book']) {
     const node = document.querySelector<HTMLElement>(id);
     if (node) node.hidden = true;
   }
@@ -997,6 +1012,8 @@ function buildTitle() {
         <button type="button" id="settings-title" data-testid="settings-open">Настройки</button>
         <button type="button" id="know-game" data-testid="know-game">Я умею играть</button>
         <button type="button" id="about-title" data-testid="about-open">Об игре</button>
+        <button type="button" id="achieve-title" data-testid="achieve-open">Достижения</button>
+        <button type="button" id="stats-title" data-testid="stats-open">Статистика</button>
       </div>
       <p class="fineprint"><a href="privacy.html">Политика конфиденциальности</a></p>
     </div>
@@ -1034,6 +1051,8 @@ function buildTitle() {
   document.querySelector<HTMLButtonElement>('#net-title')!.onclick = () => openNet();
   document.querySelector<HTMLButtonElement>('#campaign-title')!.onclick = () => showCampaignMap();
   document.querySelector<HTMLButtonElement>('#about-title')!.onclick = () => openAbout();
+  document.querySelector<HTMLButtonElement>('#achieve-title')!.onclick = () => openAchievements();
+  document.querySelector<HTMLButtonElement>('#stats-title')!.onclick = () => openStats();
 }
 
 function openAbout() {
@@ -1101,6 +1120,7 @@ function startScenario(id: string) {
   speed = uiSettings.speed;
   placing = null;
   roadMode = false;
+  resetMetaWatch(false, true);
   selectedId = compactLayout() ? null : (keep?.id ?? null);
   selectedPersonId = null;
   queue = [];
@@ -1225,10 +1245,14 @@ function buildChrome() {
   document.querySelector<HTMLButtonElement>('#caravan-buy')!.onclick = () => {
     if (openCaravanId == null) return;
     pushCmd({ kind: 'trade', playerId: localPlayer, caravanId: openCaravanId, resource: 'wood', mode: 'buy', qty: 2 });
+    meta = noteTrade(meta, openCaravanId);
+    persistMeta(meta);
   };
   document.querySelector<HTMLButtonElement>('#caravan-sell')!.onclick = () => {
     if (openCaravanId == null) return;
     pushCmd({ kind: 'trade', playerId: localPlayer, caravanId: openCaravanId, resource: 'apples', mode: 'sell', qty: 2 });
+    meta = noteTrade(meta, openCaravanId);
+    persistMeta(meta);
   };
   document.querySelector<HTMLButtonElement>('#caravan-sack')!.onclick = () => {
     if (openCaravanId == null) return;
@@ -2552,6 +2576,148 @@ function flash(text: string) {
   toastUntil = performance.now() + 2400;
 }
 
+let meta: MetaState = loadMeta();
+let pendingPlayMs = 0;
+let metaAt = 0;
+let lastMetaNow = 0;
+let seenSoldiers = new Set<number>();
+let seenRaids = new Set<number>();
+let wallBrokenMatch = false;
+let partyWasHere = false;
+let lastPop = -1;
+const seenKeeps = new Map<number, { hp: number; owner: number }>();
+const seenWalls = new Map<number, number>();
+
+function resetMetaWatch(net: boolean, countGame: boolean) {
+  if (countGame) meta = beginMatch(meta, net);
+  persistMeta(meta);
+  pendingPlayMs = 0;
+  seenSoldiers = new Set();
+  seenRaids = new Set();
+  wallBrokenMatch = false;
+  partyWasHere = false;
+  lastPop = -1;
+  seenKeeps.clear();
+  seenWalls.clear();
+}
+
+function showUnlock(title: string) {
+  toast.classList.add('toast-achieve');
+  flash(`Достижение: ${title}`);
+  audio.play('coins');
+}
+
+function openAchievements() {
+  const book = document.querySelector<HTMLElement>('#achieve-book');
+  if (!book) return;
+  book.hidden = false;
+  book.innerHTML = achievementsHtml(meta);
+  book.querySelector<HTMLButtonElement>('#achieve-close')!.onclick = () => {
+    book.hidden = true;
+  };
+}
+
+function openStats() {
+  const book = document.querySelector<HTMLElement>('#stats-book');
+  if (!book) return;
+  book.hidden = false;
+  book.innerHTML = statsHtml(meta);
+  book.querySelector<HTMLButtonElement>('#stats-close')!.onclick = () => {
+    book.hidden = true;
+  };
+}
+
+function collectPulse(): ObservePulse {
+  const player = state.players[localPlayer];
+  const pop = state.people.filter((person) => person.playerId === localPlayer && person.hp > 0).length;
+  const troops = state.soldiers.filter((soldier) => soldier.playerId === localPlayer && soldier.hp > 0);
+  for (const soldier of troops) {
+    if (seenSoldiers.has(soldier.id)) continue;
+    seenSoldiers.add(soldier.id);
+    meta = noteUnit(meta, soldier.weapon);
+  }
+  let hadWall = false;
+  for (const building of state.buildings) {
+    if (building.playerId !== localPlayer || (building.type !== 'wall' && building.type !== 'gate')) continue;
+    const prev = seenWalls.get(building.id);
+    if (building.hp > 0) hadWall = true;
+    if (prev !== undefined && prev > 0 && building.hp <= 0) wallBrokenMatch = true;
+    seenWalls.set(building.id, building.hp);
+  }
+  let engineerKeep = false;
+  for (const building of state.buildings) {
+    if (building.type !== 'keep') continue;
+    const prev = seenKeeps.get(building.id);
+    const fell = Boolean(prev && prev.owner !== localPlayer && prev.hp > 0 && building.hp <= 0);
+    const taken = Boolean(prev && prev.owner !== localPlayer && building.playerId === localPlayer);
+    if ((fell || taken) && troops.some((soldier) => soldier.weapon === 'engineer' && Math.hypot(soldier.x - building.x, soldier.y - building.y) <= 8)) {
+      engineerKeep = true;
+    }
+    seenKeeps.set(building.id, { hp: building.hp, owner: building.playerId });
+  }
+  const raidIds = new Set(state.mobs.filter((mob) => mob.raid && mob.hp > 0).map((mob) => mob.id));
+  let raidDown = 0;
+  for (const id of seenRaids) if (!raidIds.has(id)) raidDown += 1;
+  seenRaids = raidIds;
+  const partyHere = Boolean(state.road?.party);
+  const partyJoined = partyWasHere && !partyHere && lastPop >= 0 && pop > lastPop;
+  partyWasHere = partyHere;
+  lastPop = pop;
+  let roads = 0;
+  const roadMap = state.roads;
+  if (roadMap) for (let i = 0; i < roadMap.length; i++) if (roadMap[i]) roads += 1;
+  const progress = loadProgress();
+  const cleared = Object.values(progress.stars).filter((stars) => stars > 0).length;
+  return {
+    gold: player?.gold ?? 0,
+    pop,
+    happy: (player?.popularity ?? 0) > 0,
+    wood: player?.stocks.wood ?? 0,
+    beer: player?.stocks.beer ?? 0,
+    bread: player?.stocks.bread ?? 0,
+    apples: player?.stocks.apples ?? 0,
+    market: state.buildings.some((building) => building.playerId === localPlayer && building.type === 'market' && building.complete && building.hp > 0),
+    soldiers: troops.length,
+    cavalry: troops.some((soldier) => soldier.weapon === 'light' || soldier.weapon === 'heavy' || soldier.weapon === 'horsebow'),
+    siege: troops.some((soldier) => soldier.weapon === 'ram' || soldier.weapon === 'catapult' || soldier.weapon === 'siegetower'),
+    spear: troops.some((soldier) => soldier.weapon === 'spear'),
+    razed: player?.stats?.razed ?? 0,
+    roads,
+    season: state.season,
+    hunger: Boolean(player?.hunger),
+    storm: state.weather === 'storm',
+    fair: Boolean(state.road?.fair && state.road.fair.playerId === localPlayer),
+    outcome: state.outcome,
+    hadWall,
+    wallBroken: wallBrokenMatch,
+    engineerKeep,
+    raidDown,
+    partyJoined,
+    net: netMode,
+    speed: uiSettings.speed,
+    cruel: state.players.some((other) => other.id !== localPlayer && other.difficulty === 'cruel'),
+    campaignFirst: (progress.stars.korm ?? 0) > 0,
+    campaignAll: cleared >= SCENARIOS.length,
+  };
+}
+
+function watchMeta(now: number) {
+  if (!playing) {
+    lastMetaNow = now;
+    return;
+  }
+  if (lastMetaNow) pendingPlayMs += Math.min(500, Math.max(0, now - lastMetaNow));
+  lastMetaNow = now;
+  if (now < metaAt) return;
+  metaAt = now + 400;
+  meta = addPlayMs(meta, pendingPlayMs);
+  pendingPlayMs = 0;
+  const result = observe(meta, collectPulse());
+  meta = result.meta;
+  persistMeta(meta);
+  for (const item of result.fresh) showUnlock(item.title);
+}
+
 function cargoColor(res: string): string {
   const map: Record<string, string> = {
     apples: '#d6453c',
@@ -2925,7 +3091,11 @@ function frame(now: number) {
       done(sample);
     }
   }
-  if (toastUntil && now > toastUntil) toast.hidden = true;
+  if (toastUntil && now > toastUntil) {
+    toast.hidden = true;
+    toast.classList.remove('toast-achieve');
+  }
+  watchMeta(now);
 
   const pan = 520 / camera.zoom;
   if (playing && uiSettings.edgeScroll && lastMouse.mouse && pointers.size === 0) {
@@ -3164,7 +3334,7 @@ function stageRoad(kind: string) {
     }
     road.notes = [{ id: 1, text: 'С опушки вышли разбойники', x: keep.x + 8, y: state.roadY, until: far }];
     openCaravanId = null;
-    lookAtPoint(keep.x + 6, state.roadY);
+    lookAtPoint(keep.x + 8, state.roadY + 0.4);
   } else if (kind === 'event-fair') {
     const market = createBuilding(state, localPlayer, 'market', keep.x + 4, keep.y + 3, true);
     road.fair = { playerId: localPlayer, x: market.x + 1, y: market.y + 1, until: far };
@@ -3190,9 +3360,9 @@ function stageRoad(kind: string) {
     road.caravans.push(caravan);
     road.notes = [{ id: 1, text: 'По тракту идёт купеческий караван', x: caravan.x, y: caravan.y, until: far }];
     openCaravanId = kind === 'event-note' ? null : caravan.id;
-    lookAtPoint(caravan.x, caravan.y);
+    lookAtPoint(caravan.x - 1.6, caravan.y);
   }
-  camera.zoom = 0.95;
+  camera.zoom = kind === 'event-caravan' || kind === 'event-raid' ? 1.7 : 0.95;
   clampView();
   silenceScene();
   syncRoadHud();
@@ -3910,6 +4080,41 @@ function expose() {
       clearTerrainChunks();
       baked = bakeTerrain(state);
     },
+    openAchievements() {
+      openAchievements();
+    },
+    openStats() {
+      openStats();
+    },
+    previewMeta() {
+      meta = {
+        ...loadMeta(),
+        games: 12,
+        wins: 5,
+        playMs: 95 * 60000,
+        units: { spear: 18, bow: 4 },
+        trades: 4,
+        best: { gold: 640, pop: 36, wood: 80, beer: 6, bread: 12, soldiers: 8, razed: 1, roads: 14, apples: 20 },
+        unlocked: { 'gold-100': 1, 'spear-1': 1, 'trade-1': 1 },
+      };
+      persistMeta(meta);
+      title.hidden = false;
+      openAchievements();
+    },
+    previewStats() {
+      const book = document.querySelector<HTMLElement>('#achieve-book');
+      if (book) book.hidden = true;
+      title.hidden = false;
+      openStats();
+    },
+    previewUnlock() {
+      const book = document.querySelector<HTMLElement>('#stats-book');
+      const achieve = document.querySelector<HTMLElement>('#achieve-book');
+      if (book) book.hidden = true;
+      if (achieve) achieve.hidden = true;
+      title.hidden = false;
+      showUnlock('Собрать 1000 золота');
+    },
     stageRoad() {
       const keep = playerKeep(state, localPlayer);
       if (!keep) return;
@@ -4328,6 +4533,11 @@ declare global {
       focusTerrain: (kind: string, zoom?: number) => void;
       offerInstall: () => void;
       setGfxMode: (mode: 'high' | 'simple') => void;
+      openAchievements: () => void;
+      openStats: () => void;
+      previewMeta: () => void;
+      previewStats: () => void;
+      previewUnlock: () => void;
       stageRoad: () => void;
     };
   }
@@ -4444,6 +4654,7 @@ function beginNet(next: GameState, playerId: number) {
   queue = [];
   acc = 0;
   resetArmy();
+  resetMetaWatch(true, true);
   title.hidden = true;
   endScreen.hidden = true;
   menu.hidden = true;
