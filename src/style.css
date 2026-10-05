@@ -21,7 +21,13 @@ html, body, #app {
   color: var(--paper);
   touch-action: none;
   overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
 }
+
+input, textarea, select { user-select: text; -webkit-user-select: text; }
 
 #topbar, #dock, #panel, #menu, #goals, #army, #tutorial, #end, #title, #popbox, #peoplebox,
 #help-book, #settings-panel, #save-panel, #audio-panel, #banner, #tip {
@@ -487,6 +493,7 @@ details.advanced summary {
 
 #army-hint { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
 
+#army-groups { display: none; }
 #army-box[aria-pressed='true'] { border-color: var(--gold); color: var(--gold); }
 #army-attack[aria-pressed='true'] { border-color: var(--bad); color: #fff4ef; }
 
@@ -1227,3 +1234,390 @@ button.guide-pulse {
 #app.frame-bare #crash,
 #app.frame-bare #update-banner,
 #app.frame-bare #install-banner { display: none !important; }
+
+#land-tray, #place-confirm, #turn-hint { display: none; }
+
+#turn-hint {
+  position: fixed;
+  z-index: 30;
+  left: 50%;
+  top: 42%;
+  transform: translate(-50%, -50%);
+  width: min(340px, calc(100vw - 24px));
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: #1c1612;
+  border: 1px solid var(--gold);
+  border-radius: 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+#turn-hint p { margin: 0; text-align: center; }
+#turn-hint .turn-actions { display: flex; gap: 8px; }
+#turn-hint .turn-actions button { flex: 1; min-height: 44px; }
+#turn-hint:not([hidden]) { display: flex; }
+@media (orientation: landscape) {
+  #turn-hint { display: none !important; }
+}
+
+html.phone-land {
+  --land-left: 112px;
+  --land-right: 136px;
+  --land-left-tray: 148px;
+  --land-tray: 100px;
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+}
+
+html.phone-land #topbar,
+html.phone-land #dock,
+html.phone-land #army,
+html.phone-land #panel,
+html.phone-land #land-tray {
+  zoom: 1;
+}
+
+html.phone-land:has(#title:not([hidden])) #topbar,
+html.phone-land:has(#title:not([hidden])) #dock,
+html.phone-land:has(#title:not([hidden])) #army,
+html.phone-land:has(#title:not([hidden])) #land-tray,
+html.phone-land:has(#title:not([hidden])) #place-confirm {
+  display: none !important;
+}
+
+html.phone-land #topbar {
+  position: fixed;
+  top: var(--safe-t);
+  left: var(--safe-l);
+  right: auto;
+  bottom: calc(var(--land-left-tray) + var(--safe-b));
+  width: var(--land-left);
+  max-width: var(--land-left);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 4px;
+  overflow: hidden;
+  pointer-events: auto;
+  background: #1c1612;
+  border-right: 1px solid var(--line);
+  z-index: 5;
+}
+html.phone-land #status {
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  overflow: visible;
+  gap: 4px;
+  flex: none;
+}
+html.phone-land #status .readout,
+html.phone-land #people-btn,
+html.phone-land #mood-btn {
+  width: 100%;
+  min-height: 28px;
+  justify-content: space-between;
+  padding: 2px 6px;
+  font-size: 12px;
+}
+html.phone-land #res-toggle,
+html.phone-land #fps,
+html.phone-land #mute-btn,
+html.phone-land #audio-open,
+html.phone-land #presence { display: none !important; }
+html.phone-land #resources {
+  display: flex !important;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  gap: 4px;
+  padding: 0;
+  touch-action: pan-y;
+}
+html.phone-land .resgroup {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  border-radius: 10px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+html.phone-land .resgroup .glabel {
+  min-height: 32px;
+  width: 100%;
+  text-align: left;
+  margin: 0;
+  padding: 4px 8px;
+  background: #2b241d;
+  border-radius: 8px;
+}
+html.phone-land .resgroup .gbody { display: none; flex-direction: column; gap: 2px; padding-top: 2px; }
+html.phone-land .resgroup.open .gbody { display: flex; }
+html.phone-land .res {
+  width: 100%;
+  min-height: 24px;
+  justify-content: space-between;
+  font-size: 12px;
+  padding: 2px 6px;
+}
+
+html.phone-land #land-tray {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: fixed;
+  left: var(--safe-l);
+  bottom: var(--safe-b);
+  width: var(--land-left);
+  z-index: 7;
+  padding: 4px;
+  background: #1c1612;
+  pointer-events: auto;
+}
+html.phone-land #land-speeds-slot #speeds,
+html.phone-land #land-tray #speeds {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  width: 100%;
+  position: static;
+}
+html.phone-land #speeds button,
+html.phone-land #land-row button,
+html.phone-land #open-menu,
+html.phone-land #land-full {
+  position: static;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 4px;
+  font-size: 13px;
+}
+html.phone-land #land-row { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+html.phone-land #land-full:not([hidden]) { display: inline-flex; align-items: center; justify-content: center; }
+
+html.phone-land #dock {
+  position: fixed;
+  top: var(--safe-t);
+  right: var(--safe-r);
+  bottom: calc(var(--land-tray) + var(--safe-b));
+  left: auto;
+  width: var(--land-right);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  align-content: stretch;
+  gap: 4px;
+  padding: 4px;
+  pointer-events: auto;
+  background: #1c1612;
+  border-left: 1px solid var(--line);
+  z-index: 5;
+}
+html.phone-land #dock > * { pointer-events: auto; }
+html.phone-land #econ { display: none !important; }
+html.phone-land #econ.in-menu { display: flex !important; }
+html.phone-land #home { grid-column: 1; grid-row: 1; position: static; bottom: auto; right: auto; min-height: 44px; }
+html.phone-land #map-toggle {
+  display: inline-flex !important;
+  grid-column: 2;
+  grid-row: 1;
+  position: static;
+  bottom: auto;
+  right: auto;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+}
+html.phone-land #buildbar {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  padding: 0;
+  touch-action: pan-y;
+  border-radius: 10px;
+}
+html.phone-land #tabs {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  overflow: visible;
+  gap: 4px;
+}
+html.phone-land #tabs button { min-height: 44px; width: 100%; flex: none; font-size: 13px; }
+html.phone-land #buttonrow { display: flex; flex-direction: column; margin: 4px 0 0; min-height: 0; }
+html.phone-land #build-prev,
+html.phone-land #build-next { display: none; }
+html.phone-land #buttons {
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+  gap: 4px;
+  padding: 0;
+  touch-action: pan-y;
+}
+html.phone-land #buttons button {
+  min-height: 44px;
+  max-width: none;
+  width: 100%;
+  white-space: normal;
+  font-size: 13px;
+}
+html.phone-land #buttons small { display: block; }
+html.phone-land #dock.show-map #mapwrap {
+  display: block;
+  position: static;
+  grid-column: 1 / -1;
+  grid-row: 3;
+  width: 100%;
+  height: 72px;
+  right: auto;
+  bottom: auto;
+}
+
+html.phone-land #army {
+  position: fixed;
+  top: auto;
+  left: auto;
+  right: var(--safe-r);
+  bottom: var(--safe-b);
+  width: var(--land-right);
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+  background: #1c1612;
+}
+html.phone-land #army-groups { display: flex; gap: 4px; }
+html.phone-land #army-groups button,
+html.phone-land #army-box,
+html.phone-land #army-actions button {
+  min-height: 44px;
+  min-width: 44px;
+  flex: 1;
+  padding: 4px;
+}
+html.phone-land #army-body { position: static; width: auto; }
+html.phone-land #army-count { margin: 0; font-size: 11px; }
+html.phone-land #army-clear,
+html.phone-land #army-hint { display: none; }
+html.placing-build #army { display: none !important; }
+
+html.phone-land #place-confirm:not([hidden]) {
+  display: flex;
+  position: fixed;
+  right: var(--safe-r);
+  bottom: var(--safe-b);
+  width: var(--land-right);
+  z-index: 8;
+  gap: 6px;
+  padding: 4px;
+  background: #1c1612;
+}
+html.phone-land #place-confirm button {
+  flex: 1;
+  min-height: 48px;
+  min-width: 44px;
+  font-size: 22px;
+}
+
+html.phone-land #phone-goal:not([hidden]) {
+  display: block;
+  position: fixed;
+  top: calc(4px + var(--safe-t));
+  left: calc(var(--land-left) + var(--safe-l) + 8px);
+  right: auto;
+  max-width: 22vw;
+  margin: 0;
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 1.2;
+  border-radius: 999px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 5;
+}
+html.phone-land #log {
+  position: fixed;
+  top: calc(4px + var(--safe-t));
+  right: calc(var(--land-right) + var(--safe-r) + 8px);
+  left: auto;
+  width: min(120px, 22vw);
+  max-height: 22px;
+  margin: 0;
+  z-index: 5;
+}
+html.phone-land #hint,
+html.phone-land #tutorial {
+  position: fixed;
+  top: calc(28px + var(--safe-t));
+  left: calc(var(--land-left) + var(--safe-l) + 8px);
+  right: auto;
+  width: min(168px, 24vw);
+  max-width: 168px;
+  margin: 0;
+}
+html.phone-land #panel {
+  top: var(--safe-t);
+  right: var(--safe-r);
+  bottom: calc(var(--land-tray) + var(--safe-b));
+  left: auto;
+  width: var(--land-right);
+  max-height: none;
+  height: auto;
+  border-radius: 0;
+  padding: 8px;
+  overflow: auto;
+  touch-action: pan-y;
+  z-index: 8;
+  background: #1c1612;
+}
+html.phone-land #panel::before { display: none; }
+html.phone-land #panel button { min-height: 44px; }
+html.phone-land #app:has(#panel:not([hidden])) #dock,
+html.phone-land #app:has(#panel:not([hidden])) #army,
+html.phone-land #app:has(#panel:not([hidden])) #hint,
+html.phone-land #app:has(#panel:not([hidden])) #phone-goal,
+html.phone-land #app:has(#panel:not([hidden])) #log,
+html.phone-land #app:has(#panel:not([hidden])) #banner,
+html.phone-land #app:has(#panel:not([hidden])) #toast {
+  visibility: visible !important;
+  pointer-events: auto !important;
+}
+html.phone-land #app:has(#panel:not([hidden])) #buildbar {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+html.phone-land #popbox,
+html.phone-land #peoplebox {
+  top: calc(8px + var(--safe-t));
+  left: calc(8px + var(--safe-l));
+  right: auto;
+  width: min(240px, 50vw);
+  max-height: 70vh;
+  z-index: 9;
+}
+html.phone-land #banner,
+html.phone-land #toast {
+  left: calc(var(--land-left) + var(--safe-l) + 8px);
+  right: auto;
+  width: min(168px, 24vw);
+  max-width: 168px;
+  bottom: auto;
+  top: calc(54px + var(--safe-t));
+  transform: none;
+}

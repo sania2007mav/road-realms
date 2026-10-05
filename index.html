@@ -2,7 +2,7 @@
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <title>Дорожные края</title>
     <meta name="description" content="Дорожные края — браузерная стратегия вдоль большого тракта. Люди живут в жилье, каждая работа занимает человека. Одиночная игра, кампания и сеть." />
     <meta name="theme-color" content="#1c1612" />
@@ -21,6 +21,13 @@
     <link rel="apple-touch-icon" href="%BASE_URL%apple-touch-icon.png" />
     <link rel="manifest" href="%BASE_URL%manifest.webmanifest" />
     <link rel="stylesheet" href="/src/style.css" />
+    <script>
+      (function () {
+        var touch = navigator.maxTouchPoints > 0 || window.matchMedia('(pointer: coarse)').matches;
+        var land = touch && window.matchMedia('(orientation: landscape)').matches && window.matchMedia('(max-height: 500px)').matches;
+        if (land) document.documentElement.classList.add('phone-land');
+      })();
+    </script>
   </head>
   <body>
     <div id="app">
@@ -37,6 +44,11 @@
       <aside id="panel" hidden></aside>
       <aside id="army" hidden>
         <button type="button" id="army-box" data-testid="army-box" aria-pressed="false">Выделить войска</button>
+        <div id="army-groups" data-testid="army-groups">
+          <button type="button" class="army-group" data-group="1" data-testid="group-1">1</button>
+          <button type="button" class="army-group" data-group="2" data-testid="group-2">2</button>
+          <button type="button" class="army-group" data-group="3" data-testid="group-3">3</button>
+        </div>
         <div id="army-body" hidden>
           <p id="army-count" data-testid="army-count"></p>
           <div id="army-actions">
@@ -60,6 +72,23 @@
         <button id="map-toggle" type="button" data-testid="map-toggle">Карта</button>
         <div id="mapwrap"><canvas id="minimap"></canvas></div>
       </footer>
+      <div id="land-tray" data-testid="land-tray">
+        <div id="land-speeds-slot"></div>
+        <div id="land-row">
+          <button type="button" id="land-full" data-testid="land-full" hidden>Экран</button>
+        </div>
+      </div>
+      <div id="place-confirm" data-testid="place-confirm" hidden>
+        <button type="button" id="place-ok" data-testid="place-ok" aria-label="Поставить">✓</button>
+        <button type="button" id="place-cancel" data-testid="place-cancel" aria-label="Отмена">✕</button>
+      </div>
+      <div id="turn-hint" data-testid="turn-hint" hidden>
+        <p>Поверните телефон для удобства</p>
+        <div class="turn-actions">
+          <button type="button" id="turn-full" data-testid="turn-full">Во весь экран</button>
+          <button type="button" id="turn-dismiss" data-testid="turn-dismiss">Понятно</button>
+        </div>
+      </div>
       <section id="net" hidden></section>
       <section id="syncbox" hidden></section>
       <section id="title"></section>

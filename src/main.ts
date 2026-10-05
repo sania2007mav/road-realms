@@ -81,6 +81,8 @@ import { campaignIntroHtml, campaignMapHtml, starMarkup } from './campaign/view'
 import { soldiersInScreenRect } from './select';
 
 const TUTORIAL_KEY = 'dorozhnye-kraya-tutorial';
+const TURN_HINT_KEY = 'dorozhnye-kraya-turn';
+const PHONE_LAND_QUERY = '(pointer: coarse) and (orientation: landscape) and (max-height: 500px)';
 const NAME_KEY = 'dorozhnye-kraya-name';
 const ARMY_HINT_KEY = 'dorozhnye-kraya-army-hint';
 const ARMY_HINT =
@@ -212,8 +214,10 @@ const controlGroups: number[][] = [[], [], [], [], [], [], [], [], [], []];
 const markers: OrderMarker[] = [];
 let attackArmed = false;
 let boxMode = false;
-let pointerMode: 'none' | 'pan' | 'box' | 'wall' | 'road' = 'none';
+let pointerMode: 'none' | 'pan' | 'box' | 'wall' | 'road' | 'ghost' = 'none';
 let wallAnchor: { x: number; y: number } | null = null;
+let pendingLine: { x: number; y: number }[] | null = null;
+const landGroupsOpen = new Set(['Материалы', 'Еда']);
 let boxStart = { x: 0, y: 0 };
 let boxNow = { x: 0, y: 0 };
 let boxBase: number[] = [];
@@ -249,6 +253,7 @@ function resize() {
   miniCanvas.width = Math.max(1, Math.floor(miniCanvas.clientWidth * dpr));
   miniCanvas.height = Math.max(1, Math.floor(miniCanvas.clientHeight * dpr));
   syncBuildScroll();
+  syncLandMode();
 }
 
 function syncBuildScroll() {
@@ -330,6 +335,132 @@ function bootPreview() {
 
 function compactLayout() {
   return window.matchMedia('(max-width: 840px), (max-height: 500px)').matches;
+}
+
+function phoneLandscape(): boolean {
+  if (window.matchMedia(PHONE_LAND_QUERY).matches) return true;
+  const touch = navigator.maxTouchPoints > 0 || window.matchMedia('(pointer: coarse)').matches;
+  const landscape = window.matchMedia('(orientation: landscape)').matches && window.innerWidth > window.innerHeight;
+  return touch && landscape && window.innerHeight <= 500;
+}
+
+function phonePortrait(): boolean {
+  const touch = navigator.maxTouchPoints > 0 || window.matchMedia('(pointer: coarse)').matches;
+  const portrait = window.matchMedia('(orientation: portrait)').matches && window.innerHeight > window.innerWidth;
+  const query = window.matchMedia('(pointer: coarse) and (orientation: portrait) and (max-width: 500px)').matches;
+  return query || (touch && portrait && window.innerWidth <= 500);
+}
+
+function syncLandMode() {
+  const land = phoneLandscape();
+  const changed = document.documentElement.classList.contains('phone-land') !== land;
+  document.documentElement.classList.toggle('phone-land', land);
+  const hint = document.querySelector<HTMLElement>('#turn-hint');
+  if (hint) {
+    const dismissed = sessionStorage.getItem(TURN_HINT_KEY) === '1';
+    hint.hidden = !phonePortrait() || dismissed;
+  }
+  parkLand();
+  syncPlaceChrome();
+  measureLandTrays();
+  if (changed) resourceSig = '';
+}
+
+function measureLandTrays() {
+  if (!phoneLandscape()) return;
+  const tray = document.querySelector<HTMLElement>('#land-tray');
+  const armyHeight = armyEl.hidden || getComputedStyle(armyEl).display === 'none' ? 0 : armyEl.offsetHeight;
+  const confirm = document.querySelector<HTMLElement>('#place-confirm');
+  const confirmHeight = confirm && !confirm.hidden ? confirm.offsetHeight : 0;
+  if (tray) document.documentElement.style.setProperty('--land-left-tray', `${Math.max(tray.offsetHeight, 8)}px`);
+  document.documentElement.style.setProperty('--land-tray', `${Math.max(armyHeight, confirmHeight, 8)}px`);
+}
+
+function releaseLandTray() {
+  const speedsEl = document.querySelector<HTMLElement>('#speeds');
+  const menu = document.querySelector<HTMLElement>('#open-menu');
+  const dock = document.querySelector<HTMLElement>('#dock');
+  const top = document.querySelector<HTMLElement>('#topbar');
+  if (speedsEl && dock && !dock.contains(speedsEl)) dock.append(speedsEl);
+  if (menu && top && !top.contains(menu)) top.append(menu);
+}
+
+function parkLand() {
+  const speeds = document.querySelector<HTMLElement>('#speeds');
+  const menu = document.querySelector<HTMLElement>('#open-menu');
+  const full = document.querySelector<HTMLButtonElement>('#land-full');
+  const status = document.querySelector<HTMLElement>('#status');
+  const dock = document.querySelector<HTMLElement>('#dock');
+  const buildbarEl = document.querySelector<HTMLElement>('#buildbar');
+  const slot = document.querySelector<HTMLElement>('#land-speeds-slot');
+  const row = document.querySelector<HTMLElement>('#land-row');
+  if (!speeds || !menu || !status || !dock || !slot || !row) return;
+  if (phoneLandscape()) {
+    slot.append(speeds);
+    row.append(menu);
+    if (full) {
+      full.hidden = false;
+      row.append(full);
+    }
+    return;
+  }
+  status.prepend(menu);
+  if (buildbarEl) dock.insertBefore(speeds, buildbarEl);
+  else dock.append(speeds);
+  if (full) full.hidden = true;
+}
+
+function syncPlaceChrome() {
+  const on = phoneLandscape() && playing && (placing != null || roadMode);
+  const box = document.querySelector<HTMLElement>('#place-confirm');
+  if (box) box.hidden = !on;
+  document.documentElement.classList.toggle('placing-build', on);
+}
+
+function aimPlacement(type: BuildingType) {
+  const suggested = suggestedTile(state, localPlayer, type);
+  if (suggested) {
+    hover = suggested;
+    return;
+  }
+  const keep = playerKeep(state, localPlayer);
+  if (keep) hover = { x: keep.x + 4, y: keep.y };
+}
+
+function cancelBuild() {
+  placing = null;
+  roadMode = false;
+  pendingLine = null;
+  wallAnchor = null;
+  worldCanvas.classList.remove('placing');
+  syncPlaceChrome();
+}
+
+function confirmBuild() {
+  if (roadMode) {
+    const cells = pendingLine ?? (hover ? [hover] : []);
+    for (const cell of cells) pushCmd({ kind: 'road', playerId: localPlayer, x: cell.x, y: cell.y });
+  } else if (placing) {
+    const cells = isLineBuilding(placing) ? pendingLine ?? (hover ? [hover] : []) : hover ? [hover] : [];
+    const type = placing;
+    for (const cell of cells) pushCmd({ kind: 'place', playerId: localPlayer, building: type, x: cell.x, y: cell.y });
+  }
+  cancelBuild();
+}
+
+async function enterLandScreen() {
+  try {
+    if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
+  } catch {
+    /* the browser can refuse fullscreen until a gesture */
+  }
+  const orientation = screen.orientation as ScreenOrientation & { lock?: (orientation: string) => Promise<void> };
+  if (!orientation?.lock) return;
+  try {
+    await orientation.lock('landscape');
+  } catch {
+    /* lock is allowed once installed or after fullscreen on some phones */
+  }
 }
 
 function parkEcon(intoMenu: boolean) {
@@ -992,6 +1123,7 @@ function mountAudio() {
 }
 
 function buildChrome() {
+  releaseLandTray();
   const player = () => state.players[localPlayer];
   topbar.innerHTML = `
     <div id="status">
@@ -1083,6 +1215,8 @@ function buildChrome() {
   paintBuildButtons();
   setSpeed(speed);
   panelSig = '';
+  parkLand();
+  syncLandMode();
 }
 
 function paintBuildButtons() {
@@ -1114,9 +1248,16 @@ function paintBuildButtons() {
       return;
     }
     placing = null;
+    pendingLine = null;
+    wallAnchor = null;
     roadMode = true;
     worldCanvas.classList.add('placing');
-    flash('Проведите дорогу');
+    if (phoneLandscape()) {
+      const { w, h } = viewSize();
+      hover = screenToTile(camera, w, h, w / 2, h / 2);
+      flash('Проведите дорогу и подтвердите');
+    } else flash('Проведите дорогу');
+    syncPlaceChrome();
   });
   host.querySelectorAll<HTMLButtonElement>('button').forEach((button) => {
     if (!button.dataset.build) return;
@@ -1129,9 +1270,15 @@ function paintBuildButtons() {
         return;
       }
       roadMode = false;
+      pendingLine = null;
+      wallAnchor = null;
       placing = type;
       worldCanvas.classList.add('placing');
-      flash(`Выберите место: ${BUILDINGS[type].name}`);
+      if (phoneLandscape()) {
+        aimPlacement(type);
+        flash(isLineBuilding(type) ? 'Проведите линию и подтвердите' : 'Перетащите и подтвердите');
+      } else flash(`Выберите место: ${BUILDINGS[type].name}`);
+      syncPlaceChrome();
     };
   });
   syncBuildScroll();
@@ -1373,11 +1520,14 @@ function syncHud() {
   const used = usedCount(state, localPlayer);
   const cap = housingCap(state, localPlayer);
   const compact = compactLayout();
+  const land = phoneLandscape();
   const peopleBtn = document.querySelector<HTMLButtonElement>('#people-btn');
   if (peopleBtn) {
-    peopleBtn.innerHTML = compact
-      ? `<strong>${used}</strong>/<strong>${cap}</strong>`
-      : `Люди <strong>${used}</strong>/<strong>${cap}</strong> · свободно <strong>${idle}</strong>`;
+    peopleBtn.innerHTML = land
+      ? `Люди <strong>${used}</strong>/<strong>${cap}</strong>`
+      : compact
+        ? `<strong>${used}</strong>/<strong>${cap}</strong>`
+        : `Люди <strong>${used}</strong>/<strong>${cap}</strong> · свободно <strong>${idle}</strong>`;
     peopleBtn.title = `Люди ${used} из ${cap}, свободно ${idle}`;
     peopleBtn.classList.toggle('idle-empty', idle === 0);
     peopleBtn.classList.toggle('idle-ready', idle > 0);
@@ -1385,20 +1535,20 @@ function syncHud() {
   const mood = document.querySelector<HTMLButtonElement>('#mood-btn');
   if (mood) {
     const sign = player.popularity > 0 ? `+${player.popularity}` : String(player.popularity);
-    mood.innerHTML = compact ? `<strong>${sign}</strong>` : `Настроение <strong>${sign}</strong>`;
+    mood.innerHTML = land ? `Дух <strong>${sign}</strong>` : compact ? `<strong>${sign}</strong>` : `Настроение <strong>${sign}</strong>`;
     mood.title = `Настроение ${sign}`;
     mood.classList.remove('mood-up', 'mood-down');
     mood.classList.add(player.popularity >= 0 ? 'mood-up' : 'mood-down');
   }
   const gold = document.querySelector<HTMLElement>('#gold-readout');
   if (gold) {
-    gold.innerHTML = compact ? `<strong>${player.gold}</strong>` : `Золото <strong>${player.gold}</strong>`;
+    gold.innerHTML = land ? `Золото <strong>${player.gold}</strong>` : compact ? `<strong>${player.gold}</strong>` : `Золото <strong>${player.gold}</strong>`;
     gold.title = `Золото ${player.gold}`;
   }
   const clock = document.querySelector<HTMLElement>('#clock');
   const minute = Math.floor(state.tick / TICKS_PER_GAME_MINUTE);
   if (clock) {
-    clock.textContent = compact ? `${minute}м` : `${minute} мин`;
+    clock.textContent = land ? `${minute} мин` : compact ? `${minute}м` : `${minute} мин`;
     clock.title = `${minute} мин`;
   }
   const fpsEl = document.querySelector<HTMLElement>('#fps');
@@ -1408,7 +1558,7 @@ function syncHud() {
   }
 
   const resources = document.querySelector<HTMLElement>('#resources');
-  const stockSig = `${compact ? 'c' : 'd'}:${RESOURCES.map((res) => player.stocks[res]).join(',')}`;
+  const stockSig = `${land ? 'l' : compact ? 'c' : 'd'}:${[...landGroupsOpen].join('.')}:${RESOURCES.map((res) => player.stocks[res]).join(',')}`;
   const nowHud = performance.now();
   if (resources && (stockSig !== resourceSig || nowHud - resourceStamp > 150)) {
     resourceSig = stockSig;
@@ -1417,7 +1567,19 @@ function syncHud() {
       const amount = player.stocks[res];
       return `<span class="res ${amount > 0 ? '' : 'zero'}"><i style="background:${cargoColor(res)}"></i>${RESOURCE_NAME[res]} <b>${amount}</b></span>`;
     };
-    if (compact) {
+    if (land) {
+      const groups: { label: string; items: (typeof RESOURCES)[number][] }[] = [
+        { label: 'Материалы', items: ['wood', 'stone', 'iron', 'pitch'] },
+        { label: 'Еда', items: ['apples', 'cheese', 'meat', 'bread', 'beer'] },
+        { label: 'Войско', items: ['horses', 'weapons', 'armor', 'crossbows'] },
+      ];
+      resources.innerHTML = groups
+        .map((group) => {
+          const open = landGroupsOpen.has(group.label);
+          return `<div class="resgroup${open ? ' open' : ''}${group.label === 'Войско' ? ' troop' : ''}"><button type="button" class="glabel" data-resgroup="${group.label}">${group.label}</button><div class="gbody">${group.items.map(chip).join('')}</div></div>`;
+        })
+        .join('');
+    } else if (compact) {
       const order: (typeof RESOURCES)[number][] = ['wood', 'stone', 'iron', 'pitch', 'apples', 'cheese', 'meat', 'bread', 'beer'];
       resources.innerHTML = order.map(chip).join('');
     } else {
@@ -1490,6 +1652,7 @@ function syncHud() {
   syncGuide();
   syncArmy();
   placeArmy();
+  syncPlaceChrome();
   if (state.message && state.message !== lastMessage) {
     lastMessage = state.message;
     flash(state.message);
@@ -2297,6 +2460,11 @@ function livingSelection() {
 
 function placeArmy() {
   if (!playing || armyEl.hidden) return;
+  if (phoneLandscape()) {
+    armyEl.style.top = '';
+    measureLandTrays();
+    return;
+  }
   if (compactLayout()) {
     armyEl.style.top = '';
     return;
@@ -2310,7 +2478,18 @@ function placeArmy() {
 
 function syncArmy() {
   armyEl.hidden = !playing || state.outcome !== 'playing';
-  armyBox.textContent = compactLayout() ? 'Войска' : 'Выделить войска';
+  armyBox.textContent = phoneLandscape() ? (boxMode ? 'Обводка' : 'Обвести') : compactLayout() ? 'Войска' : 'Выделить войска';
+  const holdBtn = document.querySelector<HTMLButtonElement>('#army-hold');
+  const homeBtn = document.querySelector<HTMLButtonElement>('#army-home');
+  if (phoneLandscape()) {
+    if (holdBtn) holdBtn.textContent = 'Стоять';
+    if (homeBtn) homeBtn.textContent = 'Отступить';
+    armyAttack.textContent = 'Атака';
+  } else {
+    if (holdBtn) holdBtn.textContent = 'Стоять';
+    if (homeBtn) homeBtn.textContent = 'Назад домой';
+    armyAttack.textContent = 'Атаковать область';
+  }
   livingSelection();
   const list = state.soldiers.filter((s) => selectedSoldiers.has(s.id));
   armyBody.hidden = list.length === 0;
@@ -2382,7 +2561,7 @@ function issueArmy(
 
 function ownSoldierAt(x: number, y: number) {
   let best: (typeof state.soldiers)[number] | null = null;
-  let bestD = 0.75;
+  let bestD = phoneLandscape() ? 1.15 : 0.75;
   for (const soldier of state.soldiers) {
     if (soldier.hp <= 0 || soldier.playerId !== localPlayer) continue;
     const d = Math.hypot(soldier.x - x, soldier.y - y);
@@ -2395,7 +2574,7 @@ function ownSoldierAt(x: number, y: number) {
 }
 
 function hostileAt(x: number, y: number, tileX: number, tileY: number) {
-  let bestD = 0.75;
+  let bestD = phoneLandscape() ? 1.15 : 0.75;
   let soldierHit: (typeof state.soldiers)[number] | null = null;
   for (const soldier of state.soldiers) {
     if (soldier.hp <= 0 || soldier.playerId === localPlayer) continue;
@@ -2408,7 +2587,7 @@ function hostileAt(x: number, y: number, tileX: number, tileY: number) {
   }
   if (soldierHit) return { target: 'soldier' as const, targetId: soldierHit.id, x: soldierHit.x, y: soldierHit.y };
   let mobHit: (typeof state.mobs)[number] | null = null;
-  bestD = 0.75;
+  bestD = phoneLandscape() ? 1.15 : 0.75;
   for (const mob of state.mobs) {
     if (!mob.alive || mob.kind === 'deer') continue;
     const d = Math.hypot(mob.x - x, mob.y - y);
@@ -2470,7 +2649,11 @@ function onMapClick(screenX: number, screenY: number, shift: boolean, touch: boo
   const { w, h } = viewSize();
   const world = screenToWorld(camera, w, h, screenX, screenY);
   const tile = screenToTile(camera, w, h, screenX, screenY);
-  if (placing) {
+  if (placing || roadMode) {
+    if (phoneLandscape()) {
+      hover = tile;
+      return;
+    }
     pick(screenX, screenY);
     return;
   }
@@ -2823,6 +3006,38 @@ function stageBatchScene(kind: string) {
   silenceScene();
 }
 
+function stageLandScene(kind: string) {
+  const keep = playerKeep(state, localPlayer);
+  if (!keep) return;
+  silenceScene();
+  state.mobs = [];
+  dressTown(keep.x, keep.y);
+  selectedId = null;
+  panel.hidden = true;
+  panelSig = '';
+  cancelBuild();
+  selectedSoldiers.clear();
+  attackArmed = false;
+  if (kind === 'land-ghost') {
+    placing = 'granary';
+    aimPlacement('granary');
+    worldCanvas.classList.add('placing');
+    syncPlaceChrome();
+  }
+  if (kind === 'land-army') {
+    for (let i = 0; i < 3; i++) {
+      const soldier = createSoldier(state, localPlayer, keep.x + 2.4 + i * 0.7, keep.y + 2.2, 'club');
+      soldier.order = 'hold';
+    }
+  }
+  lookAtPoint(keep.x + 1.5, keep.y + 1);
+  camera.zoom = 0.85;
+  clampView();
+  silenceScene();
+  syncArmy();
+  measureLandTrays();
+}
+
 function stageCraftScene(kind: string) {
   const keep = playerKeep(state, localPlayer);
   if (!keep) return;
@@ -3095,6 +3310,10 @@ function expose() {
       }
       if (kind === 'ladders' || kind === 'siege-tower' || kind === 'healer' || kind === 'mercs') {
         stageCraftScene(kind);
+        return;
+      }
+      if (kind === 'land' || kind === 'land-ghost' || kind === 'land-army') {
+        stageLandScene(kind);
         return;
       }
       const keep = playerKeep(state, localPlayer);
@@ -3515,20 +3734,26 @@ worldCanvas.addEventListener('pointerdown', (event) => {
   const downTile = screenToTile(camera, viewSize().w, viewSize().h, event.clientX - downRect.left, event.clientY - downRect.top);
   const lineDrag = playing && !!placing && isLineBuilding(placing) && (event.button === 0 || touch);
   const roadDrag = playing && roadMode && (event.button === 0 || touch);
+  const ghostDrag = phoneLandscape() && playing && !!placing && !isLineBuilding(placing) && (event.button === 0 || touch);
   const selectDrag = playing && (event.button === 0 || touch) && (!touch || boxMode);
   if (lineDrag) {
     pointerMode = 'wall';
     wallAnchor = { x: downTile.x, y: downTile.y };
+    pendingLine = null;
   } else if (roadDrag) {
     pointerMode = 'road';
     wallAnchor = { x: downTile.x, y: downTile.y };
+    pendingLine = null;
+  } else if (ghostDrag) {
+    pointerMode = 'ghost';
+    hover = downTile;
   } else if (selectDrag) {
     pointerMode = 'box';
     boxAdditive = event.shiftKey;
     boxBase = boxAdditive ? [...selectedSoldiers] : [];
   } else {
     pointerMode = 'pan';
-    if (touch && playing && !boxMode) {
+    if (touch && playing && !boxMode && !phoneLandscape()) {
       window.clearTimeout(longTimer);
       longTimer = window.setTimeout(() => {
         if (dragDist >= 14 || pointers.size !== 1) return;
@@ -3593,6 +3818,8 @@ worldCanvas.addEventListener('pointermove', (event) => {
   boxNow = { x: localX, y: localY };
   if (pointerMode === 'box') {
     if (dragDist >= 8) paintBox();
+  } else if (pointerMode === 'ghost') {
+    hover = screenToTile(camera, w, h, localX, localY);
   } else if (pointerMode !== 'wall' && pointerMode !== 'road') {
     camera.x -= dx / camera.zoom;
     camera.y -= dy / camera.zoom;
@@ -3611,9 +3838,16 @@ worldCanvas.addEventListener('pointerup', (event) => {
   if (pointers.size === 0) {
     if (pointerMode === 'road' && wallAnchor && roadMode) {
       const end = hover ?? wallAnchor;
-      for (const cell of wallLine(wallAnchor.x, wallAnchor.y, end.x, end.y)) {
-        pushCmd({ kind: 'road', playerId: localPlayer, x: cell.x, y: cell.y });
+      const cells = wallLine(wallAnchor.x, wallAnchor.y, end.x, end.y);
+      if (phoneLandscape()) {
+        pendingLine = cells;
+        hover = end;
+        pointerMode = 'none';
+        dragging = false;
+        syncPlaceChrome();
+        return;
       }
+      for (const cell of cells) pushCmd({ kind: 'road', playerId: localPlayer, x: cell.x, y: cell.y });
       roadMode = false;
       wallAnchor = null;
       pointerMode = 'none';
@@ -3623,15 +3857,27 @@ worldCanvas.addEventListener('pointerup', (event) => {
     }
     if (pointerMode === 'wall' && wallAnchor && placing && isLineBuilding(placing)) {
       const end = hover ?? wallAnchor;
-      const type = placing;
-      for (const cell of wallLine(wallAnchor.x, wallAnchor.y, end.x, end.y)) {
-        pushCmd({ kind: 'place', playerId: localPlayer, building: type, x: cell.x, y: cell.y });
+      const cells = wallLine(wallAnchor.x, wallAnchor.y, end.x, end.y);
+      if (phoneLandscape()) {
+        pendingLine = cells;
+        hover = end;
+        pointerMode = 'none';
+        dragging = false;
+        syncPlaceChrome();
+        return;
       }
+      const type = placing;
+      for (const cell of cells) pushCmd({ kind: 'place', playerId: localPlayer, building: type, x: cell.x, y: cell.y });
       placing = null;
       wallAnchor = null;
       pointerMode = 'none';
       dragging = false;
       worldCanvas.classList.remove('placing');
+      return;
+    }
+    if (pointerMode === 'ghost') {
+      pointerMode = 'none';
+      dragging = false;
       return;
     }
     lastGesture = dragDist;
@@ -3665,6 +3911,7 @@ worldCanvas.addEventListener(
 );
 worldCanvas.addEventListener('contextmenu', (event) => {
   event.preventDefault();
+  if (phoneLandscape() && (placing != null || roadMode)) return;
   const wasPlacing = placing != null || roadMode;
   placing = null;
   roadMode = false;
@@ -3779,6 +4026,14 @@ window.addEventListener(
   { passive: false },
 );
 window.addEventListener('resize', resize);
+window.matchMedia(PHONE_LAND_QUERY).addEventListener('change', syncLandMode);
+window.matchMedia('(orientation: portrait)').addEventListener('change', syncLandMode);
+window.addEventListener('orientationchange', syncLandMode);
+syncLandMode();
+if (window.matchMedia('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone) {
+  const orientation = screen.orientation as ScreenOrientation & { lock?: (orientation: string) => Promise<void> };
+  void orientation.lock?.('landscape').catch(() => undefined);
+}
 document.addEventListener('pointerover', (event) => {
   if (event.target instanceof HTMLButtonElement) audio.play('ui-hover');
 });
@@ -3832,6 +4087,58 @@ armyBox.onclick = () => {
   boxMode = !boxMode;
   syncArmy();
 };
+document.querySelector<HTMLButtonElement>('#place-ok')!.onclick = () => confirmBuild();
+document.querySelector<HTMLButtonElement>('#place-cancel')!.onclick = () => cancelBuild();
+document.querySelector<HTMLButtonElement>('#land-full')!.onclick = () => void enterLandScreen();
+document.querySelector<HTMLButtonElement>('#turn-full')!.onclick = () => void enterLandScreen();
+document.querySelector<HTMLButtonElement>('#turn-dismiss')!.onclick = () => {
+  sessionStorage.setItem(TURN_HINT_KEY, '1');
+  const hint = document.querySelector<HTMLElement>('#turn-hint');
+  if (hint) hint.hidden = true;
+};
+document.addEventListener('click', (event) => {
+  const label = (event.target as HTMLElement).closest?.('[data-resgroup]');
+  if (!label || !phoneLandscape()) return;
+  const name = label.getAttribute('data-resgroup');
+  if (!name) return;
+  if (landGroupsOpen.has(name)) landGroupsOpen.delete(name);
+  else landGroupsOpen.add(name);
+  resourceSig = '';
+});
+for (const button of document.querySelectorAll<HTMLButtonElement>('.army-group')) {
+  const index = Number(button.dataset.group);
+  let timer = 0;
+  let held = false;
+  button.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    held = false;
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => {
+      held = true;
+      controlGroups[index] = [...selectedSoldiers];
+      flash(selectedSoldiers.size ? `Отряд ${index} назначен` : `Отряд ${index} снят`);
+    }, 480);
+  });
+  button.addEventListener('pointerup', () => {
+    window.clearTimeout(timer);
+    if (held) {
+      held = false;
+      return;
+    }
+    const living = controlGroups[index].filter((id) => state.soldiers.some((s) => s.id === id && s.hp > 0 && s.playerId === localPlayer));
+    if (!living.length) {
+      flash(`Отряд ${index} пуст`);
+      return;
+    }
+    selectedSoldiers.clear();
+    for (const id of living) selectedSoldiers.add(id);
+    centreSquad(living);
+    noteFirstSelection();
+    syncArmy();
+  });
+  button.addEventListener('pointercancel', () => window.clearTimeout(timer));
+  button.addEventListener('contextmenu', (event) => event.preventDefault());
+}
 document.querySelector<HTMLButtonElement>('#army-hold')!.onclick = () => issueArmy('hold', 0, 0);
 document.querySelector<HTMLButtonElement>('#army-home')!.onclick = () => {
   const keep = playerKeep(state, localPlayer);
