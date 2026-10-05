@@ -1,4 +1,4 @@
-import { BUILDINGS, BOW_RANGE, CLOUD_RADIUS, CLOUD_TICKS, PITCH_BURN, POP_MAX, POP_MIN, TOWER_RANGE } from './balance';
+import { BUILDINGS, BOW_RANGE, CLOUD_RADIUS, CLOUD_TICKS, CROSSBOW_RANGE, HORSEBOW_RANGE, PITCH_BURN, POP_MAX, POP_MIN, TOWER_RANGE } from './balance';
 import { findPath, tileBlocked } from './path';
 import { hostile } from './match';
 import { roadPace } from './roads';
@@ -49,12 +49,24 @@ export function wallLine(x0: number, y0: number, x1: number, y1: number, cap = 4
 
 export function moverOf(soldier: Soldier): Mover {
   if (soldier.weapon === 'ladder') return 'ladder';
-  if (soldier.weapon === 'bow') return 'bow';
+  if (soldier.weapon === 'bow' || soldier.weapon === 'crossbow') return 'bow';
   return 'soldier';
 }
 
 export function trainHall(weapon: Weapon): 'barracks' | 'guild' {
-  if (weapon === 'club' || weapon === 'sword' || weapon === 'bow' || weapon === 'spear' || weapon === 'light' || weapon === 'heavy') return 'barracks';
+  if (
+    weapon === 'club' ||
+    weapon === 'sword' ||
+    weapon === 'bow' ||
+    weapon === 'spear' ||
+    weapon === 'light' ||
+    weapon === 'heavy' ||
+    weapon === 'crossbow' ||
+    weapon === 'shield' ||
+    weapon === 'horsebow'
+  ) {
+    return 'barracks';
+  }
   return 'guild';
 }
 
@@ -129,7 +141,7 @@ function wallAccess(state: GameState, playerId: number): Set<number> {
 }
 
 export function onOwnTower(state: GameState, soldier: Soldier): boolean {
-  if (soldier.weapon !== 'bow') return false;
+  if (soldier.weapon !== 'bow' && soldier.weapon !== 'crossbow') return false;
   const x = Math.floor(soldier.x);
   const y = Math.floor(soldier.y);
   const fort = fortOn(state, x, y);
@@ -137,6 +149,8 @@ export function onOwnTower(state: GameState, soldier: Soldier): boolean {
 }
 
 export function bowRange(state: GameState, soldier: Soldier): number {
+  if (soldier.weapon === 'horsebow') return HORSEBOW_RANGE;
+  if (soldier.weapon === 'crossbow') return onOwnTower(state, soldier) ? TOWER_RANGE : CROSSBOW_RANGE;
   return onOwnTower(state, soldier) ? TOWER_RANGE : BOW_RANGE;
 }
 

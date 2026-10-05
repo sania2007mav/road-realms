@@ -151,9 +151,165 @@ describe('копья, конница и кузница', () => {
     delete raw.players[0].stocks.armor;
     delete raw.players[0].mail;
     const back = deserialize(JSON.stringify(raw));
-    expect(back.saveVersion).toBe(2);
+    expect(back.saveVersion).toBe(3);
     expect(back.players[0].stocks.horses).toBe(0);
+    expect(back.players[0].stocks.crossbows).toBe(0);
     expect(back.players[0].mail).toBe(0);
     expect(back.buildings[0].gear).toBe(0);
+  });
+});
+
+describe('арбалет, щит и степной лук', () => {
+  it('болт игнорирует доспех и кольчугу, стрела их чувствует', () => {
+    const state = createGame(8, { humans: 2, setup: { map: 'small', ai: 0 } });
+    const bow = createSoldier(state, 0, 4, 4, 'bow');
+    const crossbow = createSoldier(state, 0, 5, 4, 'crossbow');
+    const bare = createSoldier(state, 1, 8, 4, 'sword');
+    bare.armor = 0;
+    const plated = createSoldier(state, 1, 9, 4, 'sword');
+    expect(dealtToSoldier(bow, plated, false)).toBeLessThan(dealtToSoldier(bow, bare, false));
+    expect(dealtToSoldier(bow, plated, true)).toBeLessThan(dealtToSoldier(bow, plated, false));
+    expect(dealtToSoldier(crossbow, plated, true)).toBe(dealtToSoldier(crossbow, bare, false));
+    expect(counterFactor('crossbow', 'heavy')).toBeGreaterThan(1.5);
+    expect(counterFactor('crossbow', 'sword')).toBeGreaterThan(1.5);
+    expect(counterFactor('sword', 'shield')).toBeGreaterThan(1.4);
+    expect(counterFactor('catapult', 'shield')).toBeGreaterThan(1.5);
+    expect(counterFactor('horsebow', 'spear')).toBeLessThan(0.5);
+    expect(counterFactor('horsebow', 'crossbow')).toBeLessThan(0.5);
+    expect(counterFactor('spear', 'horsebow')).toBeGreaterThan(1.5);
+    expect(counterFactor('crossbow', 'horsebow')).toBeGreaterThan(1.4);
+  });
+
+  it('щит рядом снижает урон стрелы, а сам почти её не берёт', () => {
+    const shoot = (withShield: boolean) => {
+      const state = createGame(9, { humans: 2, setup: { map: 'small', ai: 0 } });
+      state.mobs = [];
+      const friend = createSoldier(state, 1, 12, 10, 'club');
+      if (withShield) createSoldier(state, 1, 11, 10, 'shield');
+      const bow = createSoldier(state, 0, 9, 10, 'bow');
+      bow.order = 'attack';
+      bow.targetKind = 'soldier';
+      bow.targetId = friend.id;
+      friend.order = 'hold';
+      const before = friend.hp;
+      step(state, []);
+      return before - friend.hp;
+    };
+    const open = shoot(false);
+    const covered = shoot(true);
+    expect(open).toBeGreaterThan(covered);
+    expect(covered).toBeLessThan(open);
+    const state = createGame(10, { humans: 2, setup: { map: 'small', ai: 0 } });
+    const bow = createSoldier(state, 0, 4, 4, 'bow');
+    const shield = createSoldier(state, 1, 6, 4, 'shield');
+    const club = createSoldier(state, 1, 8, 4, 'club');
+    expect(dealtToSoldier(bow, shield, false)).toBeLessThan(dealtToSoldier(bow, club, false) * 0.5);
+  });
+
+  it('арбалетчик стреляет редко и вплотную слабее', () => {
+    const state = createGame(11, { humans: 2, setup: { map: 'small', ai: 0 } });
+    state.mobs = [];
+    const crossbow = createSoldier(state, 0, 10, 10, 'crossbow');
+    const sword = createSoldier(state, 1, 13, 10, 'sword');
+    crossbow.order = 'attack';
+    crossbow.targetKind = 'soldier';
+    crossbow.targetId = sword.id;
+    sword.order = 'hold';
+    sword.anchorX = sword.x;
+    sword.anchorY = sword.y;
+    let hits = 0;
+    let prev = sword.hp;
+    let rangedDrop = 0;
+    for (let i = 0; i < 30; i++) {
+      step(state, []);
+      if (sword.hp < prev) {
+        if (hits === 0) rangedDrop = prev - sword.hp;
+        hits += 1;
+      }
+      prev = sword.hp;
+    }
+    expect(hits).toBe(2);
+    expect(rangedDrop).toBeGreaterThan(0);
+    const close = createGame(12, { humans: 2, setup: { map: 'small', ai: 0 } });
+    close.mobs = [];
+    const bolt = createSoldier(close, 0, 10, 10, 'crossbow');
+    const foe = createSoldier(close, 1, 10.4, 10, 'sword');
+    bolt.order = 'attack';
+    bolt.targetKind = 'soldier';
+    bolt.targetId = foe.id;
+    foe.order = 'hold';
+    foe.anchorX = foe.x;
+    foe.anchorY = foe.y;
+    const before = foe.hp;
+    step(close, []);
+    const meleeDrop = before - foe.hp;
+    expect(meleeDrop).toBeGreaterThan(0);
+    expect(meleeDrop).toBeLessThan(rangedDrop || sword.maxHp);
+  });
+
+  it('степной лучник стреляет и не стоит на месте', () => {
+    const state = createGame(13, { humans: 2, setup: { map: 'small', ai: 0 } });
+    state.mobs = [];
+    const rider = createSoldier(state, 0, 10, 10, 'horsebow');
+    const sword = createSoldier(state, 1, 13.2, 10, 'sword');
+    rider.order = 'attack';
+    rider.targetKind = 'soldier';
+    rider.targetId = sword.id;
+    sword.order = 'attack';
+    sword.targetKind = 'soldier';
+    sword.targetId = rider.id;
+    let moved = false;
+    let hurt = false;
+    for (let i = 0; i < 36; i++) {
+      const x = rider.x;
+      const y = rider.y;
+      step(state, []);
+      if (rider.hp <= 0 || sword.hp <= 0) break;
+      if (Math.hypot(rider.x - x, rider.y - y) > 0.05) moved = true;
+      if (sword.hp < sword.maxHp) hurt = true;
+    }
+    expect(moved).toBe(true);
+    expect(hurt).toBe(true);
+    expect(Math.hypot(rider.x - sword.x, rider.y - sword.y)).toBeGreaterThan(1.3);
+  });
+
+  it('стратег берёт арбалет против мечей и щит против луков, воевода — степь', () => {
+    const state = createGame(14, { humans: 2, setup: { map: 'small', ai: 0, victory: 'conquest' } });
+    createSoldier(state, 1, 20, 20, 'sword');
+    createSoldier(state, 1, 21, 20, 'sword');
+    const strategist = state.players[0];
+    strategist.personality = 'strategist';
+    strategist.stocks = emptyStocks();
+    strategist.stocks.crossbows = 1;
+    strategist.gold = 20;
+    expect(pickWeapon(state, strategist, 1)).toBe('crossbow');
+    state.soldiers = state.soldiers.filter((soldier) => soldier.playerId !== 1);
+    createSoldier(state, 1, 20, 20, 'bow');
+    createSoldier(state, 1, 21, 20, 'bow');
+    strategist.stocks.armor = 1;
+    strategist.stocks.wood = 10;
+    expect(pickWeapon(state, strategist, 1)).toBe('shield');
+
+    const warlord = state.players[0];
+    warlord.personality = 'warlord';
+    warlord.stocks = emptyStocks();
+    warlord.stocks.horses = 1;
+    warlord.stocks.wood = 8;
+    warlord.gold = 20;
+    createSoldier(state, 0, 8, 8, 'club');
+    createSoldier(state, 0, 9, 8, 'club');
+    expect(pickWeapon(state, warlord, 1)).toBe('horsebow');
+  });
+
+  it('кузница выдаёт арбалет из железа и дерева', () => {
+    const state = prepare(23);
+    place(state, 'granary');
+    place(state, 'stockpile');
+    place(state, 'armoury');
+    const smith = place(state, 'smith');
+    expect(applyCommand(state, { kind: 'assign', playerId: 0, buildingId: smith.id, delta: 1 })).toBe(true);
+    for (let i = 0; i < 4000; i++) step(state, []);
+    expect(state.players[0].stocks.crossbows).toBeGreaterThan(0);
+    expect(state.players[0].stocks.wood).toBeLessThan(400);
   });
 });

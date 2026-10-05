@@ -109,7 +109,7 @@ const TUTORIAL = [
   },
   {
     title: 'Оазис и тракт',
-    body: 'Сады, пшеница, хмель и конюшня встают на зелёную траву или в оазис. Лес даёт дерево, светлые скалы — камень, ржавые — железо, чёрные болота — смолу. Кузница переделывает железо в оружие и доспехи, оружейная их хранит.',
+    body: 'Сады, пшеница, хмель и конюшня встают на зелёную траву или в оазис. Лес даёт дерево, светлые скалы — камень, ржавые — железо, чёрные болота — смолу. Кузница переделывает железо в оружие и доспехи, а железо с деревом — в арбалет. Оружейная их хранит.',
   },
   {
     title: 'Настроение',
@@ -1424,11 +1424,14 @@ function syncHud() {
       const groups: { label: string; items: (typeof RESOURCES)[number][] }[] = [
         { label: 'Еда', items: ['apples', 'cheese', 'meat', 'bread'] },
         { label: 'Материалы', items: ['wood', 'stone', 'iron', 'pitch'] },
-        { label: 'Снаряжение', items: ['horses', 'weapons', 'armor'] },
+        { label: 'Войско', items: ['horses', 'weapons', 'armor', 'crossbows'] },
         { label: 'Пиво', items: ['beer'] },
       ];
       resources.innerHTML = groups
-        .map((group) => `<div class="resgroup"><span class="glabel">${group.label}</span>${group.items.map(chip).join('')}</div>`)
+        .map(
+          (group) =>
+            `<div class="resgroup${group.label === 'Войско' ? ' troop' : ''}"><span class="glabel">${group.label}</span>${group.items.map(chip).join('')}</div>`,
+        )
         .join('');
     }
   }
@@ -1486,6 +1489,7 @@ function syncHud() {
   }
   syncGuide();
   syncArmy();
+  placeArmy();
   if (state.message && state.message !== lastMessage) {
     lastMessage = state.message;
     flash(state.message);
@@ -1886,8 +1890,11 @@ function syncPanel() {
           <button type="button" data-testid="train-spear">Копейщик (8 дерева, оружие, 6 золота)</button>
           <button type="button" data-testid="train-sword">Мечник (оружие и доспехи)</button>
           <button type="button" data-testid="train-bow">Лучник (4 дерева)</button>
+          <button type="button" data-testid="train-crossbow">Арбалетчик (арбалет, 12 золота)</button>
+          <button type="button" data-testid="train-shield">Щитоносец (6 дерева, доспех, 8 золота)</button>
           <button type="button" data-testid="train-light">Лёгкая конница (лошадь, 4 дерева, 10 золота)</button>
           <button type="button" data-testid="train-heavy">Тяжёлая конница (лошадь, оружие, доспехи, 24 золота)</button>
+          <button type="button" data-testid="train-horsebow">Степной лучник (лошадь, 4 дерева, 14 золота)</button>
           <button type="button" data-testid="order-defend">Оборона</button>
           <button type="button" data-testid="order-raid">Набег</button>
         </div>`
@@ -1971,7 +1978,7 @@ function syncPanel() {
     selectedPersonId = null;
     panelSig = '';
   });
-  for (const weapon of ['club', 'spear', 'sword', 'bow', 'light', 'heavy', 'engineer', 'ladder', 'ram', 'catapult'] as const) {
+  for (const weapon of ['club', 'spear', 'sword', 'bow', 'crossbow', 'shield', 'light', 'heavy', 'horsebow', 'engineer', 'ladder', 'ram', 'catapult'] as const) {
     panel.querySelector<HTMLButtonElement>(`[data-testid="train-${weapon}"]`)?.addEventListener('click', () => {
       pushCmd({ kind: 'train', playerId: localPlayer, weapon });
       panelSig = '';
@@ -2243,6 +2250,7 @@ function cargoColor(res: string): string {
     horses: '#8a5a32',
     weapons: '#c0c6cc',
     armor: '#7d8ea3',
+    crossbows: '#6e5134',
   };
   return map[res] ?? '#ccc';
 }
@@ -2265,6 +2273,19 @@ function livingSelection() {
   }
 }
 
+function placeArmy() {
+  if (!playing || armyEl.hidden) return;
+  if (compactLayout()) {
+    armyEl.style.top = '';
+    return;
+  }
+  const bar = document.querySelector<HTMLElement>('#topbar');
+  if (!bar) return;
+  const ui = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ui')) || 1;
+  const below = (bar.getBoundingClientRect().bottom + 10) / (ui || 1);
+  armyEl.style.top = `${below}px`;
+}
+
 function syncArmy() {
   armyEl.hidden = !playing || state.outcome !== 'playing';
   armyBox.textContent = compactLayout() ? 'Войска' : 'Выделить войска';
@@ -2277,10 +2298,16 @@ function syncArmy() {
   const spears = list.filter((s) => s.weapon === 'spear').length;
   const light = list.filter((s) => s.weapon === 'light').length;
   const heavy = list.filter((s) => s.weapon === 'heavy').length;
+  const crossbows = list.filter((s) => s.weapon === 'crossbow').length;
+  const shields = list.filter((s) => s.weapon === 'shield').length;
+  const horsebows = list.filter((s) => s.weapon === 'horsebow').length;
   const bits = [`Всего ${list.length}`, `ополченцы ${clubs}`, `копейщики ${spears}`, `мечники ${swords}`];
   if (bows) bits.push(`лучники ${bows}`);
+  if (crossbows) bits.push(`арбалетчики ${crossbows}`);
+  if (shields) bits.push(`щитоносцы ${shields}`);
   if (light) bits.push(`лёгкая конница ${light}`);
   if (heavy) bits.push(`тяжёлая конница ${heavy}`);
+  if (horsebows) bits.push(`степные ${horsebows}`);
   armyCount.textContent = bits.join(' · ');
   armyAttack.setAttribute('aria-pressed', attackArmed ? 'true' : 'false');
   armyBox.setAttribute('aria-pressed', boxMode ? 'true' : 'false');
@@ -2660,64 +2687,112 @@ function ensureFoe(x: number, y: number): number {
   return id;
 }
 
+function silenceScene() {
+  guideOn = false;
+  const tutorialEl = document.querySelector<HTMLElement>('#tutorial');
+  if (tutorialEl) {
+    tutorialEl.hidden = true;
+    tutorialEl.replaceChildren();
+  }
+  state.log = [];
+  state.message = '';
+  if (state.tick < 10 * TICKS_PER_GAME_MINUTE) state.tick = 10 * TICKS_PER_GAME_MINUTE;
+  banner.hidden = true;
+  lastMessage = '';
+  logEl.replaceChildren();
+  logSig = '';
+  hintEl.hidden = true;
+  hintEl.textContent = '';
+}
+
+function dressTown(keepX: number, keepY: number) {
+  const granary = createBuilding(state, localPlayer, 'granary', keepX + 4, keepY - 1, true);
+  const orchard = createBuilding(state, localPlayer, 'orchard', keepX + 4, keepY + 2, true);
+  createBuilding(state, localPlayer, 'woodcutter', keepX - 3, keepY + 1, true);
+  createBuilding(state, localPlayer, 'barracks', keepX + 1, keepY + 4, true);
+  createBuilding(state, localPlayer, 'cabin', keepX - 3, keepY - 1, true);
+  granary.buffer = 2;
+  granary.bufferRes = 'apples';
+  orchard.workerIds = [];
+  const stocks = state.players[localPlayer].stocks;
+  stocks.apples = 80;
+  stocks.wood = 48;
+  stocks.stone = 20;
+  stocks.iron = 8;
+  stocks.horses = 4;
+  stocks.weapons = 5;
+  stocks.armor = 3;
+  stocks.crossbows = 2;
+  keepLevelUp(keepX, keepY);
+}
+
+function keepLevelUp(keepX: number, keepY: number) {
+  const keep = state.buildings.find((building) => building.type === 'keep' && building.x === keepX && building.y === keepY);
+  if (keep) keep.level = 3;
+}
+
 function stageBatchScene(kind: string) {
   const keep = playerKeep(state, localPlayer);
   if (!keep) return;
-  guideOn = false;
+  silenceScene();
   state.mobs = [];
   state.soldiers = [];
-  const foe = ensureFoe(keep.x + 14, keep.y + 8);
+  const foe = ensureFoe(keep.x + 18, keep.y + 10);
+  const foePlayer = state.players[foe];
+  if (foePlayer) foePlayer.isAi = false;
+  if (kind === 'supply' || kind === 'hud') dressTown(keep.x, keep.y);
   if (kind === 'supply') {
-    const stable = createBuilding(state, localPlayer, 'stable', keep.x + 4, keep.y, true);
-    const smith = createBuilding(state, localPlayer, 'smith', keep.x + 4, keep.y + 3, true);
-    createBuilding(state, localPlayer, 'armoury', keep.x + 7, keep.y + 3, true);
+    const stable = createBuilding(state, localPlayer, 'stable', keep.x + 8, keep.y, true);
+    const smith = createBuilding(state, localPlayer, 'smith', keep.x + 8, keep.y + 3, true);
+    const armoury = createBuilding(state, localPlayer, 'armoury', keep.x + 11, keep.y + 1, true);
     stable.buffer = 1;
     stable.bufferRes = 'horses';
-    smith.buffer = 2;
+    smith.buffer = 1;
     smith.bufferRes = 'weapons';
-    const stocks = state.players[localPlayer].stocks;
-    stocks.horses = 3;
-    stocks.weapons = 4;
-    stocks.armor = 2;
-    stocks.iron = 6;
-    stocks.apples = 20;
-    selectedId = smith.id;
-    panel.hidden = false;
+    armoury.buffer = 1;
+    armoury.bufferRes = 'armor';
+    selectedId = null;
+    panel.hidden = true;
     panelSig = '';
-    lookAtPoint(keep.x + 5, keep.y + 2);
-    camera.zoom = 1.15;
+    lookAtPoint(keep.x + 9, keep.y + 2);
+    camera.zoom = 1.45;
     clampView();
+    silenceScene();
     return;
   }
-  const ax = keep.x + 6;
-  const ay = keep.y + 2;
-  for (let i = 0; i < 4; i++) {
-    const spear = createSoldier(state, localPlayer, ax + (i % 2) * 0.85, ay + Math.floor(i / 2) * 0.85, 'spear');
-    spear.order = 'attack';
-    spear.hp = i === 0 ? 18 : spear.maxHp;
+  const ax = keep.x + (kind === 'hud' ? 5 : 7);
+  const ay = keep.y + (kind === 'hud' ? 2 : 3);
+  const line = (owner: number, weapons: Array<'spear' | 'light' | 'heavy' | 'crossbow' | 'shield' | 'horsebow' | 'sword'>, ox: number, oy: number) => {
+    weapons.forEach((weapon, i) => {
+      const col = i % 3;
+      const row = Math.floor(i / 3);
+      const soldier = createSoldier(state, owner, ax + ox + col * 0.7, ay + oy + row * 0.65, weapon);
+      soldier.order = 'attack';
+      soldier.targetKind = 'soldier';
+      if (weapon === 'heavy') soldier.charge = 1;
+    });
+  };
+  if (kind === 'battle') {
+    line(localPlayer, ['spear', 'spear', 'shield', 'crossbow', 'crossbow', 'sword'], 0, 0);
+    line(foe, ['heavy', 'light', 'horsebow', 'horsebow', 'sword', 'horsebow'], 0.15, 1.15);
+  } else {
+    line(localPlayer, ['spear', 'spear', 'spear', 'spear', 'spear', 'spear'], 0, 0);
+    line(foe, ['light', 'light', 'heavy', 'heavy', 'light', 'heavy'], 0.1, 1.05);
   }
-  const horses: Array<'light' | 'heavy'> = ['light', 'light', 'heavy', 'heavy'];
-  horses.forEach((weapon, i) => {
-    const rider = createSoldier(state, foe, ax + (i % 2) * 0.9, ay + 1.35 + Math.floor(i / 2) * 0.9, weapon);
-    rider.order = 'attack';
-    rider.targetKind = 'soldier';
-    rider.hp = Math.max(8, rider.maxHp - 16);
-    if (weapon === 'heavy') rider.charge = i === 2 ? 0 : 1;
+  const ours = state.soldiers.filter((soldier) => soldier.playerId === localPlayer);
+  const theirs = state.soldiers.filter((soldier) => soldier.playerId === foe);
+  ours.forEach((soldier, i) => {
+    soldier.targetId = theirs[i % theirs.length].id;
   });
-  const spears = state.soldiers.filter((soldier) => soldier.weapon === 'spear');
-  const riders = state.soldiers.filter((soldier) => soldier.weapon === 'light' || soldier.weapon === 'heavy');
-  spears.forEach((soldier, i) => {
-    const foeUnit = riders[i % riders.length];
-    soldier.targetKind = 'soldier';
-    soldier.targetId = foeUnit.id;
+  theirs.forEach((soldier, i) => {
+    soldier.targetId = ours[i % ours.length].id;
   });
-  riders.forEach((soldier, i) => {
-    soldier.targetId = spears[i % spears.length].id;
-  });
-  for (let i = 0; i < 36; i++) step(state, []);
-  lookAtPoint(ax + 0.6, ay + 1.2);
-  camera.zoom = 1.35;
+  const steps = kind === 'hud' ? 6 : 10;
+  for (let i = 0; i < steps; i++) step(state, []);
+  lookAtPoint(ax + 0.7, ay + (kind === 'hud' ? 1.2 : 0.7));
+  camera.zoom = kind === 'hud' ? 1.05 : ZOOM_MAX;
   clampView();
+  silenceScene();
 }
 
 function stageAiScene(kind: string) {
@@ -2909,7 +2984,7 @@ function expose() {
         stageAiScene(kind);
         return;
       }
-      if (kind === 'cavalry-fight' || kind === 'supply') {
+      if (kind === 'cavalry-fight' || kind === 'supply' || kind === 'battle' || kind === 'hud') {
         stageBatchScene(kind);
         return;
       }

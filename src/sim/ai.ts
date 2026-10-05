@@ -399,18 +399,31 @@ function enemyWeapons(state: GameState, victim: number) {
   let walls = 0;
   let cavalry = 0;
   let spears = 0;
+  let swords = 0;
+  let heavies = 0;
+  let crossbows = 0;
   for (const soldier of state.soldiers) {
     if (soldier.playerId !== victim || soldier.hp <= 0) continue;
     if (soldier.weapon === 'bow') archers += 1;
+    else if (soldier.weapon === 'horsebow') {
+      archers += 1;
+      cavalry += 1;
+    } else if (soldier.weapon === 'crossbow') crossbows += 1;
     else if (soldier.weapon === 'spear') spears += 1;
-    else if (soldier.weapon === 'light' || soldier.weapon === 'heavy') cavalry += 1;
-    else if (soldier.weapon !== 'ram' && soldier.weapon !== 'catapult') infantry += 1;
+    else if (soldier.weapon === 'light') cavalry += 1;
+    else if (soldier.weapon === 'heavy') {
+      cavalry += 1;
+      heavies += 1;
+    } else if (soldier.weapon === 'sword') {
+      swords += 1;
+      infantry += 1;
+    } else if (soldier.weapon !== 'ram' && soldier.weapon !== 'catapult') infantry += 1;
   }
   for (const building of state.buildings) {
     if (building.playerId !== victim || building.hp <= 0) continue;
     if (building.type === 'palisade' || building.type === 'wall' || building.type === 'gate' || building.type === 'stonetower') walls += 1;
   }
-  return { infantry, archers, walls, cavalry, spears };
+  return { infantry, archers, walls, cavalry, spears, swords, heavies, crossbows };
 }
 
 function canTrain(player: Player, weapon: Weapon): boolean {
@@ -430,11 +443,15 @@ function desiredWeapon(state: GameState, player: Player, victim: number): Weapon
   }
   if (player.personality === 'warlord' && (player.stocks.horses ?? 0) >= 1 && soldiersOf(state, player.id).length >= 2) {
     if (seen.spears >= 2 && canTrain(player, 'bow')) return 'bow';
+    if (seen.crossbows >= 2 && canTrain(player, 'spear')) return 'spear';
+    if (seen.spears < 2 && (seen.swords >= 2 || seen.archers >= 2) && canTrain(player, 'horsebow')) return 'horsebow';
     if (seen.spears < 2 && canTrain(player, 'heavy')) return 'heavy';
     if (canTrain(player, 'light')) return 'light';
   }
   if (seen.cavalry >= 2 && seen.spears < seen.cavalry && canTrain(player, 'spear')) return 'spear';
   if (player.personality === 'strategist') {
+    if (seen.swords + seen.heavies >= 2 && canTrain(player, 'crossbow')) return 'crossbow';
+    if ((seen.archers >= 2 || seen.crossbows >= 2) && canTrain(player, 'shield')) return 'shield';
     if (seen.spears > seen.archers && seen.spears > 0 && canTrain(player, 'bow')) return 'bow';
     if (seen.archers > seen.infantry && seen.archers > 0 && canTrain(player, 'sword')) return 'sword';
   }

@@ -244,7 +244,8 @@ export function createBus(factory?: () => AudioContext): AudioBus {
       const soldier = state.soldiers[i];
       if (soldier.hp <= 0 || soldier.playerId === owner) continue;
       const dist = Math.hypot(soldier.x - x, soldier.y - y);
-      const reach = soldier.weapon === 'catapult' ? 8 : soldier.weapon === 'bow' ? 6 : soldier.weapon === 'ram' ? 2.4 : 2.2;
+      const reach =
+        soldier.weapon === 'catapult' ? 8 : soldier.weapon === 'bow' || soldier.weapon === 'crossbow' || soldier.weapon === 'horsebow' ? 6 : soldier.weapon === 'ram' ? 2.4 : 2.2;
       if (dist > reach || dist >= best) continue;
       best = dist;
       weapon = soldier.weapon;
@@ -260,7 +261,7 @@ export function createBus(factory?: () => AudioContext): AudioBus {
     }
     const id = strikeSound(weapon);
     play(id, x, y);
-    if (weapon === 'bow') play('arrow', x, y);
+    if (weapon === 'bow' || weapon === 'horsebow') play('arrow', x, y);
     if (weapon === 'catapult') play('impact', x, y);
   }
 
@@ -363,7 +364,7 @@ export function createBus(factory?: () => AudioContext): AudioBus {
       if (prev !== undefined && soldier.hp < prev && soldier.hp > 0) hitSoldier(state, soldier.x, soldier.y, soldier.playerId);
       soldierHp.set(soldier.id, soldier.hp);
       if (soldier.hp > 0 && soldier.playerId !== playerId && heard(soldier.x, soldier.y)) battle = true;
-      if (soldier.hp > 0 && (soldier.weapon === 'light' || soldier.weapon === 'heavy') && heard(soldier.x, soldier.y)) {
+      if (soldier.hp > 0 && (soldier.weapon === 'light' || soldier.weapon === 'heavy' || soldier.weapon === 'horsebow') && heard(soldier.x, soldier.y)) {
         const prev = hoofAt.get(soldier.id);
         if (!prev || Math.hypot(prev.x - soldier.x, prev.y - soldier.y) > 0.04) {
           hoof = 1;

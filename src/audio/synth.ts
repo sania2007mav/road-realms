@@ -233,6 +233,21 @@ export function speak(ctx: SynthContext, dest: AudioNode, id: SoundId, when: num
       tone(ctx, dest, when, 620, 0.1, 'triangle', 0.05 * v, 0.35);
       burst(ctx, dest, noise, when, 0.05, 0.04 * v, 2400, 4);
       break;
+    case 'crossbow':
+      burst(ctx, dest, noise, when, 0.04, 0.08 * v, 2800, 5);
+      tone(ctx, dest, when, 180, 0.06, 'square', 0.04 * v, 0.3);
+      tone(ctx, dest, when + 0.03, 90, 0.08, 'sine', 0.05 * v, 0.4);
+      break;
+    case 'shield':
+      burst(ctx, dest, noise, when, 0.09, 0.08 * v, 180, 0.7);
+      tone(ctx, dest, when, 95, 0.1, 'sine', 0.05 * v, 0.5);
+      break;
+    case 'volley':
+      tone(ctx, dest, when, 740, 0.06, 'triangle', 0.04 * v, 0.4);
+      tone(ctx, dest, when + 0.07, 680, 0.06, 'triangle', 0.035 * v, 0.4);
+      burst(ctx, dest, noise, when, 0.05, 0.04 * v, 200, 1);
+      burst(ctx, dest, noise, when + 0.08, 0.05, 0.035 * v, 160, 1);
+      break;
     case 'arrow':
       burst(ctx, dest, noise, when, 0.04, 0.06 * v, 3200, 6);
       break;

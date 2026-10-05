@@ -36,6 +36,7 @@ describe('еда, разнообразие и налоги', () => {
       horses: 0,
       weapons: 0,
       armor: 0,
+      crossbows: 0,
     };
     const meal = consumeFood(stocks, 4, 'normal');
     expect(meal.types).toBe(3);

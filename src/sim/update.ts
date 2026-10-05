@@ -14,13 +14,18 @@ import {
   PLAGUE_TICKS,
   POP_EVERY,
   BOW_SKIRMISH,
+  CROSSBOW_MELEE,
+  CROSSBOW_RELOAD,
   MAIL_COST,
+  SHIELD_AURA,
+  SHIELD_AURA_RANGE,
   TAX_EVERY,
   TICKS_PER_GAME_MINUTE,
   TRAIN_COST,
   TRAIN_GOLD,
   dealtToSoldier,
   emptyStocks,
+  isArrow,
   soldierPace,
   PRICES,
   RESOURCE_NAME,
@@ -178,7 +183,7 @@ function isStorage(type: BuildingType): boolean {
 }
 
 function isGear(res: Resource): boolean {
-  return res === 'horses' || res === 'weapons' || res === 'armor';
+  return res === 'horses' || res === 'weapons' || res === 'armor' || res === 'crossbows';
 }
 
 function isOrdinary(terrain: number): boolean {
@@ -489,6 +494,9 @@ export function applyCommand(state: GameState, command: Command): boolean {
       spear: 'Обучен копейщик',
       light: 'Обучена лёгкая конница',
       heavy: 'Обучена тяжёлая конница',
+      crossbow: 'Обучен арбалетчик',
+      shield: 'Обучен щитоносец',
+      horsebow: 'Обучен степной лучник',
       engineer: 'Обучен инженер',
       ladder: 'Обучен лестничник',
       ram: 'Собран таран',
@@ -1218,8 +1226,15 @@ function updateWorker(state: GameState, person: Person) {
     return;
   }
   if (building.type === 'smith') {
-    const good: Resource = building.gear === 1 ? 'armor' : 'weapons';
-    building.gear = building.gear === 1 ? 0 : 1;
+    const owner = state.players[person.playerId];
+    if (building.gear === 2 && (owner.stocks.wood ?? 0) < 1) building.gear = 0;
+    let good: Resource = 'weapons';
+    if (building.gear === 1) good = 'armor';
+    else if (building.gear === 2) {
+      owner.stocks.wood -= 1;
+      good = 'crossbows';
+    }
+    building.gear = (building.gear + 1) % 3;
     building.buffer += 1;
     building.bufferRes = good;
   } else if (building.type === 'stable') {
@@ -1638,9 +1653,9 @@ function updateSoldier(state: GameState, soldier: Soldier) {
     updateDirected(state, soldier);
     return;
   }
-  const bow = soldier.weapon === 'bow' && soldier.order !== 'raid';
-  const closeMob = nearestMob(state, soldier.x, soldier.y, soldier.order === 'raid' ? 1.2 : bow ? bowRange(state, soldier) : 9, false);
-  const closeEnemy = nearestEnemySoldier(state, soldier, soldier.order === 'raid' ? 1.2 : bow ? bowRange(state, soldier) : 8);
+  const ranged = isArrow(soldier.weapon) && soldier.order !== 'raid';
+  const closeMob = nearestMob(state, soldier.x, soldier.y, soldier.order === 'raid' ? 1.2 : ranged ? bowRange(state, soldier) : 9, false);
+  const closeEnemy = nearestEnemySoldier(state, soldier, soldier.order === 'raid' ? 1.2 : ranged ? bowRange(state, soldier) : 8);
   if (soldier.order === 'raid') {
     if (closeMob && Math.hypot(closeMob.x - soldier.x, closeMob.y - soldier.y) < 1.25) {
       strikeMob(state, soldier, closeMob);
@@ -1695,7 +1710,7 @@ function updateSoldier(state: GameState, soldier: Soldier) {
     strikeSoldier(state, soldier, closeEnemy);
     return;
   }
-  if (soldier.weapon === 'bow') {
+  if (soldier.weapon === 'bow' || soldier.weapon === 'crossbow') {
     const slot = towerSlotFor(state, soldier);
     if (slot) {
       walkSoldier(state, soldier, slot.x, slot.y, moveSpeed(soldier));
@@ -1742,41 +1757,54 @@ function strikeMob(state: GameState, soldier: Soldier, mob: Mob) {
 
 function strikeSoldier(state: GameState, soldier: Soldier, other: Soldier) {
   const d = Math.hypot(other.x - soldier.x, other.y - soldier.y);
-  const range = soldier.weapon === 'bow' ? bowRange(state, soldier) : 0.7;
+  const range = isArrow(soldier.weapon) ? bowRange(state, soldier) : 0.7;
   const melee =
     other.weapon === 'club' ||
     other.weapon === 'sword' ||
     other.weapon === 'spear' ||
+    other.weapon === 'shield' ||
     other.weapon === 'light' ||
     other.weapon === 'heavy' ||
     other.weapon === 'ladder' ||
     other.weapon === 'engineer';
+  const steppe = soldier.weapon === 'horsebow';
   const skirmish =
-    soldier.weapon === 'bow' &&
+    isArrow(soldier.weapon) &&
     melee &&
-    d > BOW_SKIRMISH &&
+    d > (steppe ? 1.35 : BOW_SKIRMISH) &&
     d <= range &&
-    (soldier.order === 'attack' || soldier.order === 'attackmove' || soldier.order === 'raid');
+    (steppe || soldier.order === 'attack' || soldier.order === 'attackmove' || soldier.order === 'raid');
+  const period = soldier.weapon === 'crossbow' ? CROSSBOW_RELOAD : 12;
   if (skirmish) {
     const dx = soldier.x - other.x;
     const dy = soldier.y - other.y;
     const len = Math.hypot(dx, dy) || 1;
     walkSoldier(state, soldier, soldier.x + (dx / len) * 2, soldier.y + (dy / len) * 2, moveSpeed(soldier, 2));
-    if (state.tick % 12 !== 0) return;
-    landBlow(state, soldier, other, true);
+    if (state.tick % period !== 0) return;
+    landBlow(state, soldier, other, true, d);
     return;
   }
   if (d > range) {
     walkSoldier(state, soldier, other.x, other.y, moveSpeed(soldier));
     return;
   }
-  if (state.tick % 12 !== 0) return;
-  landBlow(state, soldier, other, false);
+  if (state.tick % period !== 0) return;
+  landBlow(state, soldier, other, false, d);
 }
 
-function landBlow(state: GameState, soldier: Soldier, other: Soldier, kiting: boolean) {
+function shieldAuraFactor(state: GameState, defender: Soldier): number {
+  for (const friend of state.soldiers) {
+    if (friend.hp <= 0 || friend.id === defender.id || friend.playerId !== defender.playerId || friend.weapon !== 'shield') continue;
+    if (Math.hypot(friend.x - defender.x, friend.y - defender.y) <= SHIELD_AURA_RANGE) return SHIELD_AURA;
+  }
+  return 1;
+}
+
+function landBlow(state: GameState, soldier: Soldier, other: Soldier, kiting: boolean, gap = 0) {
   const mail = state.players[other.playerId]?.mail === 1;
-  let dealt = dealtToSoldier(soldier, other, mail);
+  const aura = isArrow(soldier.weapon) ? shieldAuraFactor(state, other) : 1;
+  let dealt = dealtToSoldier(soldier, other, mail, aura);
+  if (soldier.weapon === 'crossbow' && !kiting && gap <= 1.05) dealt = Math.max(1, Math.round(dealt * CROSSBOW_MELEE));
   if (!kiting && onOwnTower(state, other)) dealt = Math.max(1, Math.floor(dealt * 0.5));
   other.hp -= dealt;
   if (soldier.weapon === 'heavy' && soldier.charge > 0) soldier.charge = 0;
@@ -2107,7 +2135,7 @@ export function serialize(state: GameState): string {
 
 export function deserialize(raw: string): GameState {
   const data = JSON.parse(raw) as GameState & { terrain: number[]; roads?: number[] };
-  if (data.saveVersion !== 1 && data.saveVersion !== 2) throw new Error('Неизвестная версия сохранения');
+  if (data.saveVersion !== 1 && data.saveVersion !== 2 && data.saveVersion !== 3) throw new Error('Неизвестная версия сохранения');
   const terrain = Uint8Array.from(data.terrain);
   const roads =
     data.roads && data.roads.length === data.mapW * data.mapH
@@ -2135,7 +2163,7 @@ export function deserialize(raw: string): GameState {
   }
   return {
     ...data,
-    saveVersion: 2,
+    saveVersion: 3,
     terrain,
     roads,
     clouds,

@@ -29,6 +29,9 @@ export type SoundId =
   | 'charge'
   | 'bow'
   | 'arrow'
+  | 'crossbow'
+  | 'shield'
+  | 'volley'
   | 'ram'
   | 'catapult'
   | 'impact'
@@ -80,6 +83,9 @@ export const SOUNDS: readonly SoundDef[] = [
   { id: 'charge', bus: 'sfx', gapMs: 420, world: true, label: 'Наскок конницы' },
   { id: 'bow', bus: 'sfx', gapMs: 120, world: true, label: 'Тетива' },
   { id: 'arrow', bus: 'sfx', gapMs: 90, world: true, label: 'Попадание стрелы' },
+  { id: 'crossbow', bus: 'sfx', gapMs: 280, world: true, label: 'Щелчок арбалета' },
+  { id: 'shield', bus: 'sfx', gapMs: 140, world: true, label: 'Удар в щит' },
+  { id: 'volley', bus: 'sfx', gapMs: 320, world: true, label: 'Залп на скаку' },
   { id: 'ram', bus: 'sfx', gapMs: 240, world: true, label: 'Удар тарана' },
   { id: 'catapult', bus: 'sfx', gapMs: 420, world: true, label: 'Выстрел катапульты' },
   { id: 'impact', bus: 'sfx', gapMs: 240, world: true, label: 'Удар ядра' },
@@ -134,6 +140,9 @@ export function soundForLog(line: string): SoundId | null {
 
 export function strikeSound(weapon: string): SoundId {
   if (weapon === 'bow') return 'bow';
+  if (weapon === 'crossbow') return 'crossbow';
+  if (weapon === 'shield') return 'shield';
+  if (weapon === 'horsebow') return 'volley';
   if (weapon === 'ram') return 'ram';
   if (weapon === 'catapult') return 'catapult';
   if (weapon === 'spear') return 'spear';

@@ -14,6 +14,7 @@ export const RESOURCES = [
   'horses',
   'weapons',
   'armor',
+  'crossbows',
 ] as const;
 
 export type Resource = (typeof RESOURCES)[number];
@@ -63,7 +64,20 @@ export type BuildingType =
   | 'oil'
   | 'guild';
 
-export type Weapon = 'club' | 'sword' | 'bow' | 'spear' | 'light' | 'heavy' | 'engineer' | 'ladder' | 'ram' | 'catapult';
+export type Weapon =
+  | 'club'
+  | 'sword'
+  | 'bow'
+  | 'spear'
+  | 'light'
+  | 'heavy'
+  | 'crossbow'
+  | 'shield'
+  | 'horsebow'
+  | 'engineer'
+  | 'ladder'
+  | 'ram'
+  | 'catapult';
 
 export type Terrain = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
@@ -172,7 +186,7 @@ export interface Building {
   work: number;
   plague: number;
   upgrading: boolean;
-  /** Smith alternates weapon and armour. 0 is the next weapon, 1 the next armour. */
+  /** Smith cycle. 0 weapon, 1 armour, 2 crossbow (iron and one wood). */
   gear: number;
   /** 1 when a fort wall has cut this building off from the keep. */
   seal: number;

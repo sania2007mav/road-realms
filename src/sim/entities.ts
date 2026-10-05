@@ -71,6 +71,9 @@ const SOLDIER_STATS: Record<Weapon, { hp: number; dmg: number }> = {
   spear: { hp: 36, dmg: 7 },
   light: { hp: 34, dmg: 7 },
   heavy: { hp: 58, dmg: 11 },
+  crossbow: { hp: 24, dmg: 11 },
+  shield: { hp: 54, dmg: 4 },
+  horsebow: { hp: 22, dmg: 6 },
 };
 
 export function createSoldier(state: GameState, playerId: number, x: number, y: number, weapon: Weapon): Soldier {

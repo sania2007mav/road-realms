@@ -109,7 +109,7 @@ export async function unpackSnapshot(raw: string): Promise<{ state: GameState; m
       const json = await inflateRaw(fromB64(data.payload));
       return { state: deserialize(json), meta: metaOf(data) };
     }
-    if (data && (data.saveVersion === 1 || data.saveVersion === 2)) {
+    if (data && (data.saveVersion === 1 || data.saveVersion === 2 || data.saveVersion === 3)) {
       return {
         state: deserialize(raw),
         meta: { savedAt: 0, slot: 'auto', campaignId: null, session: null },

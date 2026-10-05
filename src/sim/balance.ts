@@ -142,6 +142,7 @@ export function emptyStocks(): Record<Resource, number> {
     horses: 0,
     weapons: 0,
     armor: 0,
+    crossbows: 0,
   };
 }
 
@@ -169,6 +170,7 @@ export const RESOURCE_NAME: Record<Resource, string> = {
   horses: 'Лошади',
   weapons: 'Оружие',
   armor: 'Доспехи',
+  crossbows: 'Арбалеты',
 };
 
 export const PRICES: Record<Resource, { buy: number; sell: number }> = {
@@ -187,6 +189,7 @@ export const PRICES: Record<Resource, { buy: number; sell: number }> = {
   horses: { buy: 18, sell: 6 },
   weapons: { buy: 22, sell: 8 },
   armor: { buy: 22, sell: 8 },
+  crossbows: { buy: 32, sell: 10 },
 };
 
 export interface BuildingDef {
@@ -764,7 +767,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   smith: def({
     type: 'smith',
     name: 'Кузница',
-    desc: 'Переделывает железо то в оружие, то в доспехи. Без оружейной повозка стоит во дворе.',
+    desc: 'Железо становится оружием и доспехами, а железо с деревом — арбалетом. Без оружейной повозка стоит во дворе.',
     w: 2,
     h: 2,
     cost: { wood: 8, stone: 6 },
@@ -789,7 +792,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   armoury: def({
     type: 'armoury',
     name: 'Оружейная',
-    desc: 'Склад оружия, доспехов и лошадей. Здесь же укрепляют кольчугу против стрел.',
+    desc: 'Склад оружия, доспехов, арбалетов и лошадей. Здесь же укрепляют кольчугу против стрел.',
     w: 2,
     h: 2,
     cost: { wood: 6 },
@@ -1219,6 +1222,9 @@ export const TRAIN_COST: Record<Weapon, Partial<Record<Resource, number>>> = {
   spear: { wood: 8, weapons: 1 },
   light: { horses: 1, wood: 4 },
   heavy: { horses: 1, weapons: 1, armor: 1 },
+  crossbow: { crossbows: 1 },
+  shield: { wood: 6, armor: 1 },
+  horsebow: { horses: 1, wood: 4 },
   engineer: { wood: 3, iron: 1 },
   ladder: { wood: 8 },
   ram: { wood: 16, stone: 4 },
@@ -1233,6 +1239,9 @@ export const TRAIN_GOLD: Record<Weapon, number> = {
   spear: 6,
   light: 10,
   heavy: 24,
+  crossbow: 12,
+  shield: 8,
+  horsebow: 14,
   engineer: 0,
   ladder: 0,
   ram: 0,
@@ -1242,21 +1251,43 @@ export const TRAIN_GOLD: Record<Weapon, number> = {
 export const MAIL_COST = 4;
 export const CHARGE_BONUS = 1.8;
 export const ARMOR_ARROW = 0.75;
+/** Shield bearers soak arrows. Crossbows ignore armour and mail, and only partly this. */
+export const SHIELD_ARROW = 0.32;
+export const SHIELD_PIERCE = 0.7;
+/** One nearby shield bearer softens arrows for friends. It does not stack. */
+export const SHIELD_AURA = 0.72;
+export const SHIELD_AURA_RANGE = 1.7;
+/** Crossbows are clumsy once infantry is on top of them. */
+export const CROSSBOW_MELEE = 0.4;
+export const CROSSBOW_RELOAD = 28;
+export const CROSSBOW_RANGE = 5.8;
+export const HORSEBOW_RANGE = 4.8;
+
+export function isArrow(weapon: Weapon): boolean {
+  return weapon === 'bow' || weapon === 'crossbow' || weapon === 'horsebow';
+}
 
 export function soldierPace(weapon: Weapon): number {
   if (weapon === 'light') return 0.34;
+  if (weapon === 'horsebow') return 0.33;
   if (weapon === 'heavy') return 0.26;
   if (weapon === 'spear') return 0.18;
+  if (weapon === 'crossbow') return 0.15;
+  if (weapon === 'shield') return 0.13;
   return SOLDIER_SPEED;
 }
 
 const COUNTER: Partial<Record<Weapon, Partial<Record<Weapon, number>>>> = {
-  spear: { light: 2.2, heavy: 2.1, bow: 0.55, sword: 0.6, ram: 0.7, catapult: 0.65 },
-  light: { spear: 0.4, heavy: 0.7, sword: 0.75, bow: 0.9, club: 1.2, ram: 1.85, catapult: 1.85, engineer: 1.7, ladder: 1.7 },
-  heavy: { spear: 0.42, sword: 0.85, bow: 1.05, club: 1.25, light: 1.2, ram: 1.15, catapult: 1.1 },
-  sword: { spear: 1.5, bow: 1.15, light: 1.05, heavy: 0.8 },
-  bow: { spear: 1.6, light: 1.15, heavy: 0.85, club: 1.15, catapult: 1.3 },
-  club: { spear: 0.85, light: 0.7, heavy: 0.55 },
+  spear: { light: 2.2, heavy: 2.1, bow: 0.55, sword: 0.6, ram: 0.7, catapult: 0.65, horsebow: 1.85, crossbow: 1.15, shield: 0.9 },
+  light: { spear: 0.4, heavy: 0.7, sword: 0.75, bow: 0.9, club: 1.2, ram: 1.85, catapult: 1.85, engineer: 1.7, ladder: 1.7, horsebow: 0.85, crossbow: 1.1, shield: 0.8 },
+  heavy: { spear: 0.42, sword: 0.85, bow: 1.05, club: 1.25, light: 1.2, ram: 1.15, catapult: 1.1, horsebow: 0.9, crossbow: 1.05, shield: 0.75 },
+  sword: { spear: 1.5, bow: 1.15, light: 1.05, heavy: 0.8, shield: 1.65, crossbow: 1.45, horsebow: 1.2 },
+  bow: { spear: 1.6, light: 1.15, heavy: 0.85, club: 1.15, catapult: 1.3, shield: 1, horsebow: 1.25, crossbow: 0.9 },
+  club: { spear: 0.85, light: 0.7, heavy: 0.55, shield: 0.8, horsebow: 0.75 },
+  crossbow: { sword: 1.65, heavy: 1.7, light: 1.15, spear: 1.2, shield: 1.15, horsebow: 1.6, bow: 1.1, club: 1.15, ram: 0.7, catapult: 0.6 },
+  shield: { sword: 0.45, catapult: 0.4, bow: 0.55, crossbow: 0.5, spear: 0.85, club: 0.8, light: 0.7, heavy: 0.65, horsebow: 0.7 },
+  horsebow: { spear: 0.4, crossbow: 0.45, sword: 0.85, shield: 0.7, bow: 0.8, club: 1.15, ram: 1.4, heavy: 0.75, light: 0.9, catapult: 1.2 },
+  catapult: { shield: 1.8 },
 };
 
 /** Damage multiplier from the attacker onto this defender. 1 is an even trade before hit points. */
@@ -1264,12 +1295,17 @@ export function counterFactor(attacker: Weapon, defender: Weapon): number {
   return COUNTER[attacker]?.[defender] ?? 1;
 }
 
-export function dealtToSoldier(attacker: Soldier, defender: Soldier, mail: boolean): number {
+export function dealtToSoldier(attacker: Soldier, defender: Soldier, mail: boolean, aura = 1): number {
   let dmg = attacker.dmg * counterFactor(attacker.weapon, defender.weapon);
   if (attacker.weapon === 'heavy' && attacker.charge > 0) dmg *= CHARGE_BONUS;
-  if (attacker.weapon === 'bow') {
-    if (defender.armor) dmg *= ARMOR_ARROW;
-    if (mail) dmg *= ARMOR_ARROW;
+  if (isArrow(attacker.weapon)) {
+    const piercing = attacker.weapon === 'crossbow';
+    if (!piercing) {
+      if (defender.armor) dmg *= ARMOR_ARROW;
+      if (mail) dmg *= ARMOR_ARROW;
+    }
+    if (defender.weapon === 'shield') dmg *= piercing ? SHIELD_PIERCE : SHIELD_ARROW;
+    dmg *= aura;
   }
   return Math.max(1, Math.round(dmg));
 }

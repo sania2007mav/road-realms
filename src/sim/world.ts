@@ -148,7 +148,7 @@ export function createGame(
   }
 
   const state: GameState = {
-    saveVersion: 2,
+    saveVersion: 3,
     seed: seed >>> 0,
     tick: 0,
     rng: (seed || 1) >>> 0,
