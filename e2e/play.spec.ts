@@ -1015,6 +1015,92 @@ test('настройки лобби видны до старта', async ({ page
   }
 });
 
+test('живая партия: пароль, условия, минута локстепа', async ({ browser }) => {
+  test.setTimeout(180_000);
+  const lobbyName = `Жив ${Date.now().toString(36)}`.slice(0, 12);
+  const host = await browser.newContext();
+  const guest = await browser.newContext();
+  await host.addInitScript(() => {
+    localStorage.setItem('dorozhnye-kraya-name', 'Хозяин');
+    localStorage.setItem('dorozhnye-kraya-tutorial', '1');
+  });
+  await guest.addInitScript(() => {
+    localStorage.setItem('dorozhnye-kraya-name', 'Путник');
+    localStorage.setItem('dorozhnye-kraya-tutorial', '1');
+  });
+  const a = await host.newPage();
+  const b = await guest.newPage();
+  const errors: string[] = [];
+  for (const page of [a, b]) {
+    page.on('pageerror', (err) => errors.push(err.message));
+  }
+  try {
+    await a.goto('/road-realms/');
+    await a.getByTestId('net-game').click();
+    await expect(a.getByTestId('lobby-setup')).toBeVisible();
+    await expect(a.locator('#net-error')).toHaveText('', { timeout: 20_000 });
+    await a.getByTestId('lobby-max').selectOption('2');
+    await a.getByTestId('lobby-map').selectOption('large');
+    await a.getByTestId('lobby-speed').selectOption('2');
+    await a.getByTestId('lobby-start').selectOption('high');
+    await a.getByTestId('lobby-ai').selectOption('1');
+    await a.getByTestId('lobby-diff').selectOption('hard');
+    await a.getByTestId('lobby-teams').selectOption('pairs');
+    await a.getByTestId('lobby-pass').fill('тракт');
+    await a.getByTestId('lobby-name').fill(lobbyName);
+    await a.getByTestId('lobby-create').click({ timeout: 15_000 });
+    await expect(a.getByTestId('lobby-room')).toBeVisible({ timeout: 20_000 });
+    await expect(a.getByTestId('lobby-settings')).toContainText('2×');
+    await expect(a.getByTestId('lobby-settings')).toContainText('2×2');
+    await expect(a.getByTestId('lobby-settings')).toContainText('богатые');
+
+    await b.goto('/road-realms/');
+    await b.getByTestId('net-game').click();
+    const row = b.locator('.lobby-row', { hasText: lobbyName });
+    await expect(row).toBeVisible({ timeout: 20_000 });
+    await expect(row.getByTestId('lobby-lock')).toBeVisible();
+    await row.getByTestId('lobby-join').click();
+    await expect(b.getByTestId('net-error')).toContainText('парол', { timeout: 15_000 });
+    await b.getByTestId('lobby-pass').fill('тракт');
+    await row.getByTestId('lobby-join').click();
+    await expect(b.getByTestId('lobby-room')).toContainText('Хозяин', { timeout: 20_000 });
+    await expect(a.getByTestId('lobby-room')).toContainText('Путник');
+
+    await a.getByTestId('lobby-ready').click();
+    await b.getByTestId('lobby-ready').click();
+    await expect(a.getByTestId('lobby-start')).toBeEnabled({ timeout: 15_000 });
+    await a.getByTestId('lobby-start').click();
+    await expect(a.getByTestId('speed-1')).toBeDisabled({ timeout: 20_000 });
+    await expect(b.getByTestId('speed-1')).toBeDisabled({ timeout: 20_000 });
+    await a.locator('#ration').selectOption('feast');
+
+    const started = Date.now();
+    let matched = 0;
+    let maxTurn = 0;
+    while (Date.now() - started < 60_000) {
+      const left = await a.evaluate(() => window.__game?.mp() ?? null);
+      const right = await b.evaluate(() => window.__game?.mp() ?? null);
+      expect(left && right, JSON.stringify({ left, right, errors })).toBeTruthy();
+      await expect(a.locator('#syncbox')).not.toContainText('Рассинхронизация');
+      await expect(b.locator('#syncbox')).not.toContainText('Рассинхронизация');
+      if (left!.turn === right!.turn) {
+        expect(left!.hash, JSON.stringify({ left, right })).toBe(right!.hash);
+        matched += 1;
+        maxTurn = Math.max(maxTurn, left!.turn);
+      }
+      await a.waitForTimeout(1000);
+    }
+    expect(maxTurn, JSON.stringify({ maxTurn, matched, errors })).toBeGreaterThan(40);
+    expect(matched, 'хотя бы одна общая сверка хеша').toBeGreaterThan(0);
+    expect(errors, errors.join('\n')).toEqual([]);
+  } finally {
+    await a.evaluate(() => window.__game?.cleanupNet()).catch(() => {});
+    await b.evaluate(() => window.__game?.cleanupNet()).catch(() => {});
+    await host.close();
+    await guest.close();
+  }
+});
+
 test('копейщики, конюшня и матрица контрударов', async ({ page }) => {
   test.setTimeout(120_000);
   mkdirSync(shots, { recursive: true });
@@ -1147,6 +1233,207 @@ draw.text((56, 320), 'Телефон', fill=(232, 214, 176), font=font)
 canvas.save(${JSON.stringify(out)})
 `;
 }
+
+test.describe('альбом телефона', () => {
+  test.use({
+    hasTouch: true,
+    isMobile: true,
+    viewport: { width: 915, height: 412 },
+    deviceScaleFactor: 1,
+  });
+
+  test('удобный альбом: колонки, призрак, войско и подсказка портрета', async ({ page }) => {
+    test.setTimeout(120_000);
+    mkdirSync(shots, { recursive: true });
+    await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+    await page.goto('/road-realms/');
+    await page.getByTestId('new-game').click();
+    await expect(page.locator('#buildbar')).toBeVisible();
+
+    const probe = () =>
+      page.evaluate(() => {
+        const shown = (el: Element | null) => {
+          if (!el || (el as HTMLElement).hidden) return null;
+          const style = getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden') return null;
+          const rect = el.getBoundingClientRect();
+          if (rect.width < 2 || rect.height < 2) return null;
+          return rect;
+        };
+        const clipped = (el: Element) => {
+          const rect = el.getBoundingClientRect();
+          let parent = el.parentElement;
+          while (parent && parent !== document.body) {
+            const style = getComputedStyle(parent);
+            const scroll = `${style.overflow}${style.overflowY}${style.overflowX}`;
+            if (/auto|scroll|hidden/.test(scroll)) {
+              const host = parent.getBoundingClientRect();
+              if (rect.top < host.top - 1 || rect.bottom > host.bottom + 1 || rect.left < host.left - 1 || rect.right > host.right + 1) return true;
+            }
+            parent = parent.parentElement;
+          }
+          return false;
+        };
+        const hit = (a: DOMRect, b: DOMRect) => a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1;
+        const bad: string[] = [];
+        for (const [a, b] of [
+          ['#topbar', '#dock'],
+          ['#topbar', '#land-tray'],
+          ['#topbar', '#army'],
+          ['#dock', '#army'],
+          ['#dock', '#place-confirm'],
+          ['#hint', '#topbar'],
+          ['#hint', '#dock'],
+          ['#log', '#phone-goal'],
+          ['#log', '#topbar'],
+          ['#log', '#dock'],
+          ['#panel', '#topbar'],
+          ['#panel', '#army'],
+        ] as const) {
+          const left = shown(document.querySelector(a));
+          const right = shown(document.querySelector(b));
+          if (left && right && hit(left, right)) bad.push(`${a}×${b}`);
+        }
+        const covers = ['#topbar', '#dock', '#army', '#land-tray', '#panel', '#hint', '#phone-goal', '#log', '#place-confirm', '#banner', '#toast']
+          .map((sel) => shown(document.querySelector(sel)))
+          .filter((rect): rect is DOMRect => !!rect);
+        let clear = 0;
+        let total = 0;
+        for (let y = 4; y < innerHeight; y += 12) {
+          for (let x = 4; x < innerWidth; x += 12) {
+            total += 1;
+            if (!covers.some((rect) => x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom)) clear += 1;
+          }
+        }
+        const outside: string[] = [];
+        const short: string[] = [];
+        const overflow: string[] = [];
+        const textOf = (el: Element) => (el.textContent || '').replace(/\s+/g, ' ').trim();
+        for (const button of document.querySelectorAll('button')) {
+          if (!shown(button) || clipped(button)) continue;
+          const rect = button.getBoundingClientRect();
+          const name = button.id || textOf(button) || 'button';
+          if (rect.left < -1 || rect.top < -1 || rect.right > innerWidth + 1 || rect.bottom > innerHeight + 1) outside.push(name);
+          if (button.scrollWidth > button.clientWidth + 1) overflow.push(`${name}:${button.scrollWidth}>${button.clientWidth}`);
+        }
+        for (const chip of document.querySelectorAll('#resources .res')) {
+          if (!shown(chip)) continue;
+          if (chip.scrollWidth > chip.clientWidth + 1) overflow.push(`res:${textOf(chip)}:${chip.scrollWidth}>${chip.clientWidth}`);
+        }
+        for (const sel of ['#open-menu', '#land-full', '#army-box', '#speeds button', '#army-groups button']) {
+          for (const button of document.querySelectorAll(sel)) {
+            const rect = shown(button);
+            if (!rect) continue;
+            if (rect.height < 44 || rect.width < 44) short.push(`${sel}:${Math.round(rect.width)}x${Math.round(rect.height)}`);
+          }
+        }
+        return {
+          land: document.documentElement.classList.contains('phone-land'),
+          coarse: window.matchMedia('(pointer: coarse) and (orientation: landscape) and (max-height: 500px)').matches,
+          share: clear / total,
+          bad,
+          outside,
+          short,
+          overflow,
+        };
+      });
+
+    for (const size of [
+      { width: 800, height: 360 },
+      { width: 915, height: 412 },
+      { width: 740, height: 360 },
+    ]) {
+      await page.setViewportSize(size);
+      await page.waitForTimeout(200);
+      const layout = await probe();
+      expect(layout.land, `${size.width} class`).toBe(true);
+      expect(layout.share, `${size.width} map`).toBeGreaterThan(0.6);
+      expect(layout.bad, `${size.width} overlaps ${JSON.stringify(layout)}`).toEqual([]);
+      expect(layout.outside, `${size.width} outside`).toEqual([]);
+      expect(layout.short, `${size.width} thumbs`).toEqual([]);
+      expect(layout.overflow, `${size.width} text`).toEqual([]);
+    }
+
+    await page.setViewportSize({ width: 915, height: 412 });
+    await page.evaluate(() => window.__game!.debugScene('land'));
+    await page.waitForTimeout(250);
+    await expect(page.getByTestId('phone-goal')).toBeVisible();
+    await expect(page.getByTestId('open-menu')).toBeVisible();
+    await expect(page.getByTestId('speed-0')).toBeVisible();
+    await page.screenshot({ path: `${shots}/land_hud_915.png` });
+
+    await page.evaluate(() => window.__game!.debugScene('land-ghost'));
+    await page.waitForTimeout(250);
+    await expect(page.getByTestId('place-confirm')).toBeVisible();
+    await expect(page.getByTestId('place-ok')).toBeVisible();
+    await expect(page.getByTestId('place-cancel')).toBeVisible();
+    const ghost = await probe();
+    expect(ghost.bad, JSON.stringify(ghost)).toEqual([]);
+    expect(ghost.outside).toEqual([]);
+    expect(ghost.overflow, JSON.stringify(ghost.overflow)).toEqual([]);
+    await page.screenshot({ path: `${shots}/land_ghost.png` });
+
+    await page.evaluate(() => window.__game!.setSpeed(1));
+    const before = await page.evaluate(() => window.__game!.snapshot().buildings.length);
+    const canvas = page.locator('#world');
+    const box = (await canvas.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 36, box.y + box.height / 2 + 16);
+    await page.mouse.up();
+    expect(await page.evaluate(() => window.__game!.snapshot().buildings.length)).toBe(before);
+    await page.getByTestId('place-cancel').click();
+    await expect(page.getByTestId('place-confirm')).toBeHidden();
+    expect(await page.evaluate(() => window.__game!.snapshot().buildings.length)).toBe(before);
+
+    await page.getByTestId('tab-storage').click();
+    await page.getByTestId('build-granary').click();
+    await expect(page.getByTestId('place-confirm')).toBeVisible();
+    const granaries = await page.evaluate(() => window.__game!.snapshot().buildings.filter((b) => b.type === 'granary').length);
+    await page.getByTestId('place-ok').click();
+    await expect.poll(async () => page.evaluate(() => window.__game!.snapshot().buildings.filter((b) => b.type === 'granary').length)).toBe(granaries + 1);
+
+    await page.evaluate(() => window.__game!.debugScene('land-army'));
+    await page.waitForTimeout(200);
+    const point = await page.evaluate(() => window.__game!.armyPoints()[0]);
+    await page.mouse.click(point.x, point.y);
+    await page.mouse.click(point.x, point.y);
+    await expect(page.getByTestId('army-attack')).toBeVisible();
+    await expect(page.getByTestId('army-attack')).toHaveText('Атака');
+    await expect(page.getByTestId('army-hold')).toHaveText('Стоять');
+    await expect(page.getByTestId('army-home')).toHaveText('Отступить');
+    await expect(page.getByTestId('army-count')).toContainText('Всего 3');
+    const army = await probe();
+    expect(army.bad, JSON.stringify(army)).toEqual([]);
+    expect(army.overflow, JSON.stringify(army.overflow)).toEqual([]);
+    expect(army.share).toBeGreaterThan(0.6);
+    await page.screenshot({ path: `${shots}/land_army.png` });
+    const keepId = await page.evaluate(() => window.__game!.snapshot().buildings.find((b) => b.type === 'keep')!.id);
+    await page.evaluate((id) => window.__game!.select(id), keepId);
+    await expect(page.locator('#panel')).toBeVisible();
+    const sheet = await page.locator('#panel').boundingBox();
+    expect(sheet!.x).toBeGreaterThan(700);
+    expect(sheet!.x + sheet!.width).toBeLessThanOrEqual(916);
+    const sheetProbe = await probe();
+    expect(sheetProbe.bad, JSON.stringify(sheetProbe)).toEqual([]);
+    expect(sheetProbe.share).toBeGreaterThan(0.6);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(200);
+    await expect(page.getByTestId('turn-hint')).toBeVisible();
+    await expect(page.getByTestId('turn-hint')).toContainText('Поверните телефон для удобства');
+    await expect(page.locator('html')).not.toHaveClass(/phone-land/);
+    await page.screenshot({ path: `${shots}/land_portrait_hint.png` });
+    await page.getByTestId('turn-dismiss').click();
+    await expect(page.getByTestId('turn-hint')).toBeHidden();
+
+    const manifest = await page.evaluate(async () => {
+      const response = await fetch('/road-realms/manifest.webmanifest');
+      return response.json() as Promise<{ orientation?: string }>;
+    });
+    expect(manifest.orientation).toBe('landscape');
+  });
+});
 
 declare global {
   interface Window {
