@@ -9,6 +9,7 @@ import {
   START_PEOPLE,
 } from './balance';
 import { createBuilding, createMob, createPerson } from './entities';
+import { emptyRoad } from './events';
 import { emptyStats, mapSize, normalizeProfiles, normalizeSetup, openingBundle } from './match';
 import { syncClimate } from './seasons';
 import { hash2 } from './rng';
@@ -149,7 +150,7 @@ export function createGame(
   }
 
   const state: GameState = {
-    saveVersion: 5,
+    saveVersion: 6,
     seed: seed >>> 0,
     tick: 0,
     rng: (seed || 1) >>> 0,
@@ -173,6 +174,7 @@ export function createGame(
     message: '',
     season: 'off',
     weather: 'clear',
+    road: emptyRoad(spawns.length),
     log: [
       'Тракт пролегает через весь край. Поставьте амбар и склад.',
       'В запасе уже есть яблоки: успейте поставить сад и назначить работника.',

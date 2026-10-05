@@ -228,6 +228,7 @@ test('полоса, подсказка и список построек не п�
   const views = [
     { width: 1280, height: 800, phone: false },
     { width: 1024, height: 640, phone: false },
+    { width: 1024, height: 576, phone: false },
     { width: 390, height: 844, phone: true },
   ];
   for (const view of views) {
@@ -277,6 +278,53 @@ test('полоса, подсказка и список построек не п�
     });
     expect(layout.bad, `${view.width}×${view.height}`).toEqual([]);
     expect(layout.covered, `${view.width}×${view.height}`).toEqual([]);
+    if (view.width === 1024 && view.height === 576) {
+      await page.evaluate(() => window.__game!.debugScene('season-winter'));
+      await page.waitForTimeout(200);
+      const bar = await page.evaluate(() => {
+        const lines = (el: Element | null) => {
+          if (!el) return { w: 0, h: 0, text: '', title: '' };
+          return {
+            w: el.scrollWidth - el.clientWidth,
+            h: el.scrollHeight - el.clientHeight,
+            text: (el.textContent || '').replace(/\s+/g, ' ').trim(),
+            title: (el as HTMLElement).title || '',
+          };
+        };
+        const status = document.querySelector('#status');
+        const resources = document.querySelector('#resources');
+        const pitch = [...document.querySelectorAll('.res')].find((node) => node.textContent?.includes('Смола')) as HTMLElement | undefined;
+        pitch?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+        const host = resources?.getBoundingClientRect();
+        const chip = pitch?.getBoundingClientRect();
+        const pitchFit =
+          !!pitch &&
+          !!host &&
+          !!chip &&
+          chip.left >= host.left - 1 &&
+          chip.right <= host.right + 1 &&
+          pitch.scrollWidth <= pitch.clientWidth + 1;
+        return {
+          status: status ? status.scrollWidth - status.clientWidth : 99,
+          fps: lines(document.querySelector('#fps')),
+          people: lines(document.querySelector('#people-btn')),
+          badge: lines(document.querySelector('#season-badge')),
+          pitchFit,
+        };
+      });
+      expect(bar.status, 'status row').toBeLessThanOrEqual(1);
+      expect(bar.fps.h, `fps ${bar.fps.text}`).toBeLessThanOrEqual(1);
+      expect(bar.fps.w, `fps ${bar.fps.text}`).toBeLessThanOrEqual(1);
+      expect(bar.people.h, `people ${bar.people.text}`).toBeLessThanOrEqual(1);
+      expect(bar.people.w, `people ${bar.people.text}`).toBeLessThanOrEqual(1);
+      expect(bar.badge.text.startsWith('❄'), bar.badge.text).toBe(true);
+      expect(bar.badge.text.includes('дальше'), bar.badge.text).toBe(false);
+      expect(bar.badge.title.includes('дальше'), bar.badge.title).toBe(true);
+      expect(bar.badge.w, bar.badge.text).toBeLessThanOrEqual(1);
+      expect(bar.badge.h).toBeLessThanOrEqual(1);
+      expect(bar.pitchFit, 'Смола').toBe(true);
+      await page.screenshot({ path: `${shots}/topbar_1024.png` });
+    }
 
     const buttons = page.locator('#buttons button');
     const count = await buttons.count();
@@ -1237,6 +1285,7 @@ test('сезоны: одно поселение летом, осенью, зим
     return climate;
   };
 
+  await shot('season-spring', 'season_spring.png', 'spring');
   const summer = await shot('season-summer', 'season_summer.png', 'summer');
   expect(summer.weather === 'clear' || summer.weather === 'heat').toBe(true);
   await page.getByTestId('season-badge').screenshot({ path: `${shots}/season_badge.png` });
@@ -1245,6 +1294,40 @@ test('сезоны: одно поселение летом, осенью, зим
   expect(winter.weather).toBe('snow');
   const rain = await shot('season-rain', 'season_rain.png', 'spring');
   expect(rain.weather).toBe('rain');
+});
+
+test('дорожные события: караван, налёт, ярмарка и весть', async ({ page }) => {
+  test.setTimeout(90_000);
+  mkdirSync(shots, { recursive: true });
+  await page.addInitScript(() => localStorage.setItem('dorozhnye-kraya-tutorial', '1'));
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('/road-realms/');
+  await page.getByTestId('new-game').click();
+  await page.evaluate(() => window.__game!.setGfxMode('high'));
+  await page.evaluate(() => window.__game!.setSpeed(0));
+
+  await page.evaluate(() => window.__game!.debugScene('event-caravan'));
+  await page.waitForTimeout(300);
+  await expect(page.getByTestId('caravan-box')).toBeVisible();
+  await expect(page.getByTestId('caravan-buy')).toBeVisible();
+  await expect(page.getByTestId('event-note')).toBeVisible();
+  await page.screenshot({ path: `${shots}/event_caravan.png` });
+
+  await page.evaluate(() => window.__game!.debugScene('event-raid'));
+  await page.waitForTimeout(300);
+  await expect(page.getByTestId('event-note')).toContainText('разбойники');
+  await page.screenshot({ path: `${shots}/event_raid.png` });
+
+  await page.evaluate(() => window.__game!.debugScene('event-fair'));
+  await page.waitForTimeout(300);
+  await expect(page.getByTestId('event-note')).toContainText('Ярмарка');
+  await page.screenshot({ path: `${shots}/event_fair.png` });
+
+  await page.evaluate(() => window.__game!.debugScene('event-note'));
+  await page.waitForTimeout(200);
+  await page.getByTestId('event-show').click();
+  await expect(page.getByTestId('event-note')).toBeVisible();
+  await page.screenshot({ path: `${shots}/event_note.png` });
 });
 
 function letterboxPhone(raw: string, out: string): string {
@@ -1325,6 +1408,8 @@ test.describe('альбом телефона', () => {
           ['#log', '#dock'],
           ['#panel', '#topbar'],
           ['#panel', '#army'],
+          ['#home', '#tabs button'],
+          ['#map-toggle', '#tabs button'],
         ] as const) {
           const left = shown(document.querySelector(a));
           const right = shown(document.querySelector(b));
@@ -1352,9 +1437,27 @@ test.describe('альбом телефона', () => {
           if (rect.left < -1 || rect.top < -1 || rect.right > innerWidth + 1 || rect.bottom > innerHeight + 1) outside.push(name);
           if (button.scrollWidth > button.clientWidth + 1) overflow.push(`${name}:${button.scrollWidth}>${button.clientWidth}`);
         }
+        const resources = document.querySelector('#resources');
+        const resourceBox = resources?.getBoundingClientRect();
+        const resourceStyle = resources ? getComputedStyle(resources) : null;
+        const resourceScrolls = !!(
+          resources &&
+          resourceStyle &&
+          /auto|scroll/.test(resourceStyle.overflowY) &&
+          resources.scrollHeight > resources.clientHeight + 1
+        );
         for (const chip of document.querySelectorAll('#resources .res')) {
-          if (!shown(chip)) continue;
+          if (!shown(chip) || !resourceBox) continue;
           if (chip.scrollWidth > chip.clientWidth + 1) overflow.push(`res:${textOf(chip)}:${chip.scrollWidth}>${chip.clientWidth}`);
+          if (chip.scrollHeight > chip.clientHeight + 1) overflow.push(`res-h:${textOf(chip)}`);
+          const rect = chip.getBoundingClientRect();
+          const horizontal = rect.left < resourceBox.left - 1 || rect.right > resourceBox.right + 1;
+          const above = rect.bottom < resourceBox.top - 1;
+          const below = rect.top > resourceBox.bottom + 1;
+          const partial = rect.top < resourceBox.bottom - 1 && rect.bottom > resourceBox.bottom + 1;
+          if (horizontal) overflow.push(`res-cut:${textOf(chip)}:resources`);
+          if ((above || below || partial) && !resourceScrolls) overflow.push(`res-cut:${textOf(chip)}:resources`);
+          if (partial) overflow.push(`res-cut:${textOf(chip)}:partial`);
         }
         for (const sel of ['#open-menu', '#land-full', '#army-box', '#speeds button', '#army-groups button']) {
           for (const button of document.querySelectorAll(sel)) {

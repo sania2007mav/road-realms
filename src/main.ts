@@ -63,7 +63,8 @@ import { createBuilding, createOx, createPerson } from './sim/entities';
 import { emptyStocks, PLAYER_NAMES } from './sim/balance';
 import { isLineBuilding, wallLine } from './sim/siege';
 import { cycleGfx, gfxLabel, loadGfx, setGfx } from './render/gfx';
-import { bakeTerrain, clearTerrainChunks, minimapToTile, renderMinimap, renderWorld, setTerrainChunks, type Ghost, type OrderMarker } from './render/draw';
+import { emptyRoad } from './sim/events';
+import { bakeTerrain, climateStamp, clearTerrainChunks, minimapToTile, renderMinimap, renderWorld, setTerrainChunks, type Ghost, type OrderMarker } from './render/draw';
 import { net } from './net/session';
 import { NetView, type LobbyDraft } from './net/screens';
 import { ZOOM_MAX, clampCamera, focusTile, screenToTile, screenToWorld, worldToScreen, type Camera } from './render/camera';
@@ -217,6 +218,7 @@ const selectedSoldiers = new Set<number>();
 const controlGroups: number[][] = [[], [], [], [], [], [], [], [], [], []];
 const markers: OrderMarker[] = [];
 let attackArmed = false;
+let openCaravanId: number | null = null;
 let boxMode = false;
 let pointerMode: 'none' | 'pan' | 'box' | 'wall' | 'road' | 'ghost' = 'none';
 let wallAnchor: { x: number; y: number } | null = null;
@@ -270,7 +272,7 @@ function syncBuildScroll() {
   next.hidden = !overflow;
 }
 
-let setupDraft: MatchSetup = normalizeSetup({ ai: 3, seasons: 'normal' });
+let setupDraft: MatchSetup = normalizeSetup({ ai: 3, seasons: 'normal', events: 'normal' });
 
 function readProfiles(): AiProfile[] {
   const difficulty = (index: number): DifficultyId =>
@@ -320,6 +322,7 @@ function readSetup(): MatchSetup {
     popTarget: num('pop-target', 20),
     surviveMinutes: num('survive-min', 20),
     seasons: pick('seasons', 'normal'),
+    events: pick('events', 'normal'),
     profiles: readProfiles(),
   });
   return setupDraft;
@@ -374,6 +377,7 @@ function syncLandMode() {
   }
   syncPlaceChrome();
   measureLandTrays();
+  fitLandResources();
   if (changed) resourceSig = '';
 }
 
@@ -385,6 +389,38 @@ function measureLandTrays() {
   const confirmHeight = confirm && !confirm.hidden ? confirm.offsetHeight : 0;
   if (tray) document.documentElement.style.setProperty('--land-left-tray', `${Math.max(tray.offsetHeight, 8)}px`);
   document.documentElement.style.setProperty('--land-tray', `${Math.max(armyHeight, confirmHeight, 8)}px`);
+}
+
+function fitLandResources() {
+  const res = document.querySelector<HTMLElement>('#resources');
+  const top = document.querySelector<HTMLElement>('#topbar');
+  const status = document.querySelector<HTMLElement>('#status');
+  if (!res || !top || !status) return;
+  if (!document.documentElement.classList.contains('phone-land')) {
+    if (res.dataset.fit) {
+      res.style.maxHeight = '';
+      delete res.dataset.fit;
+    }
+    return;
+  }
+  const style = getComputedStyle(top);
+  const gap = Number.parseFloat(style.rowGap || style.gap) || 0;
+  const pad = (Number.parseFloat(style.paddingTop) || 0) + (Number.parseFloat(style.paddingBottom) || 0);
+  const available = Math.floor(top.clientHeight - status.offsetHeight - gap - pad);
+  const mark = `${available}:${res.scrollHeight}`;
+  if (res.dataset.fit === mark) return;
+  const resTop = res.getBoundingClientRect().top;
+  const scroll = res.scrollTop;
+  let fit = 0;
+  for (const child of res.querySelectorAll<HTMLElement>('.glabel, .res')) {
+    const rect = child.getBoundingClientRect();
+    if (rect.height < 2) continue;
+    const bottom = rect.bottom - resTop + scroll;
+    if (bottom <= available + 0.5) fit = bottom;
+    else break;
+  }
+  res.style.maxHeight = fit > 8 && available - fit > 1 ? `${Math.ceil(fit)}px` : '';
+  res.dataset.fit = mark;
 }
 
 function releaseLandTray() {
@@ -908,6 +944,14 @@ function buildTitle() {
             ${option('long', 'Долгие', draft.seasons === 'long')}
           </select>
         </label>
+        <label for="events">События на тракте
+          <select id="events" data-testid="events">
+            ${option('off', 'Выкл', draft.events === 'off')}
+            ${option('rare', 'Редко', draft.events === 'rare')}
+            ${option('normal', 'Обычно', (draft.events ?? 'normal') === 'normal')}
+            ${option('often', 'Часто', draft.events === 'often')}
+          </select>
+        </label>
       </div>
       <div id="neighbours" data-testid="neighbours">
         <p id="ai-note" class="ai-note" data-testid="ai-note">${CRUEL_BONUS_TEXT}</p>
@@ -1150,7 +1194,7 @@ function buildChrome() {
       <button type="button" class="readout" id="mood-btn" data-testid="popularity"></button>
       <div class="readout" id="gold-readout"></div>
       <div class="readout" id="clock"></div>
-      <div id="season-badge" data-testid="season-badge" hidden></div>
+      <div id="season-badge" data-testid="season-badge" hidden tabindex="0"></div>
       <div class="readout" id="fps">60 к/с</div>
       <button type="button" id="res-toggle" data-testid="res-toggle">Ресурсы</button>
       <button type="button" id="mute-btn" data-testid="mute-audio" aria-label="Без звука" aria-pressed="false"></button>
@@ -1158,6 +1202,10 @@ function buildChrome() {
       <div id="presence" data-testid="presence" hidden></div>
     </div>
     <div id="resources"></div>`;
+  document.querySelector<HTMLElement>('#season-badge')!.onclick = () => {
+    const line = forecastLine(state);
+    if (line) flash(line);
+  };
   document.querySelector<HTMLButtonElement>('#open-menu')!.onclick = () => {
     if (menu.hidden) {
       menu.hidden = false;
@@ -1166,6 +1214,25 @@ function buildChrome() {
   };
   document.querySelector<HTMLButtonElement>('#res-toggle')!.onclick = () => {
     topbar.classList.toggle('show-res');
+  };
+  document.querySelector<HTMLButtonElement>('#event-show')!.onclick = () => {
+    const note = state.road?.notes.find((item) => item.until > state.tick);
+    if (!note) return;
+    lookAtPoint(note.x, note.y);
+    camera.zoom = Math.max(camera.zoom, 0.85);
+    clampView();
+  };
+  document.querySelector<HTMLButtonElement>('#caravan-buy')!.onclick = () => {
+    if (openCaravanId == null) return;
+    pushCmd({ kind: 'trade', playerId: localPlayer, caravanId: openCaravanId, resource: 'wood', mode: 'buy', qty: 2 });
+  };
+  document.querySelector<HTMLButtonElement>('#caravan-sell')!.onclick = () => {
+    if (openCaravanId == null) return;
+    pushCmd({ kind: 'trade', playerId: localPlayer, caravanId: openCaravanId, resource: 'apples', mode: 'sell', qty: 2 });
+  };
+  document.querySelector<HTMLButtonElement>('#caravan-sack')!.onclick = () => {
+    if (openCaravanId == null) return;
+    pushCmd({ kind: 'sack', playerId: localPlayer, caravanId: openCaravanId });
   };
   document.querySelector<HTMLButtonElement>('#map-toggle')!.onclick = () => {
     document.querySelector('#dock')?.classList.toggle('show-map');
@@ -1542,11 +1609,14 @@ function syncHud() {
   const land = phoneLandscape();
   const peopleBtn = document.querySelector<HTMLButtonElement>('#people-btn');
   if (peopleBtn) {
+    const tight = !land && !compact && window.innerWidth <= 1100;
     peopleBtn.innerHTML = land
       ? `Люди <strong>${used}</strong>/<strong>${cap}</strong>`
       : compact
         ? `<strong>${used}</strong>/<strong>${cap}</strong>`
-        : `Люди <strong>${used}</strong>/<strong>${cap}</strong> · свободно <strong>${idle}</strong>`;
+        : tight
+          ? `Люди <strong>${used}</strong>/<strong>${cap}</strong>`
+          : `Люди <strong>${used}</strong>/<strong>${cap}</strong> · свободно <strong>${idle}</strong>`;
     peopleBtn.title = `Люди ${used} из ${cap}, свободно ${idle}`;
     peopleBtn.classList.toggle('idle-empty', idle === 0);
     peopleBtn.classList.toggle('idle-ready', idle > 0);
@@ -1575,12 +1645,8 @@ function syncHud() {
     const line = forecastLine(state);
     badge.hidden = !line;
     if (line) {
-      const short = `${seasonName(state.season)} · ${weatherName(state.weather)}`;
-      badge.textContent = land || compact ? short : line;
+      badge.textContent = `${climateMark(state.season, state.weather)} ${seasonName(state.season)} · ${weatherName(state.weather)}`;
       badge.title = line;
-      const host = badge.parentElement;
-      if (host && host.scrollWidth > host.clientWidth + 1) badge.textContent = short;
-      if (host && host.scrollWidth > host.clientWidth + 1) badge.textContent = seasonName(state.season);
     }
   }
   const fpsEl = document.querySelector<HTMLElement>('#fps');
@@ -1628,7 +1694,9 @@ function syncHud() {
         )
         .join('');
     }
+    fitLandResources();
   }
+  syncRoadHud();
   const ration = document.querySelector<HTMLSelectElement>('#ration');
   if (ration && document.activeElement !== ration) ration.value = player.ration;
   updateHint();
@@ -2449,6 +2517,35 @@ function showEnd() {
   };
 }
 
+function syncRoadHud() {
+  const noteEl = document.querySelector<HTMLElement>('#event-note');
+  const noteText = document.querySelector<HTMLElement>('#event-note-text');
+  const note = state.road?.notes.find((item) => item.until > state.tick);
+  if (noteEl && noteText) {
+    noteEl.hidden = !note;
+    noteText.textContent = note?.text ?? '';
+  }
+  const panel = document.querySelector<HTMLElement>('#caravan-box');
+  const stock = document.querySelector<HTMLElement>('#caravan-stock');
+  const caravan = state.road?.caravans.find((item) => item.alive && item.id === openCaravanId);
+  if (!caravan) openCaravanId = null;
+  if (panel && stock) {
+    panel.hidden = !caravan;
+    if (caravan) stock.textContent = `Дерево ${caravan.wood}, яблоки ${caravan.apples}, железо ${caravan.iron}, оружие ${caravan.weapons}. Золото купца ${caravan.gold}.`;
+  }
+}
+
+function climateMark(season: string | undefined, weather: string | undefined): string {
+  if (weather === 'snow' || season === 'winter') return '❄';
+  if (weather === 'storm') return '⛈';
+  if (weather === 'rain') return '🌧';
+  if (weather === 'heat' || weather === 'drought') return '☀';
+  if (season === 'autumn') return '🍂';
+  if (season === 'spring') return '❀';
+  if (season === 'summer') return '☀';
+  return '·';
+}
+
 function flash(text: string) {
   toast.hidden = false;
   toast.textContent = text;
@@ -2691,6 +2788,12 @@ function onMapClick(screenX: number, screenY: number, shift: boolean, touch: boo
     pick(screenX, screenY);
     return;
   }
+  const caravanHit = (state.road?.caravans ?? []).find((item) => item.alive && Math.hypot(item.x - world.x, item.y - world.y) < 1.8);
+  if (caravanHit && !shift) {
+    openCaravanId = caravanHit.id;
+    syncRoadHud();
+    return;
+  }
   if (attackArmed && selectedSoldiers.size) {
     issueArmy('attackmove', world.x, world.y);
     return;
@@ -2875,6 +2978,7 @@ function frame(now: number) {
     markers.length = 0;
     markers.push(...liveMarkers);
   }
+  if (baked.climate !== climateStamp(state)) baked = bakeTerrain(state);
   renderWorld(ctx, state, camera, w, h, dpr, baked, ghost(), selectedId, now, selectedPersonId, {
     selected: selectedSoldiers,
     box:
@@ -3040,6 +3144,60 @@ function stageBatchScene(kind: string) {
   silenceScene();
 }
 
+function stageRoad(kind: string) {
+  const keep = playerKeep(state, localPlayer);
+  if (!keep || !state.match) return;
+  silenceScene();
+  state.mobs = state.mobs.filter((mob) => !mob.raid);
+  dressTown(keep.x, keep.y);
+  state.match = { ...state.match, events: 'normal' };
+  const road = emptyRoad(state.players.length);
+  state.road = road;
+  const far = state.tick + 100000;
+  if (kind === 'event-raid') {
+    for (let i = 0; i < 3; i++) {
+      const mob = createMob(state, 'bandit', keep.x + 7 + i * 0.7, state.roadY + 1);
+      mob.raid = 1;
+      mob.respawn = 0;
+      mob.destX = keep.x + 2;
+      mob.destY = keep.y + 2;
+    }
+    road.notes = [{ id: 1, text: 'С опушки вышли разбойники', x: keep.x + 8, y: state.roadY, until: far }];
+    openCaravanId = null;
+    lookAtPoint(keep.x + 6, state.roadY);
+  } else if (kind === 'event-fair') {
+    const market = createBuilding(state, localPlayer, 'market', keep.x + 4, keep.y + 3, true);
+    road.fair = { playerId: localPlayer, x: market.x + 1, y: market.y + 1, until: far };
+    road.notes = [{ id: 1, text: 'Ярмарка: настроение, золото и редкий товар', x: market.x + 1, y: market.y + 1, until: far }];
+    openCaravanId = null;
+    lookAtPoint(market.x + 1, market.y + 1);
+  } else {
+    const caravan = {
+      id: state.nextId++,
+      fromId: localPlayer,
+      toId: state.players.find((player) => player.id !== localPlayer)?.id ?? localPlayer,
+      x: keep.x + 5,
+      y: state.roadY + 0.15,
+      toX: keep.x + 36,
+      hp: 40,
+      gold: 36,
+      wood: 10,
+      apples: 8,
+      iron: 1,
+      weapons: 1,
+      alive: true,
+    };
+    road.caravans.push(caravan);
+    road.notes = [{ id: 1, text: 'По тракту идёт купеческий караван', x: caravan.x, y: caravan.y, until: far }];
+    openCaravanId = kind === 'event-note' ? null : caravan.id;
+    lookAtPoint(caravan.x, caravan.y);
+  }
+  camera.zoom = 0.95;
+  clampView();
+  silenceScene();
+  syncRoadHud();
+}
+
 function stageSeason(kind: string) {
   const keep = playerKeep(state, localPlayer);
   if (!keep || !state.match) return;
@@ -3047,8 +3205,9 @@ function stageSeason(kind: string) {
   state.mobs = [];
   dressTown(keep.x, keep.y);
   state.match = { ...state.match, seasons: 'normal' };
-  const band = kind === 'season-autumn' ? 12 : kind === 'season-winter' ? 18 : kind === 'season-rain' ? 0 : 6;
-  const want = kind === 'season-rain' ? 'rain' : kind === 'season-winter' ? 'snow' : 'clear';
+  const band = kind === 'season-autumn' ? 12 : kind === 'season-winter' ? 18 : kind === 'season-summer' ? 6 : 0;
+  const want =
+    kind === 'season-rain' ? 'rain' : kind === 'season-winter' ? 'snow' : kind === 'season-spring' ? 'clear' : 'clear';
   let chosen = band;
   let found = false;
   for (let cycle = 0; cycle < 8 && !found; cycle++) {
@@ -3391,8 +3550,18 @@ function expose() {
         stageLandScene(kind);
         return;
       }
-      if (kind === 'season-summer' || kind === 'season-autumn' || kind === 'season-winter' || kind === 'season-rain') {
+      if (
+        kind === 'season-spring' ||
+        kind === 'season-summer' ||
+        kind === 'season-autumn' ||
+        kind === 'season-winter' ||
+        kind === 'season-rain'
+      ) {
         stageSeason(kind);
+        return;
+      }
+      if (kind === 'event-caravan' || kind === 'event-raid' || kind === 'event-fair' || kind === 'event-note') {
+        stageRoad(kind);
         return;
       }
       const keep = playerKeep(state, localPlayer);
@@ -4337,6 +4506,7 @@ function lobbyPack(draft: LobbyDraft, worldSeed: number) {
     surviveMinutes: draft.surviveMinutes,
     teams: draft.teams,
     seasons: draft.seasons,
+    events: draft.events,
     profiles,
   });
   return {
@@ -4347,6 +4517,7 @@ function lobbyPack(draft: LobbyDraft, worldSeed: number) {
     speed: draft.speed,
     teams: draft.teams,
     seasons: draft.seasons,
+    events: draft.events,
     password: draft.password,
   };
 }

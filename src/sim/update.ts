@@ -80,6 +80,7 @@ import {
   trainSites,
   updateSiege,
 } from './siege';
+import { eventPace, moveRoad, raidStrike, roadMinute, sackCaravan, tradeCaravan } from './events';
 import { terrainAt } from './world';
 
 export function buildingCenter(building: Building): { x: number; y: number } {
@@ -443,6 +444,14 @@ export function applyCommand(state: GameState, command: Command): boolean {
     keep.buildProgress = 0;
     state.message = 'Улучшаем главное здание';
     return true;
+  }
+
+  if (command.kind === 'trade') {
+    return tradeCaravan(state, command.playerId, command.caravanId, command.resource, command.mode, command.qty);
+  }
+
+  if (command.kind === 'sack') {
+    return sackCaravan(state, command.playerId, command.caravanId);
   }
 
   if (command.kind === 'market') {
@@ -1454,6 +1463,12 @@ function updateCombat(state: GameState) {
       }
       continue;
     }
+    if (mob.raid) {
+      const dist = Math.hypot(mob.destX - mob.x, mob.destY - mob.y);
+      if (dist >= 0.75) moveToward(mob, mob.destX, mob.destY, MOB_SPEED.bandit);
+      raidStrike(state, mob);
+      continue;
+    }
     if (mob.kind === 'deer') {
       const scare = nearestPersonOrSoldier(state, mob.x, mob.y, 2.5);
       if (scare) {
@@ -1858,7 +1873,16 @@ function strikeMob(state: GameState, soldier: Soldier, mob: Mob) {
   mob.hp -= soldier.dmg;
   if (mob.hp <= 0) {
     mob.alive = false;
-    mob.respawn = state.tick + 800;
+    if (mob.raid) {
+      mob.respawn = 0;
+      const owner = state.players[soldier.playerId];
+      if (owner) {
+        owner.gold += 8;
+        owner.stocks.wood = (owner.stocks.wood ?? 0) + 4;
+        if (owner.stats) owner.stats.goldEarned += 8;
+      }
+      note(state, 'Разбойники бросили добычу');
+    } else mob.respawn = state.tick + 800;
     if (mob.kind !== 'deer') noteKill(state, soldier.playerId);
   }
 }
@@ -2232,6 +2256,8 @@ export function step(state: GameState, commands: Command[] = [], opts?: { shelte
   // Single-player onboarding only. Multiplayer never sets this, so every client still shares one economy.
     if (!opts?.shelter) updateEconomy(state);
   climateMinute(state);
+  roadMinute(state);
+  moveRoad(state);
   finishOutcome(state);
   recordSamples(state);
   const shown = state.season;
@@ -2269,12 +2295,20 @@ export function serialize(state: GameState): string {
     log: state.log,
     season: state.season ?? 'off',
     weather: state.weather ?? 'clear',
+    road: state.road,
   });
 }
 
 export function deserialize(raw: string): GameState {
   const data = JSON.parse(raw) as GameState & { terrain: number[]; roads?: number[] };
-  if (data.saveVersion !== 1 && data.saveVersion !== 2 && data.saveVersion !== 3 && data.saveVersion !== 4 && data.saveVersion !== 5) {
+  if (
+    data.saveVersion !== 1 &&
+    data.saveVersion !== 2 &&
+    data.saveVersion !== 3 &&
+    data.saveVersion !== 4 &&
+    data.saveVersion !== 5 &&
+    data.saveVersion !== 6
+  ) {
     throw new Error('Неизвестная версия сохранения');
   }
   const terrain = Uint8Array.from(data.terrain);
@@ -2297,6 +2331,7 @@ export function deserialize(raw: string): GameState {
   const ai = data.players.filter((player) => player.isAi).length;
   const match = data.match ?? normalizeSetup(null, ai);
   match.seasons = data.saveVersion < 5 && data.match?.seasons == null ? 'off' : seasonPace(match.seasons);
+  match.events = data.saveVersion < 6 && data.match?.events == null ? 'off' : eventPace(match.events);
   for (const player of data.players) {
     const stocks = emptyStocks();
     player.stocks = { ...stocks, ...player.stocks };
@@ -2308,7 +2343,7 @@ export function deserialize(raw: string): GameState {
   }
   const loaded: GameState = {
     ...data,
-    saveVersion: 5,
+    saveVersion: 6,
     terrain,
     roads,
     clouds,

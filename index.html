@@ -68,8 +68,10 @@
         <div id="speeds"></div>
         <div id="buildbar"></div>
         <div id="econ"></div>
-        <button id="home" type="button" data-testid="focus-home">К себе</button>
-        <button id="map-toggle" type="button" data-testid="map-toggle">Карта</button>
+        <div id="dock-nav">
+          <button id="home" type="button" data-testid="focus-home">К себе</button>
+          <button id="map-toggle" type="button" data-testid="map-toggle">Карта</button>
+        </div>
         <div id="mapwrap"><canvas id="minimap"></canvas></div>
       </footer>
       <div id="land-tray" data-testid="land-tray">
@@ -81,6 +83,19 @@
       <div id="place-confirm" data-testid="place-confirm" hidden>
         <button type="button" id="place-ok" data-testid="place-ok" aria-label="Поставить">✓</button>
         <button type="button" id="place-cancel" data-testid="place-cancel" aria-label="Отмена">✕</button>
+      </div>
+      <div id="event-note" data-testid="event-note" hidden>
+        <span id="event-note-text"></span>
+        <button type="button" id="event-show" data-testid="event-show">показать</button>
+      </div>
+      <div id="caravan-box" data-testid="caravan-box" hidden>
+        <h2>Караван</h2>
+        <p id="caravan-stock" data-testid="caravan-stock"></p>
+        <div class="turn-actions">
+          <button type="button" id="caravan-buy" data-testid="caravan-buy">Купить дерево</button>
+          <button type="button" id="caravan-sell" data-testid="caravan-sell">Продать яблоки</button>
+          <button type="button" id="caravan-sack" data-testid="caravan-sack">Напасть</button>
+        </div>
       </div>
       <div id="turn-hint" data-testid="turn-hint" hidden>
         <p>Поверните телефон для удобства</p>

@@ -102,6 +102,7 @@ export interface RoomView {
     speed: 1 | 2 | 3;
     teams: 'ffa' | 'pairs';
     seasons: 'off' | 'normal' | 'long';
+    events: 'off' | 'rare' | 'normal' | 'often';
     difficulty: 'easy' | 'normal' | 'hard' | 'cruel';
   };
   me: string;
@@ -264,7 +265,7 @@ export class NetSession {
             max: lobby.maxPlayers,
             age: ageLabel(created),
             summary: lobbySummary(
-              { ...decoded.setup, teams: tail.teams, seasons: tail.seasons, profiles: named ?? undefined },
+              { ...decoded.setup, teams: tail.teams, seasons: tail.seasons, events: tail.events, profiles: named ?? undefined },
               { speed: tail.speed, teams: tail.teams, difficulty: named?.[0]?.difficulty ?? 'normal' },
             ),
             locked: tail.lock.length > 0,
@@ -286,6 +287,7 @@ export class NetSession {
     speed?: 1 | 2 | 3;
     teams?: 'ffa' | 'pairs';
     seasons?: 'off' | 'normal' | 'long';
+    events?: 'off' | 'rare' | 'normal' | 'often';
     password?: string;
   }): Promise<void> {
     await this.signIn();
@@ -294,6 +296,7 @@ export class NetSession {
       speed: opts.speed ?? 1,
       teams: opts.teams ?? 'ffa',
       seasons: opts.seasons ?? 'off',
+      events: opts.events ?? 'off',
       lock,
     });
     if (name.length < 1) throw new Error('Введите название');
@@ -504,7 +507,7 @@ export class NetSession {
     const decoded = unpackSeed((lobby.seed ?? 0) >>> 0);
     const tail = tailFromLobbyName(String(lobby.name || ''));
     const profiles = normalizeProfiles(profilesFromLobbyName(String(lobby.name || '')));
-    const setup = normalizeSetup({ ...decoded.setup, profiles, teams: tail.teams, seasons: tail.seasons });
+    const setup = normalizeSetup({ ...decoded.setup, profiles, teams: tail.teams, seasons: tail.seasons, events: tail.events });
     const locked = tail.lock.length > 0;
     return {
       id,
@@ -527,6 +530,7 @@ export class NetSession {
         speed: tail.speed,
         teams: tail.teams,
         seasons: tail.seasons,
+        events: tail.events,
         difficulty: profiles[0]?.difficulty ?? 'normal',
       },
       me: this.uid,
@@ -552,7 +556,7 @@ export class NetSession {
     const state = createGame(decoded.worldSeed, {
       humans,
       ai,
-      setup: { ...decoded.setup, ai, profiles, teams: tail.teams, seasons: tail.seasons },
+      setup: { ...decoded.setup, ai, profiles, teams: tail.teams, seasons: tail.seasons, events: tail.events },
     });
     for (const seat of this.roster) {
       const player = state.players[seat.playerId];

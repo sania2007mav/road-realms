@@ -84,8 +84,9 @@ button.active, button[aria-pressed="true"] {
 }
 
 #status, #resources { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; pointer-events: none; }
-#status { flex-wrap: nowrap; overflow: hidden; }
+#status { flex-wrap: nowrap; overflow: hidden; min-width: 0; max-width: 100%; }
 #status > *, #resources > * { pointer-events: auto; }
+#topbar { width: min(980px, calc(100% - 16px)); min-width: 0; }
 
 .resgroup {
   display: inline-flex;
@@ -140,6 +141,7 @@ button.active, button[aria-pressed="true"] {
 }
 
 .readout strong { color: var(--gold); font-variant-numeric: tabular-nums; }
+.readout, #people-btn, #mood-btn, #fps { white-space: nowrap; flex: 0 0 auto; }
 
 #season-badge {
   box-sizing: border-box;
@@ -149,16 +151,16 @@ button.active, button[aria-pressed="true"] {
   padding: 0 12px;
   min-height: 44px;
   height: 44px;
-  max-width: min(280px, 46vw);
+  max-width: none;
   min-width: 0;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   color: var(--paper);
   font-size: 14px;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
+  cursor: pointer;
   pointer-events: auto;
 }
 #season-badge[hidden] { display: none !important; }
@@ -176,7 +178,10 @@ button.active, button[aria-pressed="true"] {
   flex-wrap: nowrap;
   gap: 6px;
   overflow-x: auto;
+  width: 100%;
   max-width: 100%;
+  min-width: 0;
+  align-self: stretch;
   padding-bottom: 2px;
 }
 
@@ -722,6 +727,7 @@ details.advanced summary {
 #minimap { width: 100%; height: 100%; display: block; cursor: pointer; }
 
 #home { align-self: end; }
+#dock-nav { display: contents; }
 
 #title, #tutorial, #end, #menu, #popbox, #peoplebox {
   position: absolute;
@@ -827,6 +833,8 @@ button.guide-pulse {
 #fps {
   opacity: 0.7;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 #mute-btn, #audio-open {
@@ -1086,14 +1094,15 @@ button.guide-pulse {
   #buttons b { white-space: normal; }
   #buttons small { display: none; }
   #build-prev, #build-next { min-width: 32px; min-height: 44px; padding: 0 6px; }
-  #home, #map-toggle {
+  html:not(.phone-land) #home,
+  html:not(.phone-land) #map-toggle {
     position: absolute;
     min-height: 44px;
     padding: 4px 8px;
     bottom: calc(100% + 4px);
   }
-  #home { right: 4px; }
-  #map-toggle { display: inline-flex; right: 92px; }
+  html:not(.phone-land) #home { right: 4px; }
+  html:not(.phone-land) #map-toggle { display: inline-flex; right: 92px; }
   #dock.show-map #mapwrap {
     display: block;
     position: absolute;
@@ -1283,6 +1292,43 @@ button.guide-pulse {
   border-radius: 16px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
 }
+#event-note {
+  position: absolute;
+  z-index: 6;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(420px, calc(100% - 24px));
+  background: var(--panel);
+  border: 1px solid var(--gold);
+  border-radius: 999px;
+  padding: 4px 6px 4px 14px;
+  pointer-events: auto;
+}
+#event-note span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#event-note button { min-height: 36px; }
+#event-note:not([hidden]) { display: flex; }
+#caravan-box {
+  position: absolute;
+  z-index: 6;
+  top: 124px;
+  left: 16px;
+  width: min(280px, calc(100% - 32px));
+  background: #1c1612;
+  border: 1px solid var(--gold);
+  border-radius: 16px;
+  padding: 12px;
+}
+#caravan-box h2 { margin: 0 0 6px; font-size: 20px; }
+#caravan-box .turn-actions { display: flex; flex-direction: column; gap: 6px; }
+#caravan-box:not([hidden]) { display: block; }
 #turn-hint p { margin: 0; text-align: center; }
 #turn-hint .turn-actions { display: flex; gap: 8px; }
 #turn-hint .turn-actions button { flex: 1; min-height: 44px; }
@@ -1362,9 +1408,9 @@ html.phone-land #status .readout,
 html.phone-land #people-btn,
 html.phone-land #mood-btn {
   width: 100%;
-  min-height: 28px;
+  min-height: 24px;
   justify-content: space-between;
-  padding: 2px 6px;
+  padding: 1px 6px;
   font-size: 12px;
 }
 html.phone-land #res-toggle,
@@ -1379,14 +1425,17 @@ html.phone-land #resources {
   align-items: stretch;
   width: 100%;
   min-width: 0;
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
   gap: 4px;
-  padding: 0 0 6px;
+  padding: 0 2px 0 0;
   touch-action: pan-y;
+  scrollbar-width: thin;
+  scroll-snap-type: y proximity;
+  border-bottom: 1px solid rgba(246, 234, 215, 0.18);
 }
 html.phone-land .resgroup {
   display: flex;
@@ -1401,13 +1450,14 @@ html.phone-land .resgroup {
   border: 0;
 }
 html.phone-land .resgroup .glabel {
-  min-height: 32px;
+  min-height: 28px;
   width: 100%;
   text-align: left;
   margin: 0;
   padding: 4px 8px;
   background: #2b241d;
   border-radius: 8px;
+  scroll-snap-align: start;
 }
 html.phone-land .resgroup .gbody {
   display: none;
@@ -1417,17 +1467,22 @@ html.phone-land .resgroup .gbody {
   min-width: 0;
   max-width: 100%;
 }
-html.phone-land .resgroup.open .gbody { display: flex; }
+html.phone-land .resgroup.open .gbody { display: flex; flex: 0 0 auto; }
 html.phone-land .res {
+  flex: 0 0 auto;
   width: 100%;
   min-width: 0;
   max-width: 100%;
   min-height: 22px;
+  height: auto;
   justify-content: flex-start;
   font-size: 11px;
-  padding: 1px 4px;
+  line-height: 16px;
+  padding: 2px 4px;
   gap: 3px;
-  overflow: hidden;
+  overflow: visible;
+  white-space: nowrap;
+  scroll-snap-align: start;
 }
 html.phone-land .res i { width: 8px; height: 8px; flex: none; }
 html.phone-land .res b { margin-left: auto; flex: none; }
@@ -1490,6 +1545,18 @@ html.phone-land #dock {
 html.phone-land #dock > * { pointer-events: auto; }
 html.phone-land #econ { display: none !important; }
 html.phone-land #econ.in-menu { display: flex !important; }
+html.phone-land #dock-nav {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-row: 1;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  height: 44px;
+  min-height: 44px;
+  position: relative;
+  z-index: 2;
+  background: #1c1612;
+}
 html.phone-land #home,
 html.phone-land #map-toggle {
   position: static !important;
@@ -1497,9 +1564,12 @@ html.phone-land #map-toggle {
   right: auto !important;
   bottom: auto !important;
   left: auto !important;
+  grid-column: auto;
+  grid-row: auto;
   min-height: 44px;
   max-height: 44px;
   min-width: 0;
+  width: 100%;
   padding: 4px 2px;
   font-size: 13px;
   line-height: 1;
@@ -1507,17 +1577,16 @@ html.phone-land #map-toggle {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-html.phone-land #home { grid-column: 1; grid-row: 1; }
 html.phone-land #map-toggle {
   display: inline-flex !important;
-  grid-column: 2;
-  grid-row: 1;
   align-items: center;
   justify-content: center;
 }
 html.phone-land #buildbar {
   grid-column: 1 / -1;
   grid-row: 2;
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;

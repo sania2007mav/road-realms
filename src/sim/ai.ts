@@ -678,11 +678,57 @@ function emergency(state: GameState, player: Player): Command | null | 'spent' {
   return null;
 }
 
+function roadCommand(state: GameState, player: Player): Command | null {
+  if ((state.match?.events ?? 'off') === 'off') return null;
+  const keep = playerKeep(state, player.id);
+  if (!keep) return null;
+  const home = centerOf(keep);
+  const bandit = state.mobs.find((mob) => mob.alive && mob.raid && Math.hypot(mob.x - home.x, mob.y - home.y) < 16);
+  const mine = soldiersOf(state, player.id);
+  if (bandit && mine.length) {
+    return {
+      kind: 'army',
+      playerId: player.id,
+      ids: mine.map((soldier) => soldier.id),
+      mode: 'attack',
+      x: bandit.x,
+      y: bandit.y,
+      target: 'mob',
+      targetId: bandit.id,
+    };
+  }
+  const foe = state.road?.anger[player.id] ?? -1;
+  if (foe >= 0 && state.players[foe]?.alive && mine.length) {
+    state.road!.anger[player.id] = -1;
+    const nest = playerKeep(state, foe);
+    if (nest) {
+      const spot = centerOf(nest);
+      return {
+        kind: 'army',
+        playerId: player.id,
+        ids: mine.map((soldier) => soldier.id),
+        mode: 'attack',
+        x: spot.x,
+        y: spot.y,
+        target: 'building',
+        targetId: nest.id,
+      };
+    }
+  }
+  if (player.personality !== 'merchant') return null;
+  const caravan = state.road?.caravans.find((item) => item.alive && Math.abs(item.x - home.x) < 12);
+  if (!caravan || player.gold < PRICES.wood.buy * 2 || (player.stocks.wood ?? 0) >= 20) return null;
+  if (state.tick % (TICKS_PER_GAME_MINUTE * 8) !== player.id) return null;
+  return { kind: 'trade', playerId: player.id, caravanId: caravan.id, resource: 'wood', mode: 'buy', qty: 2 };
+}
+
 export function planOneAi(state: GameState, player: Player): Command | null {
   if (!player.alive) return null;
   const urgent = emergency(state, player);
   if (urgent === 'spent') return null;
   if (urgent) return urgent;
+  const along = roadCommand(state, player);
+  if (along) return along;
   const pressing = state.match?.victory === 'conquest' || player.personality === 'warlord';
   const fed = state.buildings.some(
     (building) => building.playerId === player.id && building.type === 'orchard' && building.complete && building.hp > 0 && building.workerIds.length > 0,

@@ -160,7 +160,7 @@ describe('сезоны', () => {
       lock: 'ab12cd34',
     });
     expect(packed.length).toBeLessThanOrEqual(32);
-    expect(tailFromLobbyName(packed)).toEqual({ speed: 3, teams: 'pairs', lock: 'ab12cd34', seasons: 'long' });
+    expect(tailFromLobbyName(packed)).toEqual({ speed: 3, teams: 'pairs', lock: 'ab12cd34', seasons: 'long', events: 'off' });
     const quiet = packLobbyName('Посад', profiles, { speed: 1, teams: 'ffa', seasons: 'off' });
     expect(quiet.length).toBeLessThanOrEqual(32);
     expect(tailFromLobbyName(quiet).seasons).toBe('off');
@@ -170,7 +170,7 @@ describe('сезоны', () => {
     const state = createGame(4, { ai: 0, setup: { seasons: 'normal', map: 'small' } });
     for (let i = 0; i < 400; i++) step(state, []);
     expect(state.season).toBe('summer');
-    expect(state.saveVersion).toBe(5);
+    expect(state.saveVersion).toBe(6);
     expect(forecastLine(state)).toContain('Лето');
     expect(forecastLine(state)).toContain('дальше');
     const back = deserialize(serialize(state));
@@ -183,7 +183,7 @@ describe('сезоны', () => {
     delete raw.season;
     delete raw.weather;
     const old = deserialize(JSON.stringify(raw));
-    expect(old.saveVersion).toBe(5);
+    expect(old.saveVersion).toBe(6);
     expect(old.match?.seasons).toBe('off');
     expect(old.season).toBe('off');
   });

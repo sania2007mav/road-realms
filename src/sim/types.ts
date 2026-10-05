@@ -143,6 +143,7 @@ export interface PlayerStats {
 export type SeasonId = 'spring' | 'summer' | 'autumn' | 'winter';
 export type SeasonPace = 'off' | 'normal' | 'long';
 export type WeatherId = 'clear' | 'rain' | 'heat' | 'storm' | 'snow' | 'drought';
+export type EventPace = 'off' | 'rare' | 'normal' | 'often';
 
 export type VictoryId = 'conquest' | 'wealth' | 'bloom' | 'survival';
 export type MapSizeId = 'small' | 'normal' | 'large';
@@ -172,6 +173,8 @@ export interface MatchSetup {
   profiles?: AiProfile[];
   /** Season length. Omitted means off, so old matches and the campaign stay on a clear year. */
   seasons?: SeasonPace;
+  /** Road events. Omitted means off, so the campaign and the balance runs stay quiet. */
+  events?: EventPace;
 }
 
 export interface Sample {
@@ -287,6 +290,59 @@ export interface Mob {
   wander: number;
   destX: number;
   destY: number;
+  /** 1 when this bandit belongs to a road raid and should not respawn with the wild herds. */
+  raid?: number;
+}
+
+export interface Caravan {
+  id: number;
+  fromId: number;
+  toId: number;
+  x: number;
+  y: number;
+  toX: number;
+  hp: number;
+  gold: number;
+  wood: number;
+  apples: number;
+  iron: number;
+  weapons: number;
+  alive: boolean;
+}
+
+export interface RoadFair {
+  playerId: number;
+  x: number;
+  y: number;
+  until: number;
+}
+
+export interface RoadParty {
+  id: number;
+  kind: 'travelers' | 'refugees';
+  playerId: number;
+  x: number;
+  y: number;
+  count: number;
+  until: number;
+}
+
+export interface RoadNote {
+  id: number;
+  text: string;
+  x: number;
+  y: number;
+  until: number;
+}
+
+export interface RoadState {
+  caravans: Caravan[];
+  fair: RoadFair | null;
+  party: RoadParty | null;
+  notes: RoadNote[];
+  /** Player id who wronged this seat, or -1. */
+  anger: number[];
+  seq: number;
 }
 
 export interface Cloud {
@@ -327,6 +383,8 @@ export interface GameState {
   /** Derived from tick, seed and match.seasons. Stored so the hash and saves share one value. */
   season: SeasonId | 'off';
   weather: WeatherId;
+  /** Caravans, fairs, raids and travelers. Missing on old saves, which stay quiet. */
+  road?: RoadState;
 }
 
 export type Command =
@@ -336,6 +394,8 @@ export type Command =
   | { kind: 'tax'; playerId: number; tax: TaxId }
   | { kind: 'upgrade'; playerId: number; buildingId: number }
   | { kind: 'market'; playerId: number; resource: Resource; mode: 'buy' | 'sell'; qty: number }
+  | { kind: 'trade'; playerId: number; caravanId: number; resource: Resource; mode: 'buy' | 'sell'; qty: number }
+  | { kind: 'sack'; playerId: number; caravanId: number }
   | { kind: 'train'; playerId: number; weapon: Weapon }
   | { kind: 'hire'; playerId: number; weapon: 'raider' | 'axe' }
   | { kind: 'mail'; playerId: number }
