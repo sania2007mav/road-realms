@@ -276,15 +276,28 @@ label[hidden] { display: none; }
   color: var(--gold);
 }
 
-button.start-main {
-  width: 100%;
-  min-height: 56px;
+.menu-primary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
   margin-bottom: 8px;
-  font-size: 22px;
-  font-weight: 700;
-  background: #6a4a1b;
-  border-color: var(--gold);
 }
+
+button.start-main,
+button.net-main {
+  width: 100%;
+  min-width: 0;
+  min-height: 56px;
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  border-color: var(--gold);
+  white-space: normal;
+}
+
+button.start-main { background: #6a4a1b; }
+
+button.net-main { background: #3d4a28; }
 
 details.advanced {
   margin: 12px 0 2px;
@@ -674,6 +687,28 @@ input[type="number"], select {
 .card .actions { display: flex; gap: 8px; margin-top: 16px; }
 .card .actions button { flex: 1; }
 
+.menu-foot .actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(148px, 100%), 1fr));
+  gap: 8px;
+  margin-top: 0;
+}
+
+.menu-foot .actions button {
+  flex: none;
+  width: 100%;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.lobby-brief { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.lobby-meta { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.lobby-lock { flex: none; color: var(--gold); }
+.lobby-setup { margin-top: 8px; }
+.lobby-settings { margin: 8px 0; padding: 8px; border: 1px solid var(--line); border-radius: 12px; }
+.lobby-create label, .lobby-settings label { margin-top: 8px; }
+
 #tutorial {
   left: 12px;
   bottom: 168px;
@@ -779,6 +814,9 @@ button.guide-pulse {
 
 @media (max-width: 420px), (max-height: 420px) {
   .menu-card, #title .card { max-height: calc(100vh - 16px); }
+  .menu-card .lede { display: none; }
+  .menu-primary .start-main, .menu-primary .net-main { min-height: 44px; font-size: 16px; }
+  .menu-foot .actions button { min-height: 36px; padding: 4px 8px; font-size: 13px; }
 }
 
 #res-toggle, #map-toggle { display: none; }

@@ -22,7 +22,8 @@ import {
   type Unsubscribe,
 } from 'firebase/database';
 import { OFFLINE_NOTE, enableAppCheck, firebaseConfig, friendlyNetError } from '../firebase';
-import { describeSetup, displayLobbyName, normalizeSetup, profilesFromLobbyName, unpackSeed } from '../sim/match';
+import { describeSetup, displayLobbyName, lobbySummary, normalizeProfiles, normalizeSetup, packLobbyName, profilesFromLobbyName, tailFromLobbyName, unpackSeed } from '../sim/match';
+import { passwordLock } from './password';
 import { createGame } from '../sim/world';
 import { hashState } from '../sim/hash';
 import { step, type Command, type GameState } from '../sim';
@@ -54,6 +55,8 @@ export interface LobbyData {
   maxPlayers: number;
   status: 'open' | 'started' | 'finished';
   seed: number;
+  cfg?: number;
+  lock?: string;
   createdAt?: number;
   startedAt?: number;
   players?: Record<string, LobbyPlayer>;
@@ -74,6 +77,8 @@ export interface LobbyRow {
   count: number;
   max: number;
   age: string;
+  summary: string;
+  locked: boolean;
 }
 
 export interface RoomView {
@@ -83,6 +88,21 @@ export interface RoomView {
   maxPlayers: number;
   seed: number;
   rules: string;
+  summary: string;
+  locked: boolean;
+  draft: {
+    victory: 'conquest' | 'wealth' | 'bloom' | 'survival';
+    timeLimit: number;
+    map: 'small' | 'normal' | 'large';
+    start: 'low' | 'normal' | 'high';
+    ai: number;
+    goldTarget: number;
+    popTarget: number;
+    surviveMinutes: number;
+    speed: 1 | 2 | 3;
+    teams: 'ffa' | 'pairs';
+    difficulty: 'easy' | 'normal' | 'hard' | 'cruel';
+  };
   me: string;
   invite: string;
   seats: { seat: number; uid: string; name: string; ready: boolean; host: boolean }[];
@@ -153,12 +173,6 @@ function ageLabel(createdAt: number): string {
   return `${Math.floor(mins / 60)} ч`;
 }
 
-function randomSeed(): number {
-  const buf = new Uint32Array(1);
-  crypto.getRandomValues(buf);
-  return buf[0];
-}
-
 async function ensureUser(): Promise<User> {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) throw new Error(OFFLINE_NOTE);
   if (auth.currentUser) return auth.currentUser;
@@ -205,6 +219,11 @@ export class NetSession {
   private presence: Record<string, { online: boolean; at: number }> = {};
   private waitingSince = 0;
   private ended = false;
+  private pace: 1 | 2 | 3 = 1;
+
+  speed(): 1 | 2 | 3 {
+    return this.pace;
+  }
 
   async signIn(): Promise<void> {
     const user = await ensureUser();
@@ -233,6 +252,9 @@ export class NetSession {
           const seats = normalizeSeats(lobby.seats);
           const count = seats.filter(Boolean).length;
           const hostName = lobby.players?.[lobby.hostUid]?.name || 'Хост';
+          const decoded = unpackSeed((lobby.seed ?? 0) >>> 0);
+          const tail = tailFromLobbyName(String(lobby.name || ''));
+          const named = profilesFromLobbyName(String(lobby.name || ''));
           rows.push({
             id: child.key || '',
             name: clampText(displayLobbyName(String(lobby.name || 'Лобби')), 32),
@@ -240,6 +262,11 @@ export class NetSession {
             count,
             max: lobby.maxPlayers,
             age: ageLabel(created),
+            summary: lobbySummary(
+              { ...decoded.setup, teams: tail.teams, profiles: named ?? undefined },
+              { speed: tail.speed, teams: tail.teams, difficulty: named?.[0]?.difficulty ?? 'normal' },
+            ),
+            locked: tail.lock.length > 0,
           });
         });
         rows.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : 1));
@@ -250,19 +277,32 @@ export class NetSession {
     this.unsubs.push(unsub);
   }
 
-  async create(name: string, maxPlayers: 2 | 3 | 4, seed?: number): Promise<void> {
+  async create(opts: {
+    name: string;
+    maxPlayers: 2 | 3 | 4;
+    seed: number;
+    profiles?: import('../sim/types').AiProfile[];
+    speed?: 1 | 2 | 3;
+    teams?: 'ffa' | 'pairs';
+    password?: string;
+  }): Promise<void> {
     await this.signIn();
-    const clean = clampText(name, 32);
-    if (clean.length < 1) throw new Error('Введите название');
+    const lock = (await passwordLock(opts.password ?? '')).slice(0, 8);
+    const name = packLobbyName(opts.name, opts.profiles, {
+      speed: opts.speed ?? 1,
+      teams: opts.teams ?? 'ffa',
+      lock,
+    });
+    if (name.length < 1) throw new Error('Введите название');
     const lobbyRef = push(ref(db, 'lobbies'));
     const id = lobbyRef.key;
     if (!id) throw new Error('Не удалось создать лобби');
     await set(lobbyRef, {
       hostUid: this.uid,
-      name: clean,
-      maxPlayers,
+      name,
+      maxPlayers: opts.maxPlayers,
       status: 'open',
-      seed: (seed == null ? randomSeed() : seed) >>> 0,
+      seed: opts.seed >>> 0,
       createdAt: serverTimestamp(),
       players: { [this.uid]: { name: this.playerName(), seat: 0, joinedAt: serverTimestamp() } },
       seats: { 0: this.uid },
@@ -270,7 +310,7 @@ export class NetSession {
     this.watchLobby(id);
   }
 
-  async join(id: string): Promise<void> {
+  async join(id: string, password = ''): Promise<void> {
     await this.signIn();
     const clean = id.trim();
     let last: unknown = null;
@@ -282,6 +322,8 @@ export class NetSession {
         this.watchLobby(clean);
         return;
       }
+      const lock = tailFromLobbyName(String(lobby.name || '')).lock;
+      if (lock && (await passwordLock(password)).slice(0, 8) !== lock) throw new Error('Неверный пароль');
       const seats = normalizeSeats(lobby.seats);
       let seat = -1;
       for (let i = 0; i < lobby.maxPlayers; i++) {
@@ -374,7 +416,7 @@ export class NetSession {
       step(this.state, commands);
       for (let i = 1; i < TICKS_PER_TURN; i++) step(this.state, []);
       this.ls.executed += 1;
-      this.nextAt += TURN_MS;
+      this.nextAt += TURN_MS / this.pace;
       guard += 1;
     }
     if (this.state.outcome !== 'playing') this.finishMatch();
@@ -457,8 +499,10 @@ export class NetSession {
     url.searchParams.set('lobby', id);
     const canStart = this.uid === lobby.hostUid && rows.length >= 2 && rows.every((row) => row.ready);
     const decoded = unpackSeed((lobby.seed ?? 0) >>> 0);
-    const profiles = profilesFromLobbyName(String(lobby.name || ''));
-    const setup = normalizeSetup(profiles ? { ...decoded.setup, profiles } : decoded.setup);
+    const tail = tailFromLobbyName(String(lobby.name || ''));
+    const profiles = normalizeProfiles(profilesFromLobbyName(String(lobby.name || '')));
+    const setup = normalizeSetup({ ...decoded.setup, profiles, teams: tail.teams });
+    const locked = tail.lock.length > 0;
     return {
       id,
       name: displayLobbyName(String(lobby.name || '')) || 'Лобби',
@@ -466,6 +510,21 @@ export class NetSession {
       maxPlayers: lobby.maxPlayers,
       seed: decoded.worldSeed,
       rules: describeSetup(setup),
+      summary: lobbySummary(setup, { speed: tail.speed, teams: tail.teams, difficulty: profiles[0]?.difficulty ?? 'normal' }),
+      locked,
+      draft: {
+        victory: setup.victory,
+        timeLimit: setup.timeLimit,
+        map: setup.map,
+        start: setup.start,
+        ai: setup.ai,
+        goldTarget: setup.goldTarget,
+        popTarget: setup.popTarget,
+        surviveMinutes: setup.surviveMinutes,
+        speed: tail.speed,
+        teams: tail.teams,
+        difficulty: profiles[0]?.difficulty ?? 'normal',
+      },
       me: this.uid,
       invite: url.toString(),
       seats: rows,
@@ -481,13 +540,15 @@ export class NetSession {
       return;
     }
     const decoded = unpackSeed(lobby.seed >>> 0);
+    const tail = tailFromLobbyName(String(lobby.name || ''));
     const humans = this.roster.length;
     const ai = Math.max(0, Math.min(4 - humans, decoded.setup.ai));
-    const profiles = profilesFromLobbyName(String(lobby.name || ''));
+    const profiles = normalizeProfiles(profilesFromLobbyName(String(lobby.name || '')));
+    this.pace = tail.speed;
     const state = createGame(decoded.worldSeed, {
       humans,
       ai,
-      setup: profiles ? { ...decoded.setup, ai, profiles } : { ...decoded.setup, ai },
+      setup: { ...decoded.setup, ai, profiles, teams: tail.teams },
     });
     for (const seat of this.roster) {
       const player = state.players[seat.playerId];

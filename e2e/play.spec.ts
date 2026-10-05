@@ -918,6 +918,103 @@ test('кадры для витрины 1280×720', async ({ page, browser }) => 
   execFileSync('python3', ['-c', letterboxPhone(`${shots}/store_phone_raw.png`, `${shots}/store_phone.png`)]);
 });
 
+test('кнопки заставки внутри карточки', async ({ page }) => {
+  test.setTimeout(120_000);
+  mkdirSync(shots, { recursive: true });
+  const ids = ['new-game', 'net-game', 'continue-game', 'campaign-open', 'load-game', 'help-open', 'settings-open', 'know-game', 'about-open'];
+  const viewports = [
+    { width: 1280, height: 800 },
+    { width: 830, height: 755 },
+    { width: 360, height: 640 },
+    { width: 640, height: 360 },
+  ];
+  for (const viewport of viewports) {
+    await page.setViewportSize(viewport);
+    await page.goto('/road-realms/');
+    await expect(page.getByTestId('net-game')).toHaveText('Сетевая игра');
+    const scales = viewport.width === 830 ? [1, 1.5] : [1];
+    for (const scale of scales) {
+      await page.evaluate((value) => document.documentElement.style.setProperty('--ui', String(value)), scale);
+      const card = page.locator('#title .menu-card');
+      const box = await card.boundingBox();
+      expect(box, `${viewport.width}x${viewport.height}`).toBeTruthy();
+      for (const id of ids) {
+        const button = page.getByTestId(id);
+        await expect(button, id).toBeVisible();
+        const bounds = await button.boundingBox();
+        expect(bounds, id).toBeTruthy();
+        expect(bounds!.x, id).toBeGreaterThanOrEqual(box!.x - 1);
+        expect(bounds!.y, id).toBeGreaterThanOrEqual(box!.y - 1);
+        expect(bounds!.x + bounds!.width, id).toBeLessThanOrEqual(box!.x + box!.width + 1);
+        expect(bounds!.y + bounds!.height, id).toBeLessThanOrEqual(box!.y + box!.height + 1);
+      }
+    }
+    await page.evaluate(() => document.documentElement.style.setProperty('--ui', '1'));
+    if (viewport.width === 830) await page.screenshot({ path: `${shots}/title_830.png` });
+    if (viewport.width === 360) await page.screenshot({ path: `${shots}/title_360.png` });
+  }
+});
+
+test('настройки лобби видны до старта', async ({ page, browser }) => {
+  test.setTimeout(180_000);
+  mkdirSync(shots, { recursive: true });
+  await page.addInitScript(() => {
+    localStorage.setItem('dorozhnye-kraya-tutorial', '1');
+    localStorage.setItem('dorozhnye-kraya-name', 'Хозяин');
+  });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/road-realms/');
+  await page.getByTestId('net-game').click();
+  await expect(page.getByTestId('lobby-setup')).toBeVisible();
+  await expect(page.locator('#net-error')).toHaveText('', { timeout: 20_000 });
+  await page.getByTestId('lobby-max').selectOption('4');
+  await page.getByTestId('lobby-map').selectOption('large');
+  await page.getByTestId('lobby-speed').selectOption('2');
+  await page.getByTestId('lobby-start').selectOption('high');
+  await page.getByTestId('lobby-ai').selectOption('1');
+  await page.getByTestId('lobby-diff').selectOption('hard');
+  await page.getByTestId('lobby-teams').selectOption('pairs');
+  await page.getByTestId('lobby-pass').fill('тракт');
+  const lobbyName = `Усл ${Date.now().toString(36)}`.slice(0, 12);
+  await page.getByTestId('lobby-name').fill(lobbyName);
+  await page.getByTestId('lobby-setup').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${shots}/lobby_settings.png` });
+  await page.getByTestId('lobby-create').click({ timeout: 15_000 });
+  await expect(page.getByTestId('lobby-room')).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId('lobby-settings')).toBeVisible();
+  await expect(page.getByTestId('lobby-settings')).toContainText('2×');
+  await expect(page.getByTestId('lobby-settings')).toContainText('2×2');
+  await expect(page.getByTestId('lobby-settings')).toContainText('богатые');
+  await page.getByTestId('lobby-settings').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${shots}/lobby_room.png` });
+
+  const guest = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  await guest.addInitScript(() => {
+    localStorage.setItem('dorozhnye-kraya-name', 'Путник');
+    localStorage.setItem('dorozhnye-kraya-tutorial', '1');
+  });
+  const mate = await guest.newPage();
+  try {
+    await mate.goto('/road-realms/');
+    await mate.getByTestId('net-game').click();
+    const row = mate.locator('.lobby-row', { hasText: lobbyName });
+    await expect(row).toBeVisible({ timeout: 20_000 });
+    await expect(row.getByTestId('lobby-lock')).toBeVisible();
+    await expect(row.getByTestId('lobby-summary')).toContainText('2×');
+    await expect(row.getByTestId('lobby-summary')).toContainText('2×2');
+    await row.getByTestId('lobby-join').click();
+    await expect(mate.getByTestId('net-error')).toContainText('парол', { timeout: 15_000 });
+    await mate.getByTestId('lobby-pass').fill('тракт');
+    await row.getByTestId('lobby-join').click();
+    await expect(mate.getByTestId('lobby-room')).toContainText('Хозяин', { timeout: 20_000 });
+    await expect(mate.getByTestId('lobby-settings')).toContainText('2×2');
+  } finally {
+    await page.getByTestId('lobby-leave').click({ timeout: 4_000 }).catch(() => {});
+    await mate.getByTestId('lobby-leave').click({ timeout: 4_000 }).catch(() => {});
+    await guest.close();
+  }
+});
+
 function letterboxPhone(raw: string, out: string): string {
   return `
 from PIL import Image, ImageDraw, ImageFont

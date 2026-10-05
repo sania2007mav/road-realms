@@ -7,7 +7,7 @@ import {
   foodTypesIn,
 } from './balance';
 import { totalFood } from './economy';
-import { bloomKeepLevel, personalityName, scoreOf } from './match';
+import { bloomKeepLevel, hostile, personalityName, scoreOf } from './match';
 import { nextAiSiege } from './siege';
 import type { Building, BuildingType, Command, DifficultyId, GameState, Player, TaxId, Weapon } from './types';
 import { canPlace, housingCap, idleCount, playerKeep, suggestedTile } from './update';
@@ -310,7 +310,7 @@ function leaderId(state: GameState, self: number): number {
   let best = -1;
   let bestScore = -1;
   for (const player of state.players) {
-    if (player.id === self || !player.alive) continue;
+    if (!player.alive || !hostile(state, player.id, self)) continue;
     const value = scoreOf(state, player);
     if (best < 0 || value > bestScore || (value === bestScore && player.id < best)) {
       best = player.id;
@@ -325,7 +325,7 @@ function threatened(state: GameState, player: Player): boolean {
   if (!keep) return false;
   const center = centerOf(keep);
   for (const soldier of state.soldiers) {
-    if (soldier.hp <= 0 || soldier.playerId === player.id) continue;
+    if (soldier.hp <= 0 || !hostile(state, soldier.playerId, player.id)) continue;
     if (!state.players[soldier.playerId]?.alive) continue;
     if (Math.hypot(soldier.x - center.x, soldier.y - center.y) < 12) return true;
   }

@@ -25,11 +25,11 @@ import {
   playerKeep,
   planOneAi,
   emptyStats,
+  defaultProfiles,
   describeSetup,
   difficultyName,
   personalityName,
   normalizeSetup,
-  packLobbyName,
   packSeed,
   resultCopy,
   scoreOf,
@@ -61,7 +61,7 @@ import { isLineBuilding, wallLine } from './sim/siege';
 import { cycleGfx, gfxLabel, loadGfx, setGfx } from './render/gfx';
 import { bakeTerrain, clearTerrainChunks, minimapToTile, renderMinimap, renderWorld, setTerrainChunks, type Ghost, type OrderMarker } from './render/draw';
 import { net } from './net/session';
-import { NetView } from './net/screens';
+import { NetView, type LobbyDraft } from './net/screens';
 import { ZOOM_MAX, clampCamera, focusTile, screenToTile, screenToWorld, worldToScreen, type Camera } from './render/camera';
 import { helpHtml } from './ui/help';
 import { loadUiSettings, saveUiSettings, settingsHtml, type UiSettings } from './ui/settings';
@@ -150,6 +150,7 @@ let camera: Camera = { x: 0, y: 0, zoom: 1.15 };
 loadGfx();
 let baked = bakeTerrain(state);
 let speed = 1;
+let netPace: 1 | 2 | 3 = 1;
 let localPlayer = 0;
 let netMode = false;
 let placing: BuildingType | null = null;
@@ -791,15 +792,17 @@ function buildTitle() {
     </details>
     </div>
     <div class="menu-foot">
-      <button type="button" id="start-title" class="start-main" data-testid="new-game">Начать</button>
+        <div class="menu-primary">
+        <button type="button" id="start-title" class="start-main" data-testid="new-game">Начать</button>
+        <button type="button" id="net-title" class="net-main" data-testid="net-game">Сетевая игра</button>
+      </div>
       <div class="actions">
-        <button type="button" id="continue-title" data-testid="continue-game"${newestSlot() ? '' : ' hidden'}>Продолжить</button>
+        <button type="button" id="continue-title" data-testid="continue-game"${newestSlot() ? '' : ' disabled'}>Продолжить</button>
         <button type="button" id="campaign-title" data-testid="campaign-open">Кампания</button>
         <button type="button" id="load-title" data-testid="load-game">Загрузить</button>
         <button type="button" id="help-title" data-testid="help-open">Справка</button>
         <button type="button" id="settings-title" data-testid="settings-open">Настройки</button>
         <button type="button" id="know-game" data-testid="know-game">Я умею играть</button>
-        <button type="button" id="net-title" data-testid="net-game">Сетевая игра</button>
         <button type="button" id="about-title" data-testid="about-open">Об игре</button>
       </div>
       <p class="fineprint"><a href="privacy.html">Политика конфиденциальности</a></p>
@@ -1179,7 +1182,7 @@ function refreshBuildState() {
 }
 
 function setSpeed(value: number) {
-  if (netMode) value = 1;
+  if (netMode) value = netPace;
   speed = value;
   speeds.querySelectorAll<HTMLButtonElement>('button').forEach((button) => {
     button.classList.toggle('active', Number(button.dataset.speed) === value);
@@ -3568,6 +3571,7 @@ function beginNet(next: GameState, playerId: number) {
   state = next;
   localPlayer = playerId;
   netMode = true;
+  netPace = net.speed();
   campaignSession = null;
   baked = bakeTerrain(state);
   const keep = playerKeep(state, localPlayer);
@@ -3603,7 +3607,18 @@ function openNet() {
   rememberName();
   title.hidden = true;
   playing = false;
-  netView.showList(describeSetup(readSetup()));
+  const setup = readSetup();
+  netView.showList({
+    victory: setup.victory,
+    timeLimit: setup.timeLimit,
+    map: setup.map,
+    start: setup.start,
+    ai: Math.max(0, Math.min(3, setup.ai)),
+    goldTarget: setup.goldTarget,
+    popTarget: setup.popTarget,
+    surviveMinutes: setup.surviveMinutes,
+    difficulty: setup.profiles?.[0]?.difficulty ?? 'normal',
+  });
   void net.listenList().catch((err) => netMessage(err, 'Не удалось открыть список'));
   const invite = new URLSearchParams(location.search).get('lobby');
   if (invite && !inviteHandled) {
@@ -3623,16 +3638,41 @@ function netMessage(err: unknown, fallback: string) {
   netView.error(friendlyNetError(err, fallback));
 }
 
+function lobbyPack(draft: LobbyDraft, worldSeed: number) {
+  const profiles = defaultProfiles().map((profile) => ({ ...profile, difficulty: draft.difficulty }));
+  const setup = normalizeSetup({
+    victory: draft.victory,
+    timeLimit: draft.timeLimit,
+    map: draft.map,
+    start: draft.start,
+    ai: draft.ai,
+    goldTarget: draft.goldTarget,
+    popTarget: draft.popTarget,
+    surviveMinutes: draft.surviveMinutes,
+    teams: draft.teams,
+    profiles,
+  });
+  return {
+    name: draft.name,
+    maxPlayers: draft.maxPlayers,
+    seed: packSeed(worldSeed, setup),
+    profiles,
+    speed: draft.speed,
+    teams: draft.teams,
+    password: draft.password,
+  };
+}
+
 const netView = new NetView(document.querySelector<HTMLElement>('#net')!, document.querySelector<HTMLElement>('#syncbox')!, {
-  create: (name, maxPlayers) => {
+  create: (draft) => {
     rememberName();
-    const setup = readSetup();
     const world = Number(document.querySelector<HTMLInputElement>('#seed')?.value ?? '1') >>> 0;
-    void net.create(packLobbyName(name, setup.profiles), maxPlayers, packSeed(world, setup)).catch((err) => netMessage(err, 'Не удалось создать лобби'));
+    const packed = lobbyPack(draft, world);
+    void net.create(packed).catch((err) => netMessage(err, 'Не удалось создать лобби'));
   },
-  join: (id) => {
+  join: (id, password) => {
     rememberName();
-    void net.join(id).catch((err) => netMessage(err, 'Не удалось войти'));
+    void net.join(id, password).catch((err) => netMessage(err, 'Не удалось войти'));
   },
   leave: () => {
     void net.leave().then(() => openNet()).catch((err) => netMessage(err, 'Не удалось выйти'));
