@@ -4,6 +4,12 @@ export const RATING_START = 1000;
 export const RATING_K = 32;
 export const RATING_CAP = 32;
 export const FORFEIT_MS = 60_000;
+/** Elo counts only after this many whole game minutes. */
+export const RATED_AFTER_MINUTES = 5;
+export const PAIR_LIMIT = 3;
+export const PAIR_WINDOW_MS = 86_400_000;
+/** One game minute at the ranked 1× pace: 60 ticks, 4 ticks per 200 ms turn. */
+export const GAME_MINUTE_MS = 3_000;
 export const PROFILE_KEY = 'dorozhnye-kraya-profile';
 
 export const EMBLEMS = [
@@ -118,6 +124,34 @@ export function ratePair(ratingA: number, ratingB: number, winner: 'a' | 'b'): P
     else deltaA -= sum;
   }
   return { deltaA, deltaB, nextA: ratingA + deltaA, nextB: ratingB + deltaB };
+}
+
+export function pairKey(left: string, right: string): string {
+  return left < right ? `${left}_${right}` : `${right}_${left}`;
+}
+
+/** A match of five minutes or less keeps both ratings where they were. */
+export function eloForMinutes(rated: PairRating, minutes: number, ratingA: number, ratingB: number): PairRating {
+  if (minutes > RATED_AFTER_MINUTES) return rated;
+  return { deltaA: 0, deltaB: 0, nextA: ratingA, nextB: ratingB };
+}
+
+export interface PairSlots {
+  m0: string;
+  m1: string;
+  m2: string;
+  t0: number;
+  t1: number;
+  t2: number;
+}
+
+/** First of the three pair slots that is empty or older than a day. -1 when all three are still inside the window. */
+export function openPairSlot(times: number[], now: number): number {
+  for (let i = 0; i < PAIR_LIMIT; i++) {
+    const at = Number(times[i]) || 0;
+    if (at <= now - PAIR_WINDOW_MS) return i;
+  }
+  return -1;
 }
 
 export function formatDelta(delta: number): string {

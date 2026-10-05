@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { defaultProfiles, packLobbyName, tailFromLobbyName } from '../src/sim/match';
-import { claimKey, cleanNick, nickOk, ratePair, tagFromUid } from '../src/meta/rating';
+import { claimKey, cleanNick, eloForMinutes, nickOk, openPairSlot, pairKey, ratePair, tagFromUid } from '../src/meta/rating';
 
 describe('рейтинг', () => {
   it('держит дельту в пределах K и в нулевой сумме', () => {
@@ -34,6 +34,18 @@ describe('рейтинг', () => {
     expect(casual.includes('r')).toBe(false);
     expect(tailFromLobbyName(casual).ranked).toBe(false);
     expect(tailFromLobbyName(casual).lock).toBe('ab12cd34');
+  });
+
+  it('не двигает Elo до шестой минуты и держит три слота пары', () => {
+    const rated = ratePair(1000, 1000, 'a');
+    expect(eloForMinutes(rated, 5, 1000, 1000)).toEqual({ deltaA: 0, deltaB: 0, nextA: 1000, nextB: 1000 });
+    expect(eloForMinutes(rated, 6, 1000, 1000)).toEqual(rated);
+    expect(pairKey('bob', 'alice')).toBe('alice_bob');
+    const now = 1_000_000_000;
+    const day = 86_400_000;
+    expect(openPairSlot([0, 0, 0], now)).toBe(0);
+    expect(openPairSlot([now, now - day, now], now)).toBe(1);
+    expect(openPairSlot([now, now - 1000, now - day + 1], now)).toBe(-1);
   });
 
   it('проверяет имя и стабильную метку', () => {

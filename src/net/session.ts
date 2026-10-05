@@ -22,6 +22,7 @@ import {
   type Unsubscribe,
 } from 'firebase/database';
 import { OFFLINE_NOTE, enableAppCheck, firebaseConfig, friendlyNetError } from '../firebase';
+import { TICKS_PER_GAME_MINUTE } from '../sim/balance';
 import { describeSetup, displayLobbyName, lobbySummary, normalizeProfiles, normalizeSetup, packLobbyName, profilesFromLobbyName, rankedSetup, tailFromLobbyName, unpackSeed } from '../sim/match';
 import { readStoredProfile, seatLabel } from '../meta/rating';
 import { passwordLock } from './password';
@@ -143,6 +144,7 @@ export interface RankPacket {
   winnerUid: string;
   hash: string;
   forfeit: boolean;
+  minutes: number;
 }
 
 export function clampText(raw: string, max: number): string {
@@ -258,6 +260,7 @@ export class NetSession {
       winnerUid,
       hash: hashState(this.state),
       forfeit,
+      minutes: Math.floor(this.state.tick / TICKS_PER_GAME_MINUTE),
     };
   }
 

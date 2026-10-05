@@ -1,17 +1,22 @@
-import { get, limitToLast, orderByChild, query, ref, set, serverTimestamp } from 'firebase/database';
+import { get, limitToLast, orderByChild, query, ref, set, update, serverTimestamp } from 'firebase/database';
 import { db, net, type RankPacket } from './session';
 import {
   EMBLEMS,
   FORFEIT_MS,
+  RATED_AFTER_MINUTES,
   RATING_START,
   claimKey,
   bumpTag,
   displayTag,
+  eloForMinutes,
   isEmblem,
+  openPairSlot,
+  pairKey,
   ratePair,
   readStoredProfile,
   tagFromUid,
   writeStoredProfile,
+  type PairSlots,
   type BoardEntry,
   type EmblemId,
   type HistoryEntry,
@@ -161,15 +166,19 @@ export async function settleRanked(packet: RankPacket): Promise<{ text: string; 
     const ratingA = iAmA ? oldMine : oldOpp;
     const ratingB = iAmA ? oldOpp : oldMine;
     const winnerSide = packet.winnerUid === (iAmA ? packet.myUid : packet.oppUid) ? 'a' : 'b';
-    const rated = ratePair(ratingA, ratingB, winnerSide);
+    const minutes = Math.max(0, Math.floor(packet.minutes));
+    const rated = eloForMinutes(ratePair(ratingA, ratingB, winnerSide), minutes, ratingA, ratingB);
     const deltaMine = iAmA ? rated.deltaA : rated.deltaB;
-    await set(ref(db, `matches/${packet.matchId}/reports/${packet.myUid}`), {
-      winner: packet.winnerUid,
-      hash: packet.hash,
-      delta: deltaMine,
-      forfeit: packet.forfeit,
-      at: serverTimestamp(),
-    });
+    const reportRef = ref(db, `matches/${packet.matchId}/reports/${packet.myUid}`);
+    if (!(await get(reportRef)).exists()) {
+      await set(reportRef, {
+        winner: packet.winnerUid,
+        hash: packet.hash,
+        delta: deltaMine,
+        forfeit: packet.forfeit,
+        at: serverTimestamp(),
+      });
+    }
     const reportA = await get(ref(db, `matches/${packet.matchId}/reports/${iAmA ? packet.myUid : packet.oppUid}`));
     const reportB = await get(ref(db, `matches/${packet.matchId}/reports/${iAmA ? packet.oppUid : packet.myUid}`));
     const left = reportA.val() as { winner?: string; hash?: string; delta?: number; forfeit?: boolean } | null;
@@ -193,28 +202,56 @@ export async function settleRanked(packet: RankPacket): Promise<{ text: string; 
     const mode = agreed ? 'agree' : 'forfeit';
     const a = iAmA ? packet.myUid : packet.oppUid;
     const b = iAmA ? packet.oppUid : packet.myUid;
+    const key = pairKey(a, b);
+    const settledBody = {
+      winner: packet.winnerUid,
+      hash: packet.hash,
+      a,
+      b,
+      oldA: ratingA,
+      oldB: ratingB,
+      nextA: rated.nextA,
+      nextB: rated.nextB,
+      deltaA: rated.deltaA,
+      deltaB: rated.deltaB,
+      mode,
+      minutes,
+      at: serverTimestamp(),
+      pair: key,
+    };
+    const writes: Record<string, unknown> = { [`settled/${packet.matchId}`]: settledBody };
+    if (minutes > RATED_AFTER_MINUTES) {
+      const pairSnap = await get(ref(db, `pairs/${key}`));
+      const prev = pairSnap.val() as Partial<PairSlots> | null;
+      const times = [Number(prev?.t0) || 0, Number(prev?.t1) || 0, Number(prev?.t2) || 0];
+      const slot = openPairSlot(times, Date.now());
+      if (slot < 0) return { text: 'С этим соседом уже три рейтинговые партии за сутки.', soon: false };
+      const slots: PairSlots = {
+        m0: String(prev?.m0 || ''),
+        m1: String(prev?.m1 || ''),
+        m2: String(prev?.m2 || ''),
+        t0: times[0],
+        t1: times[1],
+        t2: times[2],
+      };
+      const names = ['m0', 'm1', 'm2'] as const;
+      const stamps = ['t0', 't1', 't2'] as const;
+      slots[names[slot]] = packet.matchId;
+      writes[`pairs/${key}`] = { a, b, ...slots, [stamps[slot]]: serverTimestamp() };
+    }
     try {
-      await set(ref(db, `matches/${packet.matchId}/settled`), {
-        winner: packet.winnerUid,
-        hash: packet.hash,
-        a,
-        b,
-        oldA: ratingA,
-        oldB: ratingB,
-        nextA: rated.nextA,
-        nextB: rated.nextB,
-        deltaA: rated.deltaA,
-        deltaB: rated.deltaB,
-        mode,
-      });
+      await update(ref(db), writes);
     } catch (err) {
-      const existing = await get(ref(db, `matches/${packet.matchId}/settled`));
+      const existing = await get(ref(db, `settled/${packet.matchId}`));
       if (!existing.exists()) {
-        if (ratingDenied(err)) return { text: `Отчёт отправлен. Рейтинг ${oldMine}, ждём второй отчёт.`, soon: false };
+        if (ratingDenied(err)) {
+          if (minutes <= RATED_AFTER_MINUTES) return { text: `Партия короче шести минут, рейтинг ${oldMine} без изменений`, soon: false };
+          return { text: `Отчёт отправлен. Рейтинг ${oldMine}, ждём второй отчёт.`, soon: false };
+        }
         throw err;
       }
     }
-    const settledSnap = await get(ref(db, `matches/${packet.matchId}/settled`));
+    const settledSnap = await get(ref(db, `settled/${packet.matchId}`));
     const settled = settledSnap.val() as { nextA?: number; nextB?: number; deltaA?: number; deltaB?: number; winner?: string; a?: string } | null;
     if (!settled) return { text: 'Отчёт записан.', soon: false };
     const next = settled.a === packet.myUid ? Number(settled.nextA) : Number(settled.nextB);
@@ -252,6 +289,7 @@ export async function settleRanked(packet: RankPacket): Promise<{ text: string; 
     } catch {
       /* history is optional once the rating moved */
     }
+    if (minutes <= RATED_AFTER_MINUTES) return { text: `Партия короче шести минут, рейтинг ${oldMine} без изменений`, soon: false };
     const sign = delta > 0 ? `+${delta}` : String(delta);
     return { text: `Рейтинг ${oldMine} → ${next} (${sign})`, soon: false };
   } catch (err) {
