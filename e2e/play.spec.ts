@@ -1719,8 +1719,8 @@ test('редактор показывает ошибку и список кар�
   await expect(page.getByTestId('editor-errors')).toContainText('слишком близко');
   await page.screenshot({ path: `${shots}/editor_error.png` });
   await page.evaluate(() => window.__game!.previewEditorList());
-  await expect(page.getByTestId('editor-saved')).toContainText('Северный тракт');
-  await expect(page.getByTestId('editor-saved')).toContainText('Изгиб у реки');
+  await expect(page.getByTestId('editor-saved').locator('input').nth(0)).toHaveValue('Изгиб у реки');
+  await expect(page.getByTestId('editor-saved').locator('input').nth(1)).toHaveValue('Северный тракт');
   await page.screenshot({ path: `${shots}/editor_list.png` });
 });
 

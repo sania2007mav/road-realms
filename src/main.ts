@@ -4346,14 +4346,14 @@ function expose() {
     previewCustomPlay() {
       const map = blankMap('small', 'cross');
       map.name = 'Перекрёсток';
-      map.seasonStart = 'summer';
-      const { w } = { w: map.paint.length / 80 };
-      for (let y = 4; y < 22; y++) {
-        for (let x = 48; x < 78; x++) map.paint[y * w + x] = Terrain.Water;
+      map.seasonStart = 'off';
+      const w = map.paint.length / 80;
+      for (let y = 2; y < 20; y++) {
+        for (let x = 52; x < 108; x++) map.paint[y * w + x] = Terrain.Water;
       }
       startGame(map);
-      lookAtTile(state.mapW / 2, state.mapH * 0.42);
-      camera.zoom = 0.62;
+      lookAtTile(state.mapW / 2, state.mapH / 2);
+      camera.zoom = 0.05;
       clampView();
       setSpeed(0);
     },
